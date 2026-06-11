@@ -1,0 +1,1 @@
+GPI-Lite Watchlist API V0.6 Cloud Run secured + Cloud Storage

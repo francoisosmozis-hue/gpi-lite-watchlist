@@ -1,0 +1,11 @@
+.venv
+__pycache__
+*.pyc
+.git
+.gitignore
+*.zip
+data/morning/*
+data/h5/*
+data/results/*
+data/output/*
+*.pdf
