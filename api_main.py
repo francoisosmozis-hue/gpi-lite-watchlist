@@ -4270,9 +4270,15 @@ def _action_int(value, default=999999):
     try:
         if value is None:
             return default
-        text = str(value).strip()
+        text = str(value).strip().upper()
         if not text:
             return default
+
+        # Supporte les priorités sous formes P1, P2, P9.
+        match = re.search(r"\d+", text)
+        if match:
+            return int(match.group(0))
+
         return int(float(text.replace(",", ".")))
     except Exception:
         return default
