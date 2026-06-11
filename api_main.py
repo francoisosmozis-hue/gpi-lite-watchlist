@@ -3929,3 +3929,329 @@ except Exception as _gpi_fast_kpi_patch_exc:
     except Exception:
         pass
 # <<< GPI FAST PAPER KPI REBUILD PATCH V0_1 <<<
+
+
+# ============================================================
+# ACTION_FACADE_V0_1
+# Façade compacte dédiée GPT Actions.
+# Objectif : éviter les gros payloads /gpi/status et l'auth Builder instable.
+# Les routes GET sont lecture seule.
+# Les routes POST sont bloquées par défaut sauf GPI_ACTION_FACADE_RUN_ENABLED=true.
+# ============================================================
+
+import os as _action_os
+
+
+_ACTION_FACADE_VERSION = "ACTION_FACADE_V0_1"
+
+
+def _action_str(value, default="ND"):
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text if text else default
+
+
+def _action_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"true", "1", "oui", "yes"}:
+        return True
+    if text in {"false", "0", "non", "no"}:
+        return False
+    return default
+
+
+def _action_call(fn, fn_name):
+    try:
+        payload = fn()
+        if isinstance(payload, dict):
+            return payload
+        return {
+            "ok": False,
+            "error": "ACTION_INTERNAL_NON_DICT_RESPONSE",
+            "route_function": fn_name,
+            "response_type": str(type(payload)),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "route_function": fn_name,
+            "facade_error": "ACTION_INTERNAL_EXCEPTION",
+        }
+
+
+def _action_compact_status(payload):
+    return {
+        "ok": _action_bool(payload.get("ok"), False),
+        "facade_version": _ACTION_FACADE_VERSION,
+        "source_route": "/gpi/status",
+        "mvp_gate_status": _action_str(payload.get("mvp_gate_status")),
+        "mvp_gate_reason": _action_str(payload.get("mvp_gate_reason")),
+        "strict_allowed_global": _action_bool(payload.get("strict_allowed_global"), False),
+        "strict_allowed_reason": _action_str(payload.get("strict_allowed_reason")),
+        "paper_trading_count": payload.get("paper_trading_count", "ND"),
+        "paper_trading_ready_50": _action_bool(payload.get("paper_trading_ready_50"), False),
+        "paper_kpi_global_decisions": payload.get("paper_kpi_global_decisions", "ND"),
+        "paper_kpi_ready_50": _action_bool(payload.get("paper_kpi_ready_50"), False),
+        "paper_kpi_global_result_pending_count": payload.get("paper_kpi_global_result_pending_count", "ND"),
+        "paper_kpi_global_replay_ko_count": payload.get("paper_kpi_global_replay_ko_count", "ND"),
+        "cloud_ready": _action_bool(payload.get("cloud_ready"), False),
+        "cloud_brief_ok": _action_bool(payload.get("cloud_brief_ok"), False),
+        "source_pack_status": _action_str(payload.get("source_pack_status")),
+        "source_pack_error": _action_str(payload.get("source_pack_error"), ""),
+        "latest_course_uid": _action_str(payload.get("latest_course_uid")),
+        "latest_verdict": _action_str(payload.get("latest_verdict")),
+        "latest_structure": _action_str(payload.get("latest_structure")),
+        "latest_ticket": _action_str(payload.get("latest_ticket")),
+        "latest_edge": _action_str(payload.get("latest_edge")),
+        "latest_decision_id": _action_str(payload.get("latest_decision_id")),
+        "latest_input_hash": _action_str(payload.get("latest_input_hash")),
+        "latest_engine_version": _action_str(payload.get("latest_engine_version")),
+        "latest_ruleset_version": _action_str(payload.get("latest_ruleset_version")),
+        "latest_strict_allowed_oui_non": _action_str(payload.get("latest_strict_allowed_oui_non")),
+        "latest_decision_strict_allowed": _action_str(payload.get("latest_decision_strict_allowed")),
+        "latest_decision_block_reason": _action_str(payload.get("latest_decision_block_reason")),
+        "latest_strict_gate_summary": _action_str(payload.get("latest_strict_gate_summary")),
+        "latest_volatilite_status": _action_str(payload.get("latest_volatilite_status")),
+        "latest_volatilite_top6_max_pct": _action_str(payload.get("latest_volatilite_top6_max_pct")),
+        "latest_volatilite_top6_max_numero": _action_str(payload.get("latest_volatilite_top6_max_numero")),
+        "latest_volatilite_top6_max_cheval": _action_str(payload.get("latest_volatilite_top6_max_cheval")),
+        "latest_volatilite_top6_direction": _action_str(payload.get("latest_volatilite_top6_direction")),
+        "latest_cp_sec_candidate": _action_str(payload.get("latest_cp_sec_candidate")),
+        "latest_cp_sg_pair_sum": _action_str(payload.get("latest_cp_sg_pair_sum")),
+        "latest_cp_sg_filter_status": _action_str(payload.get("latest_cp_sg_filter_status")),
+        "latest_cp3_candidate": _action_str(payload.get("latest_cp3_candidate")),
+        "latest_cp3_sg_filter_status": _action_str(payload.get("latest_cp3_sg_filter_status")),
+        "latest_paper_candidate_allowed": _action_str(payload.get("latest_paper_candidate_allowed")),
+        "latest_paper_candidate_ticket": _action_str(payload.get("latest_paper_candidate_ticket")),
+        "latest_paper_candidate_reason": _action_str(payload.get("latest_paper_candidate_reason")),
+        "latest_source_decision": _action_str(payload.get("latest_source_decision")),
+        "error": _action_str(payload.get("error"), ""),
+    }
+
+
+def _action_extract_odds_context(brief_text):
+    lines = str(brief_text or "").splitlines()
+    capture = False
+    out = {}
+
+    mapping = {
+        "Odds context version": "odds_context_version",
+        "Odds context found": "odds_context_found",
+        "Volatilite SG statut": "odds_volatilite_sg_statut",
+        "Volatilite SG top6": "odds_volatilite_sg_top6",
+        "Volatilite SG kill-switch top6": "odds_volatilite_sg_kill_switch_top6",
+        "Volatilite SG instable top6": "odds_volatilite_sg_instable_top6",
+        "Strict allowed odds": "odds_strict_allowed",
+        "Edge odds": "odds_edge",
+        "Odds blocks strict": "odds_blocks_strict",
+        "Odds reason codes": "odds_reason_codes",
+    }
+
+    for line in lines:
+        clean = line.strip()
+
+        if clean == "ODDS_CONTEXT_GPI :":
+            capture = True
+            continue
+
+        if capture and clean == "":
+            break
+
+        if not capture or ":" not in clean:
+            continue
+
+        left, right = clean.split(":", 1)
+        key = mapping.get(left.strip())
+        if key:
+            out[key] = right.strip()
+
+    return out
+
+
+def _action_compact_brief(payload):
+    brief_text = payload.get("brief", "")
+    odds = _action_extract_odds_context(brief_text)
+
+    return {
+        "ok": _action_bool(payload.get("ok"), False),
+        "facade_version": _ACTION_FACADE_VERSION,
+        "source_route": "/gpi/chatgpt-brief",
+        "source": _action_str(payload.get("source")),
+        "updated": _action_str(payload.get("updated")),
+        "decision_id": _action_str(payload.get("decision_id")),
+        "input_hash": _action_str(payload.get("input_hash")),
+        "engine_version": _action_str(payload.get("engine_version")),
+        "ruleset_version": _action_str(payload.get("ruleset_version")),
+        "strict_allowed_oui_non": _action_str(payload.get("strict_allowed_oui_non")),
+        "split": _action_str(payload.get("split")),
+        "calibration_version": _action_str(payload.get("calibration_version")),
+        "leakage_check_ok": _action_str(payload.get("leakage_check_ok")),
+        "decision_before_race_oui_non": _action_str(payload.get("decision_before_race_oui_non")),
+        "replay_match_oui_non": _action_str(payload.get("replay_match_oui_non")),
+        "output_replayed_oui_non": _action_str(payload.get("output_replayed_oui_non")),
+        "course_uid": _action_str(payload.get("course_uid")),
+        "verdict_python": _action_str(payload.get("verdict_python")),
+        "qualite": _action_str(payload.get("qualite")),
+        "structure_max": _action_str(payload.get("structure_max")),
+        "ticket_exact": _action_str(payload.get("ticket_exact")),
+        "segment_roi": _action_str(payload.get("segment_roi")),
+        "edge_status": _action_str(payload.get("edge_status")),
+        "decision_strict_allowed": _action_str(payload.get("decision_strict_allowed")),
+        "decision_block_reason": _action_str(payload.get("decision_block_reason")),
+        "strict_gate_summary": _action_str(payload.get("strict_gate_summary")),
+        "volatilite_status": _action_str(payload.get("volatilite_status")),
+        "volatilite_top6_max_pct": _action_str(payload.get("volatilite_top6_max_pct")),
+        "volatilite_top6_max_numero": _action_str(payload.get("volatilite_top6_max_numero")),
+        "volatilite_top6_max_cheval": _action_str(payload.get("volatilite_top6_max_cheval")),
+        "volatilite_top6_direction": _action_str(payload.get("volatilite_top6_direction")),
+        "cp_sec_candidate": _action_str(payload.get("cp_sec_candidate")),
+        "cp_sg_pair_sum": _action_str(payload.get("cp_sg_pair_sum")),
+        "cp_sg_filter_status": _action_str(payload.get("cp_sg_filter_status")),
+        "cp3_candidate": _action_str(payload.get("cp3_candidate")),
+        "cp3_sg_filter_status": _action_str(payload.get("cp3_sg_filter_status")),
+        "paper_candidate_allowed": _action_str(payload.get("paper_candidate_allowed")),
+        "paper_candidate_ticket": _action_str(payload.get("paper_candidate_ticket")),
+        "paper_candidate_reason": _action_str(payload.get("paper_candidate_reason")),
+        "reason_codes": _action_str(payload.get("reason_codes")),
+        "kill_switch_codes": _action_str(payload.get("kill_switch_codes")),
+        "action_gpt": _action_str(payload.get("action_gpt")),
+        "odds_context": odds,
+        "error": _action_str(payload.get("error"), ""),
+    }
+
+
+def _action_runs_enabled():
+    return str(_action_os.getenv("GPI_ACTION_FACADE_RUN_ENABLED", "false")).strip().lower() in {
+        "1",
+        "true",
+        "oui",
+        "yes",
+    }
+
+
+def _action_run_blocked_response(phase):
+    return {
+        "ok": False,
+        "facade_version": _ACTION_FACADE_VERSION,
+        "phase": phase,
+        "blocked": True,
+        "reason": "ACTION_RUN_DISABLED",
+        "message": "Les routes POST de façade sont désactivées. Définir GPI_ACTION_FACADE_RUN_ENABLED=true côté Cloud Run pour les activer.",
+    }
+
+
+@app.get("/action/health")
+def action_health():
+    ensure_dirs()
+
+    return {
+        "ok": True,
+        "service": "GPI-Lite Watchlist",
+        "mode": "action_facade",
+        "facade_version": _ACTION_FACADE_VERSION,
+        "backend_version": "0.7.0-mcp-cloud",
+    }
+
+
+@app.get("/action/status")
+def action_status():
+    payload = _action_call(gpi_status, "gpi_status")
+    if payload.get("ok") is not True:
+        return {
+            "ok": False,
+            "facade_version": _ACTION_FACADE_VERSION,
+            "source_route": "/gpi/status",
+            "error": _action_str(payload.get("error")),
+            "route_function": _action_str(payload.get("route_function")),
+            "facade_error": _action_str(payload.get("facade_error")),
+        }
+
+    return _action_compact_status(payload)
+
+
+@app.get("/action/brief")
+def action_brief():
+    payload = _action_call(gpi_chatgpt_brief, "gpi_chatgpt_brief")
+    if payload.get("ok") is not True:
+        return {
+            "ok": False,
+            "facade_version": _ACTION_FACADE_VERSION,
+            "source_route": "/gpi/chatgpt-brief",
+            "error": _action_str(payload.get("error")),
+            "route_function": _action_str(payload.get("route_function")),
+            "facade_error": _action_str(payload.get("facade_error")),
+        }
+
+    return _action_compact_brief(payload)
+
+
+@app.post("/action/run/morning")
+def action_run_morning():
+    if not _action_runs_enabled():
+        return _action_run_blocked_response("morning")
+
+    run_payload = _action_call(drive_run_morning, "drive_run_morning")
+    status_payload = _action_call(gpi_status, "gpi_status")
+
+    return {
+        "ok": _action_bool(run_payload.get("ok"), False),
+        "facade_version": _ACTION_FACADE_VERSION,
+        "phase": "morning",
+        "run_error": _action_str(run_payload.get("error"), ""),
+        "status": _action_compact_status(status_payload) if status_payload.get("ok") is True else status_payload,
+    }
+
+
+@app.post("/action/run/h5")
+def action_run_h5():
+    if not _action_runs_enabled():
+        return _action_run_blocked_response("h5")
+
+    run_payload = _action_call(drive_run_h5, "drive_run_h5")
+    brief_payload = _action_call(gpi_chatgpt_brief, "gpi_chatgpt_brief")
+    status_payload = _action_call(gpi_status, "gpi_status")
+
+    return {
+        "ok": _action_bool(run_payload.get("ok"), False),
+        "facade_version": _ACTION_FACADE_VERSION,
+        "phase": "h5",
+        "run_error": _action_str(run_payload.get("error"), ""),
+        "brief": _action_compact_brief(brief_payload) if brief_payload.get("ok") is True else brief_payload,
+        "status": _action_compact_status(status_payload) if status_payload.get("ok") is True else status_payload,
+    }
+
+
+@app.post("/action/run/results")
+def action_run_results():
+    if not _action_runs_enabled():
+        return _action_run_blocked_response("results")
+
+    run_payload = _action_call(drive_run_results, "drive_run_results")
+    status_payload = _action_call(gpi_status, "gpi_status")
+
+    guardrails = run_payload.get("guardrails", {})
+    if not isinstance(guardrails, dict):
+        guardrails = {}
+
+    return {
+        "ok": _action_bool(run_payload.get("ok"), False),
+        "facade_version": _ACTION_FACADE_VERSION,
+        "phase": "results",
+        "run_error": _action_str(run_payload.get("error"), ""),
+        "guardrails": {
+            "h5_main_called": guardrails.get("h5_main_called", "ND"),
+            "results_main_called": guardrails.get("results_main_called", "ND"),
+            "audit_all_called": guardrails.get("audit_all_called", "ND"),
+            "decision_engine_outputs_modified": guardrails.get("decision_engine_outputs_modified", "ND"),
+            "paper_trading_50_decisions_modified": guardrails.get("paper_trading_50_decisions_modified", "ND"),
+            "post_course_only": guardrails.get("post_course_only", "ND"),
+        },
+        "status": _action_compact_status(status_payload) if status_payload.get("ok") is True else status_payload,
+    }
+
