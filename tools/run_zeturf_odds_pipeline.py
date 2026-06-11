@@ -21,6 +21,10 @@ from engine.odds.odds_volatility_gate import (
     write_gate_csv,
     write_gate_json,
 )
+from engine.odds.latest_odds_context import (
+    build_latest_odds_context,
+    write_latest_odds_context,
+)
 
 
 OUTPUT_DIR = PROJECT_ROOT / "data" / "output" / "odds"
@@ -122,6 +126,44 @@ def build_gate(
     )
 
 
+def build_latest_context(
+    current_csv: Path,
+    movements_csv: Path,
+    gate_json: Path,
+    course_uid: str,
+    previous_label: str,
+    current_label: str,
+) -> tuple[Path, Path, str, str, str]:
+    prefix = OUTPUT_DIR / (
+        f"{safe_slug(course_uid)}_"
+        f"{safe_slug(previous_label)}_to_{safe_slug(current_label)}"
+    )
+
+    context = build_latest_odds_context(
+        current_odds_csv=current_csv,
+        movements_csv=movements_csv,
+        gate_json=gate_json,
+    )
+
+    course_context_path = write_latest_odds_context(
+        context,
+        f"{prefix}_latest_odds_context.json",
+    )
+
+    latest_context_path = write_latest_odds_context(
+        context,
+        OUTPUT_DIR / "latest_odds_context.json",
+    )
+
+    return (
+        course_context_path,
+        latest_context_path,
+        context.strict_allowed_by_odds_context,
+        context.edge_status_by_odds_context,
+        context.reason_codes,
+    )
+
+
 def main() -> None:
     import argparse
 
@@ -187,6 +229,27 @@ def main() -> None:
         print(f"Reason codes : {reason_codes}")
         print(f"CSV gate volatilité : {gate_csv}")
         print(f"JSON gate volatilité : {gate_json}")
+
+        (
+            course_context_path,
+            latest_context_path,
+            strict_allowed_odds,
+            edge_status_odds,
+            context_reason_codes,
+        ) = build_latest_context(
+            current_csv=current_csv,
+            movements_csv=movements_csv,
+            gate_json=gate_json,
+            course_uid=args.course_uid,
+            previous_label=args.previous_label,
+            current_label=args.current_label,
+        )
+
+        print(f"Contexte odds course : {course_context_path}")
+        print(f"Contexte odds latest : {latest_context_path}")
+        print(f"Strict allowed odds : {strict_allowed_odds}")
+        print(f"Edge odds : {edge_status_odds}")
+        print(f"Reason codes contexte : {context_reason_codes}")
 
 
 if __name__ == "__main__":
