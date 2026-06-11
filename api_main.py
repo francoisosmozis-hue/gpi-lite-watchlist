@@ -4338,49 +4338,108 @@ def _action_compact_watchlist_row(row):
     }
 
 
+
 @app.get("/action/watchlist")
 def action_watchlist(limit: int = 50):
     ensure_dirs()
 
-    candidates = [
+    import io
+    import re as _action_re
+
+    local_candidates = [
         OUTPUT_DIR / "daily_watchlist.csv",
         OUTPUT_DIR / "watchlist.csv",
         OUTPUT_DIR / "latest_watchlist.csv",
+        OUTPUT_DIR / "daily_watchlist_priorisee.csv",
+        OUTPUT_DIR / "latest_daily_watchlist_priorisee.csv",
     ]
 
-    source_path = None
-    for candidate in candidates:
+    gcs_candidates = [
+        "gpi-lite/outputs/latest_daily_watchlist_priorisee.csv",
+        "gpi-lite/outputs/daily_watchlist_priorisee.csv",
+        "gpi-lite/outputs/daily_watchlist.csv",
+        "gpi-lite/outputs/latest_watchlist.csv",
+        "gpi-lite/outputs/watchlist.csv",
+    ]
+
+    source_kind = "ND"
+    source_file = "ND"
+    rows = []
+    errors = []
+
+    for candidate in local_candidates:
         if candidate.exists():
-            source_path = candidate
+            rows = _action_read_csv_rows(candidate, limit=1000)
+            source_kind = "local"
+            source_file = str(candidate)
             break
 
-    if source_path is None:
+    if not rows:
+        bucket_name = _action_os.getenv("GPI_BUCKET_NAME", "gpi-lite-watchlist-data").strip()
+
+        try:
+            from google.cloud import storage
+
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+
+            for object_name in gcs_candidates:
+                try:
+                    blob = bucket.blob(object_name)
+                    if not blob.exists(client):
+                        continue
+
+                    raw = blob.download_as_text(encoding="utf-8")
+                    reader = _action_csv.DictReader(io.StringIO(raw))
+                    rows = [row for row in reader if isinstance(row, dict)]
+
+                    source_kind = "gcs"
+                    source_file = f"gs://{bucket_name}/{object_name}"
+                    break
+
+                except Exception as exc:
+                    errors.append(f"{object_name}: {exc}")
+
+        except Exception as exc:
+            errors.append(f"GCS_CLIENT_ERROR: {exc}")
+
+    if not rows:
         return {
             "ok": False,
             "facade_version": _ACTION_FACADE_VERSION,
             "source_route": "/action/watchlist",
             "error": "WATCHLIST_FILE_ABSENT",
-            "searched": [str(p) for p in candidates],
+            "searched_local": [str(p) for p in local_candidates],
+            "searched_gcs": [f"gs://{_action_os.getenv('GPI_BUCKET_NAME', 'gpi-lite-watchlist-data').strip()}/{p}" for p in gcs_candidates],
+            "gcs_errors": errors,
             "courses": [],
         }
 
-    rows = _action_read_csv_rows(source_path, limit=1000)
+    def priority_rank(row):
+        raw = _action_pick(row, "priorite_h5", "priority_h5", "priorite", default="P999999")
+        text = str(raw).upper().strip()
+        match = _action_re.search(r"\d+", text)
+        if match:
+            return int(match.group(0))
+        return 999999
 
     def sort_key(row):
         return (
-            _action_int(row.get("priorite_h5"), 999999),
+            priority_rank(row),
             _action_pick(row, "heure", "heure_depart", "depart", default="99:99"),
             _action_pick(row, "course_uid", "uid", "course_id", default=""),
         )
 
     rows_sorted = sorted(rows, key=sort_key)
-    compact = [_action_compact_watchlist_row(row) for row in rows_sorted[: max(1, min(limit, 100))]]
+    safe_limit = max(1, min(int(limit or 50), 100))
+    compact = [_action_compact_watchlist_row(row) for row in rows_sorted[:safe_limit]]
 
     return {
         "ok": True,
         "facade_version": _ACTION_FACADE_VERSION,
         "source_route": "/action/watchlist",
-        "source_file": str(source_path),
+        "source_kind": source_kind,
+        "source_file": source_file,
         "sort": "priorite_h5_asc",
         "count_total": len(rows),
         "count_returned": len(compact),
