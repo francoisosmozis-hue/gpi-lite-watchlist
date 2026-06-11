@@ -4447,3 +4447,487 @@ def action_watchlist(limit: int = 50):
         "courses": compact,
     }
 
+
+
+
+# ACTION_H5_REPORT_FACADE_V0_1
+# Rapport H-5 lisible : lecture seule, aucun ticket strict créé ici.
+def _h5r_facade_version():
+    try:
+        return _ACTION_FACADE_VERSION
+    except Exception:
+        return "ACTION_FACADE_V0_1"
+
+
+def _h5r_output_dir():
+    from pathlib import Path
+    try:
+        return OUTPUT_DIR
+    except Exception:
+        return Path("data/output")
+
+
+def _h5r_pick(row, *keys, default="ND"):
+    if not isinstance(row, dict):
+        return default
+    for key in keys:
+        if key in row:
+            value = row.get(key)
+            if value is not None and str(value).strip() != "":
+                return str(value).strip()
+    return default
+
+
+def _h5r_bool_from_text(value):
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "oui", "yes", "y"}
+
+
+def _h5r_read_csv_text(raw):
+    import csv
+    import io
+
+    if not raw:
+        return []
+
+    # Gère UTF-8 avec BOM si besoin.
+    raw = raw.lstrip("\ufeff")
+    reader = csv.DictReader(io.StringIO(raw))
+    return [row for row in reader if isinstance(row, dict)]
+
+
+def _h5r_read_local_text(path):
+    try:
+        if path.exists():
+            return path.read_text(encoding="utf-8-sig")
+    except Exception:
+        try:
+            return path.read_text(encoding="latin-1")
+        except Exception:
+            return None
+    return None
+
+
+def _h5r_read_gcs_text(bucket_name, object_name):
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+
+        if not blob.exists(client):
+            return None, "absent"
+
+        return blob.download_as_text(encoding="utf-8"), ""
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _h5r_load_csv_candidates(local_names, gcs_names):
+    import os
+
+    out_dir = _h5r_output_dir()
+    local_errors = []
+    gcs_errors = []
+
+    for name in local_names:
+        path = out_dir / name
+        raw = _h5r_read_local_text(path)
+        if raw:
+            rows = _h5r_read_csv_text(raw)
+            if rows:
+                return rows, {
+                    "kind": "local",
+                    "file": str(path),
+                    "searched_local": [str(out_dir / x) for x in local_names],
+                    "searched_gcs": [],
+                    "errors": [],
+                }
+
+    bucket_name = os.getenv("GPI_BUCKET_NAME", "gpi-lite-watchlist-data").strip()
+
+    for object_name in gcs_names:
+        raw, err = _h5r_read_gcs_text(bucket_name, object_name)
+        if raw:
+            rows = _h5r_read_csv_text(raw)
+            if rows:
+                return rows, {
+                    "kind": "gcs",
+                    "file": f"gs://{bucket_name}/{object_name}",
+                    "searched_local": [str(out_dir / x) for x in local_names],
+                    "searched_gcs": [f"gs://{bucket_name}/{x}" for x in gcs_names],
+                    "errors": gcs_errors,
+                }
+        elif err and err != "absent":
+            gcs_errors.append(f"{object_name}: {err}")
+
+    return [], {
+        "kind": "absent",
+        "file": "ND",
+        "searched_local": [str(out_dir / x) for x in local_names],
+        "searched_gcs": [f"gs://{bucket_name}/{x}" for x in gcs_names],
+        "errors": local_errors + gcs_errors,
+    }
+
+
+def _h5r_load_json_candidates(local_names, gcs_names):
+    import json
+    import os
+
+    out_dir = _h5r_output_dir()
+    gcs_errors = []
+
+    for name in local_names:
+        path = out_dir / name
+        raw = _h5r_read_local_text(path)
+        if raw:
+            try:
+                return json.loads(raw), {
+                    "kind": "local",
+                    "file": str(path),
+                    "searched_local": [str(out_dir / x) for x in local_names],
+                    "searched_gcs": [],
+                    "errors": [],
+                }
+            except Exception:
+                pass
+
+    bucket_name = os.getenv("GPI_BUCKET_NAME", "gpi-lite-watchlist-data").strip()
+
+    for object_name in gcs_names:
+        raw, err = _h5r_read_gcs_text(bucket_name, object_name)
+        if raw:
+            try:
+                return json.loads(raw), {
+                    "kind": "gcs",
+                    "file": f"gs://{bucket_name}/{object_name}",
+                    "searched_local": [str(out_dir / x) for x in local_names],
+                    "searched_gcs": [f"gs://{bucket_name}/{x}" for x in gcs_names],
+                    "errors": gcs_errors,
+                }
+            except Exception as exc:
+                gcs_errors.append(f"{object_name}: json_error={exc}")
+        elif err and err != "absent":
+            gcs_errors.append(f"{object_name}: {err}")
+
+    return {}, {
+        "kind": "absent",
+        "file": "ND",
+        "searched_local": [str(out_dir / x) for x in local_names],
+        "searched_gcs": [f"gs://{bucket_name}/{x}" for x in gcs_names],
+        "errors": gcs_errors,
+    }
+
+
+def _h5r_as_float(value):
+    try:
+        text = str(value).replace(",", ".").strip()
+        if text in {"", "ND", "None", "nan"}:
+            return None
+        return float(text)
+    except Exception:
+        return None
+
+
+def _h5r_num_list(value):
+    import re
+
+    text = str(value or "")
+    return re.findall(r"\d+", text)
+
+
+def _h5r_brief_from_route_or_csv():
+    # Priorité : route interne actionBrief si elle existe.
+    for fn_name in ("action_brief", "actionBrief"):
+        fn = globals().get(fn_name)
+        if callable(fn):
+            try:
+                data = fn()
+                if isinstance(data, dict) and data.get("ok") is True:
+                    return data, {
+                        "kind": "internal_route",
+                        "file": fn_name,
+                        "errors": [],
+                    }
+            except Exception:
+                pass
+
+    rows, src = _h5r_load_csv_candidates(
+        local_names=[
+            "latest_decision_engine_outputs.csv",
+            "decision_engine_outputs.csv",
+        ],
+        gcs_names=[
+            "gpi-lite/outputs/latest_decision_engine_outputs.csv",
+            "gpi-lite/outputs/decision_engine_outputs.csv",
+        ],
+    )
+
+    if rows:
+        row = rows[-1]
+        row["ok"] = True
+        return row, src
+
+    return {"ok": False, "error": "BRIEF_ABSENT"}, src
+
+
+def _h5r_build_top_marche(brief, odds_context, limit=8):
+    top = []
+
+    odds_top6 = ""
+    if isinstance(odds_context, dict):
+        odds_top6 = _h5r_pick(odds_context, "odds_volatilite_sg_top6", "top6", default="")
+
+    if not odds_top6:
+        odds_top6 = _h5r_pick(brief, "odds_volatilite_sg_top6", "volatilite_sg_top6", default="")
+
+    nums = _h5r_num_list(odds_top6)
+
+    # Ajoute les numéros de CP_SEC si le top6 est absent ou incomplet.
+    cp_sec = _h5r_pick(brief, "cp_sec_candidate", "latest_cp_sec_candidate", default="")
+    for n in _h5r_num_list(cp_sec):
+        if n not in nums:
+            nums.append(n)
+
+    for idx, numero in enumerate(nums[:limit], start=1):
+        top.append({
+            "rang_marche": idx,
+            "numero": numero,
+            "cheval": "ND",
+            "sg_reference": "ND",
+            "sg_h5": "ND",
+            "variation_pct": "ND",
+            "direction": "ND",
+            "source": "odds_context_top6" if odds_top6 else "cp_sec_candidate",
+        })
+
+    return top
+
+
+def _h5r_build_mouvements(brief, odds_context):
+    kill_numero = _h5r_pick(
+        brief,
+        "volatilite_top6_max_numero",
+        "latest_volatilite_top6_max_numero",
+        default="ND",
+    )
+    kill_cheval = _h5r_pick(
+        brief,
+        "volatilite_top6_max_cheval",
+        "latest_volatilite_top6_max_cheval",
+        default="ND",
+    )
+    kill_pct = _h5r_pick(
+        brief,
+        "volatilite_top6_max_pct",
+        "latest_volatilite_top6_max_pct",
+        default="ND",
+    )
+    kill_direction = _h5r_pick(
+        brief,
+        "volatilite_top6_direction",
+        "latest_volatilite_top6_direction",
+        default="ND",
+    )
+
+    mouvements = []
+
+    if kill_numero != "ND" or kill_cheval != "ND":
+        mouvements.append({
+            "type": "kill_switch_top6",
+            "numero": kill_numero,
+            "cheval": kill_cheval,
+            "variation_pct": kill_pct,
+            "direction": kill_direction,
+            "seuil": ">35% top6/clé",
+            "decision": "BLOQUE_STRICT",
+        })
+
+    if isinstance(odds_context, dict):
+        instables = _h5r_pick(odds_context, "odds_volatilite_sg_instable_top6", default="")
+        for numero in _h5r_num_list(instables):
+            mouvements.append({
+                "type": "instable_top6",
+                "numero": numero,
+                "cheval": "ND",
+                "variation_pct": "ND",
+                "direction": "ND",
+                "seuil": ">20% top6/clé",
+                "decision": "DEGRADE",
+            })
+
+    return mouvements
+
+
+def _h5r_kill_reason(brief, odds_context):
+    volatilite_status = _h5r_pick(
+        brief,
+        "volatilite_status",
+        "latest_volatilite_status",
+        default="ND",
+    )
+    kill_codes = _h5r_pick(
+        brief,
+        "kill_switch_codes",
+        "latest_kill_switch_codes",
+        default="ND",
+    )
+    reason_codes = _h5r_pick(
+        brief,
+        "reason_codes",
+        "latest_reason_codes",
+        default="ND",
+    )
+    decision_block_reason = _h5r_pick(
+        brief,
+        "decision_block_reason",
+        "latest_decision_block_reason",
+        default="ND",
+    )
+
+    odds_status = "ND"
+    odds_blocks = "ND"
+    odds_reason = "ND"
+
+    if isinstance(odds_context, dict):
+        odds_status = _h5r_pick(odds_context, "odds_volatilite_sg_statut", default="ND")
+        odds_blocks = _h5r_pick(odds_context, "odds_blocks_strict", default="ND")
+        odds_reason = _h5r_pick(odds_context, "odds_reason_codes", default="ND")
+
+    active = (
+        volatilite_status.upper() == "KILL"
+        or "KILL" in kill_codes.upper()
+        or "KILL" in odds_status.upper()
+        or odds_blocks.lower() == "oui"
+    )
+
+    return {
+        "active": active,
+        "volatilite_status": volatilite_status,
+        "kill_switch_codes": kill_codes,
+        "reason_codes": reason_codes,
+        "decision_block_reason": decision_block_reason,
+        "odds_volatilite_sg_statut": odds_status,
+        "odds_blocks_strict": odds_blocks,
+        "odds_reason_codes": odds_reason,
+        "explication": (
+            "NO BET : kill-switch volatilité actif ou odds_context bloque le strict."
+            if active
+            else "Aucun kill-switch explicite détecté dans les champs disponibles."
+        ),
+    }
+
+
+@app.get("/action/h5-report")
+def action_h5_report(limit: int = 8):
+    try:
+        ensure_dirs()
+    except Exception:
+        pass
+
+    brief, brief_source = _h5r_brief_from_route_or_csv()
+
+    if not isinstance(brief, dict) or brief.get("ok") is not True:
+        return {
+            "ok": False,
+            "facade_version": _h5r_facade_version(),
+            "source_route": "/action/h5-report",
+            "error": "BRIEF_ABSENT",
+            "brief_source": brief_source,
+            "report": {},
+        }
+
+    # odds_context prioritaire depuis le brief, sinon tentative de fichiers contexte.
+    odds_context = brief.get("odds_context")
+    odds_source = {
+        "kind": "brief_field",
+        "file": "odds_context",
+        "errors": [],
+    }
+
+    if not isinstance(odds_context, dict):
+        odds_context, odds_source = _h5r_load_json_candidates(
+            local_names=[
+                "latest_h5_context.json",
+                "latest_odds_context.json",
+                "latest_odds_snapshot.json",
+                "latest_diff_drift.json",
+            ],
+            gcs_names=[
+                "gpi-lite/outputs/latest_h5_context.json",
+                "gpi-lite/outputs/latest_odds_context.json",
+                "gpi-lite/outputs/latest_odds_snapshot.json",
+                "gpi-lite/outputs/latest_diff_drift.json",
+            ],
+        )
+
+    safe_limit = max(1, min(int(limit or 8), 20))
+
+    kill = _h5r_kill_reason(brief, odds_context)
+    top_marche = _h5r_build_top_marche(brief, odds_context, limit=safe_limit)
+    mouvements = _h5r_build_mouvements(brief, odds_context)
+
+    report = {
+        "course_uid": _h5r_pick(brief, "course_uid", "latest_course_uid"),
+        "updated": _h5r_pick(brief, "updated"),
+        "verdict": _h5r_pick(brief, "verdict_python", "latest_verdict"),
+        "qualite": _h5r_pick(brief, "qualite"),
+        "structure_max": _h5r_pick(brief, "structure_max", "latest_structure"),
+        "ticket_exact": _h5r_pick(brief, "ticket_exact", "latest_ticket"),
+        "segment_roi": _h5r_pick(brief, "segment_roi"),
+        "edge_status": _h5r_pick(brief, "edge_status", "latest_edge"),
+        "strict_gate": {
+            "strict_allowed_oui_non": _h5r_pick(brief, "strict_allowed_oui_non", "latest_strict_allowed_oui_non"),
+            "decision_strict_allowed": _h5r_pick(brief, "decision_strict_allowed", "latest_decision_strict_allowed"),
+            "strict_gate_summary": _h5r_pick(brief, "strict_gate_summary", "latest_strict_gate_summary"),
+        },
+        "moteur": {
+            "decision_id": _h5r_pick(brief, "decision_id", "latest_decision_id"),
+            "input_hash": _h5r_pick(brief, "input_hash", "latest_input_hash"),
+            "engine_version": _h5r_pick(brief, "engine_version", "latest_engine_version"),
+            "ruleset_version": _h5r_pick(brief, "ruleset_version", "latest_ruleset_version"),
+            "split": _h5r_pick(brief, "split"),
+            "calibration_version": _h5r_pick(brief, "calibration_version"),
+            "leakage_check_ok": _h5r_pick(brief, "leakage_check_ok"),
+            "decision_before_race_oui_non": _h5r_pick(brief, "decision_before_race_oui_non"),
+            "replay_match_oui_non": _h5r_pick(brief, "replay_match_oui_non"),
+            "output_replayed_oui_non": _h5r_pick(brief, "output_replayed_oui_non"),
+        },
+        "snapshots": {
+            "brief_source": brief_source,
+            "odds_context_source": odds_source,
+            "odds_context_found": _h5r_pick(odds_context, "odds_context_found") if isinstance(odds_context, dict) else "ND",
+            "snapshot_reference_source": "ND",
+            "snapshot_h5_source": "ND",
+            "note": "Si les sources de snapshot sont ND, le rapport utilise les champs décision/fallback disponibles.",
+        },
+        "top_cotes": top_marche,
+        "mouvements": mouvements,
+        "kill_switch": kill,
+        "cp_sec": {
+            "candidate": _h5r_pick(brief, "cp_sec_candidate", "latest_cp_sec_candidate"),
+            "cp_sg_pair_sum": _h5r_pick(brief, "cp_sg_pair_sum", "latest_cp_sg_pair_sum"),
+            "cp_sg_filter_status": _h5r_pick(brief, "cp_sg_filter_status", "latest_cp_sg_filter_status"),
+        },
+        "cp3": {
+            "candidate": _h5r_pick(brief, "cp3_candidate", "latest_cp3_candidate"),
+            "cp3_sg_filter_status": _h5r_pick(brief, "cp3_sg_filter_status", "latest_cp3_sg_filter_status"),
+        },
+        "paper": {
+            "paper_candidate_allowed": _h5r_pick(brief, "paper_candidate_allowed", "latest_paper_candidate_allowed"),
+            "paper_candidate_ticket": _h5r_pick(brief, "paper_candidate_ticket", "latest_paper_candidate_ticket"),
+            "paper_candidate_reason": _h5r_pick(brief, "paper_candidate_reason", "latest_paper_candidate_reason"),
+        },
+        "action_gpt": _h5r_pick(brief, "action_gpt", default="ND"),
+        "strict_policy": "Rapport H-5 lecture seule. Aucun ticket strict n'est créé par /action/h5-report.",
+    }
+
+    return {
+        "ok": True,
+        "facade_version": _h5r_facade_version(),
+        "source_route": "/action/h5-report",
+        "report_version": "ACTION_H5_REPORT_FACADE_V0_1",
+        "report": report,
+    }
+
