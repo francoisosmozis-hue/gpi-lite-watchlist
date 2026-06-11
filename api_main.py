@@ -4255,3 +4255,130 @@ def action_run_results():
         "status": _action_compact_status(status_payload) if status_payload.get("ok") is True else status_payload,
     }
 
+
+
+# ============================================================
+# ACTION_WATCHLIST_FACADE_V0_1
+# Lecture compacte watchlist dédiée GPT Actions.
+# Classement par priorite_h5 si la colonne existe.
+# ============================================================
+
+import csv as _action_csv
+
+
+def _action_int(value, default=999999):
+    try:
+        if value is None:
+            return default
+        text = str(value).strip()
+        if not text:
+            return default
+        return int(float(text.replace(",", ".")))
+    except Exception:
+        return default
+
+
+def _action_float(value, default=None):
+    try:
+        if value is None:
+            return default
+        text = str(value).strip()
+        if not text:
+            return default
+        return float(text.replace(",", "."))
+    except Exception:
+        return default
+
+
+def _action_read_csv_rows(path, limit=50):
+    if not path.exists():
+        return []
+
+    rows = []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = _action_csv.DictReader(handle)
+        for row in reader:
+            if isinstance(row, dict):
+                rows.append(row)
+
+    return rows[:limit]
+
+
+def _action_pick(row, *names, default="ND"):
+    for name in names:
+        if name in row:
+            value = row.get(name)
+            if value is not None and str(value).strip() != "":
+                return str(value).strip()
+    return default
+
+
+def _action_compact_watchlist_row(row):
+    return {
+        "course_uid": _action_pick(row, "course_uid", "uid", "course_id", "nom_course"),
+        "reunion": _action_pick(row, "reunion", "R", "num_reunion"),
+        "course": _action_pick(row, "course", "C", "num_course"),
+        "hippodrome": _action_pick(row, "hippodrome"),
+        "prix": _action_pick(row, "prix", "nom_prix"),
+        "heure": _action_pick(row, "heure", "heure_depart", "depart"),
+        "priorite_h5": _action_pick(row, "priorite_h5"),
+        "qualite": _action_pick(row, "qualite"),
+        "structure_max": _action_pick(row, "structure_max"),
+        "verdict": _action_pick(row, "verdict", "verdict_python"),
+        "ticket_exact": _action_pick(row, "ticket_exact"),
+        "edge_status": _action_pick(row, "edge_status", "edge"),
+        "raison": _action_pick(row, "raison", "reason", "reason_codes"),
+        "source": _action_pick(row, "source", "source_file"),
+    }
+
+
+@app.get("/action/watchlist")
+def action_watchlist(limit: int = 50):
+    ensure_dirs()
+
+    candidates = [
+        OUTPUT_DIR / "daily_watchlist.csv",
+        OUTPUT_DIR / "watchlist.csv",
+        OUTPUT_DIR / "latest_watchlist.csv",
+    ]
+
+    source_path = None
+    for candidate in candidates:
+        if candidate.exists():
+            source_path = candidate
+            break
+
+    if source_path is None:
+        return {
+            "ok": False,
+            "facade_version": _ACTION_FACADE_VERSION,
+            "source_route": "/action/watchlist",
+            "error": "WATCHLIST_FILE_ABSENT",
+            "searched": [str(p) for p in candidates],
+            "courses": [],
+        }
+
+    rows = _action_read_csv_rows(source_path, limit=1000)
+
+    def sort_key(row):
+        return (
+            _action_int(row.get("priorite_h5"), 999999),
+            _action_pick(row, "heure", "heure_depart", "depart", default="99:99"),
+            _action_pick(row, "course_uid", "uid", "course_id", default=""),
+        )
+
+    rows_sorted = sorted(rows, key=sort_key)
+    compact = [_action_compact_watchlist_row(row) for row in rows_sorted[: max(1, min(limit, 100))]]
+
+    return {
+        "ok": True,
+        "facade_version": _ACTION_FACADE_VERSION,
+        "source_route": "/action/watchlist",
+        "source_file": str(source_path),
+        "sort": "priorite_h5_asc",
+        "count_total": len(rows),
+        "count_returned": len(compact),
+        "strict_policy": "Aucun ticket strict depuis morning. Morning = watchlist / priorisation uniquement.",
+        "courses": compact,
+    }
+
