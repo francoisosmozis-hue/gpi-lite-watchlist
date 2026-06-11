@@ -905,6 +905,19 @@ def build_brief_from_decision(decision, prompt_text="", source_decision=""):
         "REGLE_GPI : ne pas changer le verdict Python. Ne jamais transformer une simulation en ticket strict. Sans moteur complet, split valide, proxy audite ou SP calibre, ticket reel interdit."
     ]
 
+    try:
+        from engine.odds.brief_odds_enricher import build_odds_brief_block
+        odds_brief_block = build_odds_brief_block()
+    except Exception as exc:
+        odds_brief_block = f"ODDS_CONTEXT_ERROR : {type(exc).__name__}: {exc}"
+
+    if odds_brief_block:
+        brief_lines.extend([
+            "",
+            "ODDS_CONTEXT_GPI :",
+            odds_brief_block,
+        ])
+
     return {
         "course_uid": course_uid,
         "verdict_python": verdict_python,
