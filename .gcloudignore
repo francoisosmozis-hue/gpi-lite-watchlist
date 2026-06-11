@@ -1,0 +1,81 @@
+﻿# Environnement local
+.venv/
+venv/
+env/
+ENV/
+
+# Git et caches
+.git/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.ipynb_checkpoints/
+
+# Fichiers temporaires
+*.log
+*.tmp
+*.bak
+*.old
+.DS_Store
+Thumbs.db
+
+# Variables et secrets locaux
+.env
+.env.*
+*.key
+*.pem
+*.json.key
+secrets/
+
+# Données lourdes non nécessaires au build
+data/
+outputs/
+uploads/
+tmp/
+temp/
+.tmp.driveupload/
+
+# Sources et archives locales hors build
+sources/
+project_sources/
+debug/
+
+# PDF, exports et captures
+*.pdf
+*.xlsx
+*.xls
+*.xlsm
+*.docx
+*.pptx
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.zip
+*.html
+*.csv
+*.sqlite
+*.db
+
+# Backups de code
+*_backup.py
+*backup*.py
+*.bak*
+api_main.py.bak*
+api_main_backup*
+api_main_V*
+h5_main.py.bak*
+h5_main_backup*
+h5_main_V*
+
+# Notebooks
+*.ipynb
+
+# Docker local inutile dans Cloud Build
+docker-compose.yml
