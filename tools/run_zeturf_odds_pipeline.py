@@ -16,6 +16,11 @@ from engine.odds.odds_movement_builder import (
     write_movements_csv,
     write_movements_json,
 )
+from engine.odds.odds_volatility_gate import (
+    build_volatility_gate,
+    write_gate_csv,
+    write_gate_json,
+)
 
 
 OUTPUT_DIR = PROJECT_ROOT / "data" / "output" / "odds"
@@ -86,17 +91,49 @@ def build_movement(
     return csv_path, json_path, len(rows), kill_switch_count
 
 
+def build_gate(
+    current_csv: Path,
+    movements_csv: Path,
+    course_uid: str,
+    previous_label: str,
+    current_label: str,
+    top_n: int,
+) -> tuple[Path, Path, str, str, str]:
+    prefix = OUTPUT_DIR / (
+        f"{safe_slug(course_uid)}_"
+        f"{safe_slug(previous_label)}_to_{safe_slug(current_label)}"
+    )
+
+    result = build_volatility_gate(
+        current_odds_csv=current_csv,
+        movements_csv=movements_csv,
+        top_n=top_n,
+    )
+
+    csv_path = write_gate_csv(result, f"{prefix}_volatility_gate.csv")
+    json_path = write_gate_json(result, f"{prefix}_volatility_gate.json")
+
+    return (
+        csv_path,
+        json_path,
+        result.course_statut_marche,
+        result.kill_switch_topn_oui_non,
+        result.reason_codes,
+    )
+
+
 def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Pipeline local snapshots ZEturf : HTML vers cotes, puis volatilité SG."
+        description="Pipeline local snapshots ZEturf : HTML vers cotes, volatilité SG, gate GPI."
     )
     parser.add_argument("--course-uid", required=True)
     parser.add_argument("--current-html", required=True)
     parser.add_argument("--current-label", required=True)
     parser.add_argument("--previous-html", required=False)
     parser.add_argument("--previous-label", required=False)
+    parser.add_argument("--top-n", type=int, default=6)
 
     args = parser.parse_args()
 
@@ -135,6 +172,21 @@ def main() -> None:
         print(f"Kill-switch volatilité : {kill_switch_count}")
         print(f"CSV mouvements : {movements_csv}")
         print(f"JSON mouvements : {movements_json}")
+
+        gate_csv, gate_json, course_statut, kill_switch_topn, reason_codes = build_gate(
+            current_csv=current_csv,
+            movements_csv=movements_csv,
+            course_uid=args.course_uid,
+            previous_label=args.previous_label,
+            current_label=args.current_label,
+            top_n=args.top_n,
+        )
+
+        print(f"Course statut marché : {course_statut}")
+        print(f"Kill-switch top{args.top_n} : {kill_switch_topn}")
+        print(f"Reason codes : {reason_codes}")
+        print(f"CSV gate volatilité : {gate_csv}")
+        print(f"JSON gate volatilité : {gate_json}")
 
 
 if __name__ == "__main__":
