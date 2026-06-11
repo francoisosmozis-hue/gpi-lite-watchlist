@@ -804,11 +804,26 @@ def build_brief_from_decision(decision, prompt_text="", source_decision=""):
         return ";".join(parts)
 
     odds_override_status = "ND"
+    odds_context_for_brief = None
 
     try:
         from engine.odds.brief_odds_enricher import build_odds_decision_overrides
+        from engine.odds.latest_odds_context_reader import read_latest_odds_context
+        from engine.odds.latest_odds_context_from_decision import (
+            build_latest_odds_context_from_decision,
+            write_latest_odds_context_from_decision,
+        )
 
-        odds_overrides = build_odds_decision_overrides()
+        odds_context_for_brief = read_latest_odds_context()
+
+        if odds_context_for_brief.get("odds_context_found") != "oui":
+            odds_context_for_brief = build_latest_odds_context_from_decision(decision)
+            try:
+                write_latest_odds_context_from_decision(odds_context_for_brief)
+            except Exception:
+                pass
+
+        odds_overrides = build_odds_decision_overrides(odds_context_for_brief)
         odds_override_status = str(odds_overrides.get("strict_allowed_oui_non", "ND"))
 
         if odds_override_status == "non":
@@ -949,7 +964,7 @@ def build_brief_from_decision(decision, prompt_text="", source_decision=""):
 
     try:
         from engine.odds.brief_odds_enricher import build_odds_brief_block
-        odds_brief_block = build_odds_brief_block()
+        odds_brief_block = build_odds_brief_block(odds_context_for_brief)
     except Exception as exc:
         odds_brief_block = f"ODDS_CONTEXT_ERROR : {type(exc).__name__}: {exc}"
 

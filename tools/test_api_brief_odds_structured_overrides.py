@@ -76,6 +76,7 @@ def main() -> None:
         assert "ODDS_CONTEXT_STRICT_BLOCKED" in built["kill_switch_codes"]
         assert "ACTION_GPT : Kill-switch actif. Confirmer NO BET." in built["brief"]
         assert "ODDS_CONTEXT_GPI :" in built["brief"]
+        assert "Odds context found : decision_fallback" in built["brief"] or "Odds context found : oui" in built["brief"]
 
     finally:
         if previous_exists:

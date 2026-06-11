@@ -90,7 +90,7 @@ def build_odds_context_reason_codes(context: dict[str, Any]) -> list[str]:
             if code.strip()
         )
 
-    if context.get("odds_context_found") != "oui":
+    if context.get("odds_context_found") not in {"oui", "decision_fallback"}:
         reason_codes.append("ODDS_CONTEXT_ABSENT")
 
     if context.get("strict_allowed_by_odds_context") == "non":
