@@ -4819,6 +4819,284 @@ def _h5r_kill_reason(brief, odds_context):
     }
 
 
+
+# ACTION_H5_REPORT_FACADE_V0_2
+# Enrichissement du rapport H-5 avec SG 9h vs SG H-5.
+def _h5r_norm_num(value):
+    try:
+        if value is None:
+            return ""
+        txt = str(value).strip()
+        if txt.endswith(".0"):
+            txt = txt[:-2]
+        return txt
+    except Exception:
+        return ""
+
+
+def _h5r_float_or_none(value):
+    try:
+        txt = str(value).replace(",", ".").strip()
+        if txt in {"", "ND", "None", "nan"}:
+            return None
+        return float(txt)
+    except Exception:
+        return None
+
+
+def _h5r_pct_variation(ref, h5):
+    ref_f = _h5r_float_or_none(ref)
+    h5_f = _h5r_float_or_none(h5)
+
+    if ref_f is None or h5_f is None or ref_f <= 0:
+        return "ND", "ND"
+
+    pct = ((h5_f - ref_f) / ref_f) * 100.0
+
+    if abs(pct) < 5:
+        direction = "STABLE"
+    elif pct > 0:
+        direction = "DRIFT"
+    else:
+        direction = "STEAM"
+
+    return f"{pct:.2f}", direction
+
+
+def _h5r_load_latest_h5_context():
+    data, src = _h5r_load_json_candidates(
+        local_names=["latest_h5_context.json"],
+        gcs_names=["gpi-lite/outputs/latest_h5_context.json"],
+    )
+    if not isinstance(data, dict):
+        data = {}
+    return data, src
+
+
+def _h5r_context_course_key(context, brief):
+    key = "ND"
+
+    if isinstance(context, dict):
+        key = context.get("course_key") or "ND"
+
+    if key == "ND":
+        key = _h5r_pick(brief, "course_uid", "latest_course_uid", default="ND")
+
+    return str(key).strip()
+
+
+def _h5r_context_9h_blob(context, course_key):
+    if isinstance(context, dict):
+        c9 = context.get("context_9h") or {}
+        checked = c9.get("checked") or []
+        if checked and isinstance(checked[0], dict):
+            blob = checked[0].get("gcs_blob")
+            if blob:
+                return str(blob).strip()
+
+    if course_key and course_key != "ND":
+        return f"gpi-lite/outputs/{course_key}_course_9h_clean.csv"
+
+    return "ND"
+
+
+def _h5r_context_h5_blob(course_key):
+    if course_key and course_key != "ND":
+        return f"gpi-lite/outputs/{course_key}_course_h5_clean.csv"
+    return "ND"
+
+
+def _h5r_load_snapshot_rows(context, brief):
+    course_key = _h5r_context_course_key(context, brief)
+    blob_9h = _h5r_context_9h_blob(context, course_key)
+    blob_h5 = _h5r_context_h5_blob(course_key)
+
+    rows_9h, src_9h = _h5r_load_csv_candidates(
+        local_names=[
+            f"{course_key}_course_9h_clean.csv",
+            "course_9h_clean.csv",
+        ],
+        gcs_names=[blob_9h] if blob_9h != "ND" else [],
+    )
+
+    rows_h5, src_h5 = _h5r_load_csv_candidates(
+        local_names=[
+            f"{course_key}_course_h5_clean.csv",
+            "course_h5_clean.csv",
+        ],
+        gcs_names=[blob_h5] if blob_h5 != "ND" else [],
+    )
+
+    return {
+        "course_key": course_key,
+        "rows_9h": rows_9h,
+        "rows_h5": rows_h5,
+        "source_9h": src_9h,
+        "source_h5": src_h5,
+        "blob_9h": blob_9h,
+        "blob_h5": blob_h5,
+    }
+
+
+def _h5r_snapshot_maps(snapshot):
+    map_9h = {}
+    map_h5 = {}
+
+    for row in snapshot.get("rows_9h") or []:
+        num = _h5r_norm_num(_h5r_pick(row, "numero", "num", "n", default=""))
+        if num:
+            map_9h[num] = row
+
+    for row in snapshot.get("rows_h5") or []:
+        num = _h5r_norm_num(_h5r_pick(row, "numero", "num", "n", default=""))
+        if num:
+            map_h5[num] = row
+
+    return map_9h, map_h5
+
+
+def _h5r_nums_from_odds_or_market(brief, odds_context, snapshot):
+    nums = []
+
+    odds_top6 = ""
+    if isinstance(odds_context, dict):
+        odds_top6 = _h5r_pick(odds_context, "odds_volatilite_sg_top6", "top6", default="")
+
+    if not odds_top6:
+        odds_top6 = _h5r_pick(brief, "odds_volatilite_sg_top6", "volatilite_sg_top6", default="")
+
+    for n in _h5r_num_list(odds_top6):
+        n = _h5r_norm_num(n)
+        if n and n not in nums:
+            nums.append(n)
+
+    cp_sec = _h5r_pick(brief, "cp_sec_candidate", "latest_cp_sec_candidate", default="")
+    for n in _h5r_num_list(cp_sec):
+        n = _h5r_norm_num(n)
+        if n and n not in nums:
+            nums.append(n)
+
+    # Si le top6 odds_context est incomplet, compléter par les plus basses cotes SG H-5.
+    h5_rows = snapshot.get("rows_h5") or []
+
+    def sg_key(row):
+        sg = _h5r_float_or_none(_h5r_pick(row, "SG", "sg", "cote", "cote_sg", default="ND"))
+        return sg if sg is not None else 999999.0
+
+    for row in sorted(h5_rows, key=sg_key):
+        n = _h5r_norm_num(_h5r_pick(row, "numero", default=""))
+        if n and n not in nums:
+            nums.append(n)
+
+    return nums
+
+
+def _h5r_build_top_marche_v2(brief, odds_context, snapshot, limit=8):
+    map_9h, map_h5 = _h5r_snapshot_maps(snapshot)
+    nums = _h5r_nums_from_odds_or_market(brief, odds_context, snapshot)
+
+    top = []
+
+    for idx, numero in enumerate(nums[:limit], start=1):
+        row_9h = map_9h.get(numero, {})
+        row_h5 = map_h5.get(numero, {})
+
+        cheval = _h5r_pick(row_h5, "cheval", default="")
+        if not cheval:
+            cheval = _h5r_pick(row_9h, "cheval", default="ND")
+
+        sg_9h = _h5r_pick(row_9h, "SG", "sg", "cote", "cote_sg", default="ND")
+        sg_h5 = _h5r_pick(row_h5, "SG", "sg", "cote", "cote_sg", default="ND")
+        variation_pct, direction = _h5r_pct_variation(sg_9h, sg_h5)
+
+        top.append({
+            "rang_marche": idx,
+            "numero": numero,
+            "cheval": cheval,
+            "sg_reference": sg_9h,
+            "sg_h5": sg_h5,
+            "variation_pct": variation_pct,
+            "direction": direction,
+            "sp_min_h5": _h5r_pick(row_h5, "SP_min", "sp_min", default="ND"),
+            "sp_max_h5": _h5r_pick(row_h5, "SP_max", "sp_max", default="ND"),
+            "statut_9h": _h5r_pick(row_9h, "statut", default="ND"),
+            "statut_h5": _h5r_pick(row_h5, "statut", default="ND"),
+            "is_np_h5": _h5r_pick(row_h5, "is_np", default="ND"),
+            "extraction_confidence_h5": _h5r_pick(row_h5, "extraction_confidence", default="ND"),
+            "source": "snapshot_9h_vs_h5",
+        })
+
+    return top
+
+
+def _h5r_build_mouvements_v2(brief, odds_context, snapshot):
+    map_9h, map_h5 = _h5r_snapshot_maps(snapshot)
+    mouvements = []
+
+    all_nums = sorted(
+        set(map_9h.keys()) | set(map_h5.keys()),
+        key=lambda x: int(x) if str(x).isdigit() else 999999,
+    )
+
+    for numero in all_nums:
+        row_9h = map_9h.get(numero, {})
+        row_h5 = map_h5.get(numero, {})
+
+        sg_9h = _h5r_pick(row_9h, "SG", "sg", "cote", "cote_sg", default="ND")
+        sg_h5 = _h5r_pick(row_h5, "SG", "sg", "cote", "cote_sg", default="ND")
+        variation_pct, direction = _h5r_pct_variation(sg_9h, sg_h5)
+
+        pct_f = _h5r_float_or_none(variation_pct)
+        if pct_f is None:
+            continue
+
+        abs_pct = abs(pct_f)
+
+        if abs_pct >= 35:
+            type_mvt = "kill_switch_candidate"
+            decision = "BLOQUE_STRICT_POTENTIEL"
+        elif abs_pct >= 20:
+            type_mvt = "instable"
+            decision = "DEGRADE"
+        else:
+            continue
+
+        mouvements.append({
+            "type": type_mvt,
+            "numero": numero,
+            "cheval": _h5r_pick(row_h5, "cheval", default=_h5r_pick(row_9h, "cheval", default="ND")),
+            "sg_reference": sg_9h,
+            "sg_h5": sg_h5,
+            "variation_pct": variation_pct,
+            "direction": direction,
+            "seuil": ">=35% kill potentiel ; >=20% instable",
+            "decision": decision,
+            "statut_h5": _h5r_pick(row_h5, "statut", default="ND"),
+        })
+
+    # Ajouter explicitement le mouvement qui a déclenché le kill-switch moteur.
+    kill_numero = _h5r_pick(brief, "volatilite_top6_max_numero", "latest_volatilite_top6_max_numero", default="ND")
+    kill_cheval = _h5r_pick(brief, "volatilite_top6_max_cheval", "latest_volatilite_top6_max_cheval", default="ND")
+    kill_pct = _h5r_pick(brief, "volatilite_top6_max_pct", "latest_volatilite_top6_max_pct", default="ND")
+    kill_direction = _h5r_pick(brief, "volatilite_top6_direction", "latest_volatilite_top6_direction", default="ND")
+
+    if kill_numero != "ND" or kill_cheval != "ND":
+        mouvements.insert(0, {
+            "type": "kill_switch_moteur",
+            "numero": kill_numero,
+            "cheval": kill_cheval,
+            "sg_reference": _h5r_pick(map_9h.get(_h5r_norm_num(kill_numero), {}), "SG", default="ND"),
+            "sg_h5": _h5r_pick(map_h5.get(_h5r_norm_num(kill_numero), {}), "SG", default="ND"),
+            "variation_pct": kill_pct,
+            "direction": kill_direction,
+            "seuil": ">35% top6/clé",
+            "decision": "BLOQUE_STRICT",
+            "statut_h5": _h5r_pick(map_h5.get(_h5r_norm_num(kill_numero), {}), "statut", default="ND"),
+        })
+
+    return mouvements
+
+
 @app.get("/action/h5-report")
 def action_h5_report(limit: int = 8):
     try:
@@ -4838,7 +5116,6 @@ def action_h5_report(limit: int = 8):
             "report": {},
         }
 
-    # odds_context prioritaire depuis le brief, sinon tentative de fichiers contexte.
     odds_context = brief.get("odds_context")
     odds_source = {
         "kind": "brief_field",
@@ -4862,11 +5139,14 @@ def action_h5_report(limit: int = 8):
             ],
         )
 
+    h5_context, h5_context_source = _h5r_load_latest_h5_context()
+    snapshot = _h5r_load_snapshot_rows(h5_context, brief)
+
     safe_limit = max(1, min(int(limit or 8), 20))
 
     kill = _h5r_kill_reason(brief, odds_context)
-    top_marche = _h5r_build_top_marche(brief, odds_context, limit=safe_limit)
-    mouvements = _h5r_build_mouvements(brief, odds_context)
+    top_marche = _h5r_build_top_marche_v2(brief, odds_context, snapshot, limit=safe_limit)
+    mouvements = _h5r_build_mouvements_v2(brief, odds_context, snapshot)
 
     report = {
         "course_uid": _h5r_pick(brief, "course_uid", "latest_course_uid"),
@@ -4895,12 +5175,16 @@ def action_h5_report(limit: int = 8):
             "output_replayed_oui_non": _h5r_pick(brief, "output_replayed_oui_non"),
         },
         "snapshots": {
+            "h5_context_source": h5_context_source,
             "brief_source": brief_source,
             "odds_context_source": odds_source,
             "odds_context_found": _h5r_pick(odds_context, "odds_context_found") if isinstance(odds_context, dict) else "ND",
-            "snapshot_reference_source": "ND",
-            "snapshot_h5_source": "ND",
-            "note": "Si les sources de snapshot sont ND, le rapport utilise les champs décision/fallback disponibles.",
+            "snapshot_reference_source": snapshot.get("source_9h"),
+            "snapshot_h5_source": snapshot.get("source_h5"),
+            "snapshot_reference_rows": len(snapshot.get("rows_9h") or []),
+            "snapshot_h5_rows": len(snapshot.get("rows_h5") or []),
+            "course_key": snapshot.get("course_key", "ND"),
+            "note": "SG référence = snapshot 9h ; SG H-5 = snapshot H-5. Variation = (SG_H5 - SG_9H) / SG_9H.",
         },
         "top_cotes": top_marche,
         "mouvements": mouvements,
@@ -4927,7 +5211,7 @@ def action_h5_report(limit: int = 8):
         "ok": True,
         "facade_version": _h5r_facade_version(),
         "source_route": "/action/h5-report",
-        "report_version": "ACTION_H5_REPORT_FACADE_V0_1",
+        "report_version": "ACTION_H5_REPORT_FACADE_V0_2",
         "report": report,
     }
 
