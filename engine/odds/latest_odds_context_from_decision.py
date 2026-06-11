@@ -19,6 +19,41 @@ def _get_any(row: Mapping[str, Any], keys: list[str], default: str = "ND") -> st
     return default
 
 
+def _get_prompt_field(prompt_text: str, field_name: str) -> str:
+    wanted = field_name.strip().upper()
+
+    for line in str(prompt_text or "").splitlines():
+        cleaned = line.strip()
+        if ":" not in cleaned:
+            continue
+
+        left, right = cleaned.split(":", 1)
+
+        if left.strip().upper() == wanted:
+            return right.strip()
+
+    return ""
+
+
+def _get_any_with_prompt(
+    row: Mapping[str, Any],
+    keys: list[str],
+    prompt_text: str = "",
+    default: str = "ND",
+) -> str:
+    value = _get_any(row, keys, "")
+
+    if value:
+        return value
+
+    for key in keys:
+        prompt_value = _get_prompt_field(prompt_text, key)
+        if prompt_value:
+            return prompt_value
+
+    return default
+
+
 def _as_int(value: Any, default: int = 0) -> int:
     try:
         return int(float(str(value).replace(",", ".")))
@@ -30,12 +65,12 @@ def _has_text_token(value: Any, token: str) -> bool:
     return token.upper() in str(value or "").upper()
 
 
-def _is_kill_switch(decision: Mapping[str, Any]) -> bool:
-    kill_switch_codes = _get_any(decision, ["kill_switch_codes", "KILL_SWITCHS"], "")
-    decision_block_reason = _get_any(decision, ["decision_block_reason", "DECISION_BLOCK_REASON"], "")
-    strict_gate_summary = _get_any(decision, ["strict_gate_summary", "STRICT_GATE_SUMMARY"], "")
-    volatilite_status = _get_any(decision, ["volatilite_status", "VOLATILITE_STATUS"], "")
-    variation_rouge_top6 = _get_any(decision, ["variation_rouge_top6", "VARIATION_ROUGE_TOP6"], "")
+def _is_kill_switch(decision: Mapping[str, Any], prompt_text: str = "") -> bool:
+    kill_switch_codes = _get_any_with_prompt(decision, ["kill_switch_codes", "KILL_SWITCHS"], prompt_text, "")
+    decision_block_reason = _get_any_with_prompt(decision, ["decision_block_reason", "DECISION_BLOCK_REASON"], prompt_text, "")
+    strict_gate_summary = _get_any_with_prompt(decision, ["strict_gate_summary", "STRICT_GATE_SUMMARY"], prompt_text, "")
+    volatilite_status = _get_any_with_prompt(decision, ["volatilite_status", "VOLATILITE_STATUS"], prompt_text, "")
+    variation_rouge_top6 = _get_any_with_prompt(decision, ["variation_rouge_top6", "VARIATION_ROUGE_TOP6"], prompt_text, "")
 
     return (
         _has_text_token(kill_switch_codes, "VOLATILITE_KILL_SWITCH_TOP6")
@@ -46,9 +81,9 @@ def _is_kill_switch(decision: Mapping[str, Any]) -> bool:
     )
 
 
-def _is_instable(decision: Mapping[str, Any]) -> bool:
-    volatilite_status = _get_any(decision, ["volatilite_status", "VOLATILITE_STATUS"], "")
-    decision_block_reason = _get_any(decision, ["decision_block_reason", "DECISION_BLOCK_REASON"], "")
+def _is_instable(decision: Mapping[str, Any], prompt_text: str = "") -> bool:
+    volatilite_status = _get_any_with_prompt(decision, ["volatilite_status", "VOLATILITE_STATUS"], prompt_text, "")
+    decision_block_reason = _get_any_with_prompt(decision, ["decision_block_reason", "DECISION_BLOCK_REASON"], prompt_text, "")
 
     return (
         volatilite_status.upper() in {"INSTABLE", "DEGRADE", "ORANGE"}
@@ -56,13 +91,13 @@ def _is_instable(decision: Mapping[str, Any]) -> bool:
     )
 
 
-def build_latest_odds_context_from_decision(decision: Mapping[str, Any]) -> dict[str, Any]:
-    course_uid = _get_any(decision, ["course_uid", "COURSE", "course_key"])
-    top_n_numbers = _get_any(decision, ["top6_sg", "TOP6_SG"], "")
-    max_numero = _get_any(decision, ["volatilite_top6_max_numero", "VOLATILITE_TOP6_MAX_NUMERO"], "")
+def build_latest_odds_context_from_decision(decision: Mapping[str, Any], prompt_text: str = "") -> dict[str, Any]:
+    course_uid = _get_any_with_prompt(decision, ["course_uid", "COURSE", "course_key"], prompt_text)
+    top_n_numbers = _get_any_with_prompt(decision, ["top6_sg", "TOP6_SG"], prompt_text, "")
+    max_numero = _get_any_with_prompt(decision, ["volatilite_top6_max_numero", "VOLATILITE_TOP6_MAX_NUMERO"], prompt_text, "")
 
-    kill = _is_kill_switch(decision)
-    instable = _is_instable(decision)
+    kill = _is_kill_switch(decision, prompt_text)
+    instable = _is_instable(decision, prompt_text)
 
     if kill:
         course_statut_marche = "KILL_SWITCH_TOPN"
@@ -120,7 +155,7 @@ def build_latest_odds_context_from_decision(decision: Mapping[str, Any]) -> dict
         "odds_context_found": "decision_fallback",
         "course_uid": course_uid,
         "current_snapshot_label": "H5",
-        "runners_count": _as_int(_get_any(decision, ["partants_reels", "PARTANTS_REELS"], "0")),
+        "runners_count": _as_int(_get_any_with_prompt(decision, ["partants_reels", "PARTANTS_REELS"], prompt_text, "0")),
         "top_n": 6,
         "top_n_numbers": top_n_numbers.replace(",", "-"),
         "top_n_kill_switch_numbers": top_n_kill_switch_numbers,

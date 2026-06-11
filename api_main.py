@@ -817,7 +817,10 @@ def build_brief_from_decision(decision, prompt_text="", source_decision=""):
         odds_context_for_brief = read_latest_odds_context()
 
         if odds_context_for_brief.get("odds_context_found") != "oui":
-            odds_context_for_brief = build_latest_odds_context_from_decision(decision)
+            odds_context_for_brief = build_latest_odds_context_from_decision(
+                decision,
+                prompt_text=prompt_text,
+            )
             try:
                 write_latest_odds_context_from_decision(odds_context_for_brief)
             except Exception:

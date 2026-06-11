@@ -59,7 +59,9 @@ def read_latest_odds_context(
 
     context = dict(DEFAULT_ODDS_CONTEXT)
     context.update(payload)
-    context["odds_context_found"] = "oui"
+
+    if context.get("odds_context_found") not in {"oui", "decision_fallback"}:
+        context["odds_context_found"] = "oui"
 
     return context
 

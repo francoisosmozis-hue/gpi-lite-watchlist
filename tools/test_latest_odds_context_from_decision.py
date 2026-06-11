@@ -20,16 +20,22 @@ from engine.odds.latest_odds_context_reader import (
 def main() -> None:
     decision = {
         "course_uid": "10_06_2026 - CAEN - Prix de Clécy_ Pronostics & Cotes",
-        "partants_reels": "11",
-        "top6_sg": "10,7,6,13,8,11",
         "kill_switch_codes": "VOLATILITE_KILL_SWITCH_TOP6",
-        "volatilite_status": "KILL",
-        "volatilite_top6_max_numero": "8",
-        "volatilite_top6_max_cheval": "MOJITO DE BANVILLE P",
-        "volatilite_top6_max_pct": "79.41",
     }
 
-    context = build_latest_odds_context_from_decision(decision)
+    prompt_text = """
+PARTANTS_REELS : 11
+TOP6_SG : 10,7,6,13,8,11
+VOLATILITE_STATUS : KILL
+VOLATILITE_TOP6_MAX_NUMERO : 8
+VOLATILITE_TOP6_MAX_CHEVAL : MOJITO DE BANVILLE P
+VOLATILITE_TOP6_MAX_PCT : 79.41
+"""
+
+    context = build_latest_odds_context_from_decision(
+        decision,
+        prompt_text=prompt_text,
+    )
 
     assert context["odds_context_found"] == "decision_fallback"
     assert context["course_statut_marche"] == "KILL_SWITCH_TOPN"
