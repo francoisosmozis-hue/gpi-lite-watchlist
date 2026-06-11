@@ -786,6 +786,48 @@ def build_brief_from_decision(decision, prompt_text="", source_decision=""):
     kill_switch_codes = str(decision.get("kill_switch_codes", ""))
     segment_roi = str(decision.get("segment_roi", decision.get("segment_ROI", "ND")))
     edge_status = str(decision.get("edge_status", "ND"))
+
+    def _merge_semicolon_codes(existing, additions):
+        parts = []
+
+        for raw in [existing]:
+            for code in str(raw or "").split(";"):
+                cleaned = code.strip()
+                if cleaned and cleaned.upper() not in {"AUCUN", "NONE", "ND"} and cleaned not in parts:
+                    parts.append(cleaned)
+
+        for code in additions or []:
+            cleaned = str(code or "").strip()
+            if cleaned and cleaned.upper() not in {"AUCUN", "NONE", "ND"} and cleaned not in parts:
+                parts.append(cleaned)
+
+        return ";".join(parts)
+
+    odds_override_status = "ND"
+
+    try:
+        from engine.odds.brief_odds_enricher import build_odds_decision_overrides
+
+        odds_overrides = build_odds_decision_overrides()
+        odds_override_status = str(odds_overrides.get("strict_allowed_oui_non", "ND"))
+
+        if odds_override_status == "non":
+            reason_codes = _merge_semicolon_codes(
+                reason_codes,
+                odds_overrides.get("reason_codes_to_add", []),
+            )
+            kill_switch_codes = _merge_semicolon_codes(
+                kill_switch_codes,
+                odds_overrides.get("kill_switch_codes_to_add", []),
+            )
+            edge_status = str(odds_overrides.get("edge_status", edge_status) or edge_status)
+
+    except Exception as exc:
+        reason_codes = _merge_semicolon_codes(
+            reason_codes,
+            [f"ODDS_CONTEXT_OVERRIDE_ERROR_{type(exc).__name__}"],
+        )
+
     cp_sec_candidate = str(decision.get("cp_sec_candidate", decision.get("selection_cp_sec", decision.get("CP_SEC_CANDIDAT", "ND"))))
     cp_sg_pair_sum = str(decision.get("cp_sg_pair_sum", decision.get("CP_SG_PAIR_SUM", "ND")))
     cp_sg_filter_status = str(decision.get("cp_sg_filter_status", decision.get("CP_SG_FILTER_STATUS", "ND")))
@@ -904,6 +946,19 @@ def build_brief_from_decision(decision, prompt_text="", source_decision=""):
         "",
         "REGLE_GPI : ne pas changer le verdict Python. Ne jamais transformer une simulation en ticket strict. Sans moteur complet, split valide, proxy audite ou SP calibre, ticket reel interdit."
     ]
+
+    try:
+        from engine.odds.brief_odds_enricher import build_odds_brief_block
+        odds_brief_block = build_odds_brief_block()
+    except Exception as exc:
+        odds_brief_block = f"ODDS_CONTEXT_ERROR : {type(exc).__name__}: {exc}"
+
+    if odds_brief_block:
+        brief_lines.extend([
+            "",
+            "ODDS_CONTEXT_GPI :",
+            odds_brief_block,
+        ])
 
     return {
         "course_uid": course_uid,

@@ -1,0 +1,238 @@
+﻿from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from html import unescape
+from pathlib import Path
+import csv
+import hashlib
+import json
+import re
+from typing import Iterable
+
+
+PARSER_VERSION = "odds_html_parser_v0_1"
+
+
+@dataclass(frozen=True)
+class OddsRunnerRow:
+    course_uid: str
+    snapshot_label: str
+    numero: int
+    cheval: str
+    cote_sg: float | None
+    cote_sp_min: float | None
+    cote_sp_max: float | None
+    source_html_path: str
+    parser_version: str
+    confidence: str
+    raw_fragment_hash: str
+    extracted_at_utc: str
+
+
+def _hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _to_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+
+    cleaned = value.strip().replace(",", ".")
+    cleaned = re.sub(r"[^0-9.]", "", cleaned)
+
+    if not cleaned:
+        return None
+
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _strip_html(html: str) -> str:
+    html = re.sub(r"(?is)<script.*?</script>", " ", html)
+    html = re.sub(r"(?is)<style.*?</style>", " ", html)
+    html = re.sub(r"(?is)<br\s*/?>", "\n", html)
+    html = re.sub(r"(?is)</(td|span|button)>", " ", html)
+    html = re.sub(r"(?is)</(div|tr|li|p)>", "\n", html)
+    html = re.sub(r"(?is)<[^>]+>", " ", html)
+    html = unescape(html)
+    html = html.replace("\u00a0", " ")
+    html = re.sub(r"[ \t]+", " ", html)
+    html = re.sub(r"\n+", "\n", html)
+    return html.strip()
+
+
+def _iter_candidate_lines(text: str) -> Iterable[str]:
+    for line in text.splitlines():
+        cleaned = line.strip()
+        if len(cleaned) < 6:
+            continue
+
+        if not re.search(r"\b\d{1,2}\b", cleaned):
+            continue
+
+        if not re.search(r"\d+[,.]\d+", cleaned):
+            continue
+
+        yield cleaned
+
+
+def _parse_line_to_row(
+    line: str,
+    course_uid: str,
+    snapshot_label: str,
+    source_html_path: Path,
+    extracted_at_utc: str,
+) -> OddsRunnerRow | None:
+    pattern = re.compile(
+        r"^\s*(?P<num>\d{1,2})\s+"
+        r"(?P<horse>[A-Za-zÀ-ÖØ-öø-ÿ' .-]{2,}?)\s+"
+        r"(?P<sg>\d+[,.]\d+)"
+        r"(?:\s+(?P<sp_min>\d+[,.]\d+)\s*[-–]\s*(?P<sp_max>\d+[,.]\d+))?"
+    )
+
+    match = pattern.search(line)
+    if not match:
+        return None
+
+    numero = int(match.group("num"))
+    cheval = re.sub(r"\s+", " ", match.group("horse")).strip()
+    cote_sg = _to_float(match.group("sg"))
+    cote_sp_min = _to_float(match.group("sp_min"))
+    cote_sp_max = _to_float(match.group("sp_max"))
+
+    if not cheval or cote_sg is None:
+        return None
+
+    return OddsRunnerRow(
+        course_uid=course_uid,
+        snapshot_label=snapshot_label,
+        numero=numero,
+        cheval=cheval,
+        cote_sg=cote_sg,
+        cote_sp_min=cote_sp_min,
+        cote_sp_max=cote_sp_max,
+        source_html_path=str(source_html_path),
+        parser_version=PARSER_VERSION,
+        confidence="TEXT_PATTERN",
+        raw_fragment_hash=_hash_text(line),
+        extracted_at_utc=extracted_at_utc,
+    )
+
+
+def extract_odds_from_html(
+    html_path: str | Path,
+    course_uid: str,
+    snapshot_label: str,
+) -> list[OddsRunnerRow]:
+    source_html_path = Path(html_path)
+
+    if not source_html_path.exists():
+        raise FileNotFoundError(f"HTML introuvable : {source_html_path}")
+
+    html = source_html_path.read_text(encoding="utf-8", errors="ignore")
+    text = _strip_html(html)
+    extracted_at_utc = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    rows: list[OddsRunnerRow] = []
+    seen_numbers: set[int] = set()
+
+    for line in _iter_candidate_lines(text):
+        row = _parse_line_to_row(
+            line=line,
+            course_uid=course_uid,
+            snapshot_label=snapshot_label,
+            source_html_path=source_html_path,
+            extracted_at_utc=extracted_at_utc,
+        )
+
+        if row is None:
+            continue
+
+        if row.numero in seen_numbers:
+            continue
+
+        seen_numbers.add(row.numero)
+        rows.append(row)
+
+    return sorted(rows, key=lambda item: item.numero)
+
+
+def write_odds_csv(rows: list[OddsRunnerRow], output_path: str | Path) -> Path:
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = list(asdict(rows[0]).keys()) if rows else [
+        "course_uid",
+        "snapshot_label",
+        "numero",
+        "cheval",
+        "cote_sg",
+        "cote_sp_min",
+        "cote_sp_max",
+        "source_html_path",
+        "parser_version",
+        "confidence",
+        "raw_fragment_hash",
+        "extracted_at_utc",
+    ]
+
+    with output.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(asdict(row))
+
+    return output
+
+
+def write_odds_json(rows: list[OddsRunnerRow], output_path: str | Path) -> Path:
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "parser_version": PARSER_VERSION,
+        "rows_count": len(rows),
+        "rows": [asdict(row) for row in rows],
+    }
+
+    output.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    return output
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Extrait les cotes SG/SP depuis un HTML ZEturf sauvegardé."
+    )
+    parser.add_argument("--html", required=True, help="Chemin du fichier HTML local")
+    parser.add_argument("--course-uid", required=True)
+    parser.add_argument("--snapshot-label", required=True)
+    parser.add_argument("--csv-out", required=True)
+    parser.add_argument("--json-out", required=True)
+
+    args = parser.parse_args()
+
+    rows = extract_odds_from_html(
+        html_path=args.html,
+        course_uid=args.course_uid,
+        snapshot_label=args.snapshot_label,
+    )
+
+    csv_path = write_odds_csv(rows, args.csv_out)
+    json_path = write_odds_json(rows, args.json_out)
+
+    print(f"Lignes extraites : {len(rows)}")
+    print(f"CSV : {csv_path}")
+    print(f"JSON : {json_path}")
+
+
+if __name__ == "__main__":
+    main()
