@@ -1574,6 +1574,100 @@ def drive_run_results():
     }
 
 
+
+@app.post("/drive/run/results-compact", dependencies=[Depends(require_api_key)])
+def drive_run_results_compact():
+    """
+    Version compacte de /drive/run/results pour orchestration.
+    Exécute le même traitement post-course, mais ne renvoie pas la liste complète
+    des fichiers Drive téléchargés.
+    """
+    payload = drive_run_results()
+
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "phase": "paper_results",
+            "error": "RESULTS_NON_DICT_RESPONSE",
+            "response_type": str(type(payload)),
+        }
+
+    sync = payload.get("sync", {}) if isinstance(payload.get("sync"), dict) else {}
+    results_pdf_parse = payload.get("results_pdf_parse", {}) if isinstance(payload.get("results_pdf_parse"), dict) else {}
+    paper_results = payload.get("paper_results", {}) if isinstance(payload.get("paper_results"), dict) else {}
+    paper_kpi = payload.get("paper_kpi", {}) if isinstance(payload.get("paper_kpi"), dict) else {}
+    no_bet_audit = payload.get("no_bet_audit", {}) if isinstance(payload.get("no_bet_audit"), dict) else {}
+    guardrails = payload.get("guardrails", {}) if isinstance(payload.get("guardrails"), dict) else {}
+
+    parse_stdout = str(results_pdf_parse.get("stdout", ""))
+    no_bet_stdout = str(no_bet_audit.get("stdout", ""))
+
+    paper_results_audit = paper_results.get("audit", {})
+    if not isinstance(paper_results_audit, dict):
+        paper_results_audit = {}
+
+    paper_kpi_audit = paper_kpi.get("audit", {})
+    if not isinstance(paper_kpi_audit, dict):
+        paper_kpi_audit = {}
+
+    return {
+        "ok": bool(payload.get("ok", False)),
+        "phase": payload.get("phase", "paper_results"),
+        "compact": True,
+        "sync": {
+            "ok": sync.get("ok", "ND"),
+            "folder_id": sync.get("folder_id", "ND"),
+            "local_dir": sync.get("local_dir", "ND"),
+            "files_count": sync.get("files_count", "ND"),
+            "downloads_count": len(sync.get("downloads", [])) if isinstance(sync.get("downloads"), list) else "ND",
+        },
+        "results_pdf_parse": {
+            "ok": results_pdf_parse.get("ok", "ND"),
+            "returncode": results_pdf_parse.get("returncode", "ND"),
+            "stdout_summary": parse_stdout[:1500],
+            "stderr": str(results_pdf_parse.get("stderr", ""))[:1000],
+        },
+        "paper_results": {
+            "ok": paper_results.get("ok", "ND"),
+            "returncode": paper_results.get("returncode", "ND"),
+            "paper_count": paper_results_audit.get("paper_count", "ND"),
+            "result_input_count": paper_results_audit.get("result_input_count", "ND"),
+            "results_joined_count": paper_results_audit.get("results_joined_count", "ND"),
+            "result_ok_count": paper_results_audit.get("result_ok_count", "ND"),
+            "result_no_bet_count": paper_results_audit.get("result_no_bet_count", "ND"),
+            "result_pending_count": paper_results_audit.get("result_pending_count", "ND"),
+        },
+        "paper_kpi": {
+            "ok": paper_kpi.get("ok", "ND"),
+            "skipped": paper_kpi.get("skipped", "ND"),
+            "returncode": paper_kpi.get("returncode", "ND"),
+            "rows_input": paper_kpi_audit.get("rows_input", "ND"),
+            "rows_kpi": paper_kpi_audit.get("rows_kpi", "ND"),
+            "global_decisions": paper_kpi_audit.get("global_decisions", "ND"),
+            "global_tickets": paper_kpi_audit.get("global_tickets", "ND"),
+            "global_no_bet_count": paper_kpi_audit.get("global_no_bet_count", "ND"),
+            "global_result_pending_count": paper_kpi_audit.get("global_result_pending_count", "ND"),
+            "global_strict_allowed_count": paper_kpi_audit.get("global_strict_allowed_count", "ND"),
+            "global_replay_ko_count": paper_kpi_audit.get("global_replay_ko_count", "ND"),
+        },
+        "no_bet_audit": {
+            "ok": no_bet_audit.get("ok", "ND"),
+            "returncode": no_bet_audit.get("returncode", "ND"),
+            "stdout_summary": no_bet_stdout[:1500],
+            "stderr": str(no_bet_audit.get("stderr", ""))[:1000],
+        },
+        "guardrails": {
+            "h5_main_called": guardrails.get("h5_main_called", "ND"),
+            "results_main_called": guardrails.get("results_main_called", "ND"),
+            "audit_all_called": guardrails.get("audit_all_called", "ND"),
+            "decision_engine_outputs_modified": guardrails.get("decision_engine_outputs_modified", "ND"),
+            "paper_trading_50_decisions_uploaded": guardrails.get("paper_trading_50_decisions_uploaded", "ND"),
+            "paper_trading_50_decisions_modified": guardrails.get("paper_trading_50_decisions_modified", "ND"),
+            "post_course_only": guardrails.get("post_course_only", "ND"),
+            "drive_results_required": guardrails.get("drive_results_required", "ND"),
+        },
+    }
+
 @app.post("/upload/h5", dependencies=[Depends(require_api_key)])
 async def upload_h5(file: UploadFile = File(...), filename: Optional[str] = None):
     return await save_pdf_upload(file, H5_DIR, filename)
