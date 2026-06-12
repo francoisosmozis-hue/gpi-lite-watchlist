@@ -79,3 +79,6 @@ h5_main_V*
 
 # Docker local inutile dans Cloud Build
 docker-compose.yml
+
+# Local Cloud Run env files
+cloudrun-env-action-safe.yaml
