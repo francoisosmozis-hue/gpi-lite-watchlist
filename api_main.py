@@ -1668,6 +1668,363 @@ def drive_run_results_compact():
         },
     }
 
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from pathlib import Path
+import csv
+import re
+
+def _h5auto_safe_str(x):
+    if x is None:
+        return ""
+    return str(x).strip()
+
+def _h5auto_runtime_dir():
+    p = Path("sources/runtime")
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+def _h5auto_read_csv_dicts(path):
+    path = Path(path)
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
+
+def _h5auto_write_csv_dicts(path, rows, fieldnames):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        for row in rows:
+            w.writerow({k: row.get(k, "ND") for k in fieldnames})
+
+def _h5auto_parse_course_date_from_uid(course_uid):
+    m = re.match(r"(\d{2})_(\d{2})_(\d{4})", _h5auto_safe_str(course_uid))
+    if not m:
+        return None
+    dd, mm, yyyy = m.groups()
+    return f"{yyyy}-{mm}-{dd}"
+
+def _h5auto_load_latest_watchlist_rows():
+    candidates = [
+        Path("data/output/latest_daily_watchlist_priorisee.csv"),
+        Path("data/output/daily_watchlist.csv"),
+    ]
+    for p in candidates:
+        rows = _h5auto_read_csv_dicts(p)
+        if rows:
+            return rows, str(p)
+    return [], "ND"
+
+def _h5auto_load_url_mapping():
+    mapping_path = _h5auto_runtime_dir() / "zeturf_course_urls.csv"
+    rows = _h5auto_read_csv_dicts(mapping_path)
+    out = {}
+    for r in rows:
+        uid = _h5auto_safe_str(r.get("course_uid"))
+        if uid:
+            out[uid] = {
+                "url_zeturf": _h5auto_safe_str(r.get("url_zeturf")),
+            }
+    return out
+
+def _h5auto_normalize_course_key(s):
+    s = _h5auto_safe_str(s).lower()
+    s = s.replace("_pronostics & cotes", "")
+    s = s.replace("pronostics & cotes", "")
+    s = re.sub(r"[^a-z0-9àâäéèêëîïôöùûüç]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def _h5auto_find_morning_pdf_for_course(course_uid):
+    morning_dir = Path("data/morning")
+    if not morning_dir.exists():
+        return None
+
+    uid_norm = _h5auto_normalize_course_key(course_uid)
+    best = None
+    best_score = 0
+
+    for p in morning_dir.glob("*.pdf"):
+        name_norm = _h5auto_normalize_course_key(p.stem)
+        uid_tokens = set(uid_norm.split())
+        name_tokens = set(name_norm.split())
+
+        score = 0
+        if uid_norm and uid_norm in name_norm:
+            score += 100
+
+        score += len(uid_tokens.intersection(name_tokens))
+
+        if score > best_score:
+            best = p
+            best_score = score
+
+    if best_score <= 3:
+        return None
+
+    return best
+
+def _h5auto_read_pdf_text_best_effort(pdf_path):
+    pdf_path = Path(pdf_path)
+    text_parts = []
+
+    try:
+        import pdfplumber
+        with pdfplumber.open(str(pdf_path)) as pdf:
+            for page in pdf.pages[:3]:
+                txt = page.extract_text() or ""
+                if txt:
+                    text_parts.append(txt)
+    except Exception:
+        pass
+
+    if text_parts:
+        return "\n".join(text_parts)
+
+    try:
+        import fitz
+        doc = fitz.open(str(pdf_path))
+        for page in doc[:3]:
+            txt = page.get_text("text") or ""
+            if txt:
+                text_parts.append(txt)
+        doc.close()
+    except Exception:
+        pass
+
+    return "\n".join(text_parts)
+
+def _h5auto_extract_depart_time_from_text(text):
+    t = _h5auto_safe_str(text)
+    if not t:
+        return ""
+
+    priority_patterns = [
+        r"(?:Départ|Depart|Départ prévu|Depart prevu|Départ\s+à|Depart\s+a)[^\d]{0,40}(\d{1,2})[:hH](\d{2})",
+        r"(?:Course|Réunion|Reunion)[^\n]{0,100}(?:Départ|Depart)[^\d]{0,40}(\d{1,2})[:hH](\d{2})",
+        r"\b(\d{1,2})[:hH](\d{2})\b",
+    ]
+
+    candidates = []
+
+    for idx, pat in enumerate(priority_patterns):
+        for m in re.finditer(pat, t, flags=re.IGNORECASE):
+            hh = int(m.group(1))
+            mm = int(m.group(2))
+            if 6 <= hh <= 23 and 0 <= mm <= 59:
+                context = t[max(0, m.start() - 60):m.end() + 60].lower()
+                score = 100 - idx * 20
+                if "départ" in context or "depart" in context:
+                    score += 50
+                if "prix" in context:
+                    score += 10
+                if "course" in context:
+                    score += 10
+                if "rapport" in context or "arrivée" in context or "arrivee" in context:
+                    score -= 30
+                candidates.append((score, hh, mm))
+
+    if not candidates:
+        return ""
+
+    candidates.sort(reverse=True)
+    _, hh, mm = candidates[0]
+    return f"{hh:02d}:{mm:02d}"
+
+def _h5auto_extract_depart_time_from_morning_pdf(course_uid):
+    pdf = _h5auto_find_morning_pdf_for_course(course_uid)
+    if not pdf:
+        return "", "PDF_MORNING_NOT_FOUND", ""
+
+    text = _h5auto_read_pdf_text_best_effort(pdf)
+    if not text:
+        return "", "PDF_TEXT_EMPTY", str(pdf)
+
+    heure = _h5auto_extract_depart_time_from_text(text)
+    if not heure:
+        return "", "HEURE_NOT_FOUND_IN_PDF", str(pdf)
+
+    return heure, "PDF_MORNING", str(pdf)
+
+@app.post("/drive/run/h5-auto-plan", dependencies=[Depends(require_api_key)])
+def drive_run_h5_auto_plan():
+    """
+    Crée un planning H-10/H-5 depuis la watchlist morning.
+    L'horaire est extrait des PDF morning.
+    P1/P2 uniquement.
+    Aucun ticket strict.
+    """
+    ensure_dirs()
+
+    morning_sync = {
+        "ok": False,
+        "skipped": True,
+        "reason": "SYNC_NOT_RUN",
+    }
+
+    try:
+        folder_id = get_drive_folder_id("morning")
+        morning_sync = sync_drive_folder_to_local(folder_id, "data/morning", clean_target=True)
+    except Exception as exc:
+        morning_sync = {
+            "ok": False,
+            "skipped": True,
+            "reason": "MORNING_SYNC_FAILED",
+            "error": str(exc),
+        }
+
+    watchlist_rows, watchlist_source = _h5auto_load_latest_watchlist_rows()
+    url_map = _h5auto_load_url_mapping()
+
+    paris_tz = ZoneInfo("Europe/Paris")
+    now = datetime.now(paris_tz)
+
+    plan_rows = []
+    skipped = []
+
+    for r in watchlist_rows:
+        uid = _h5auto_safe_str(r.get("course_uid"))
+        priorite = _h5auto_safe_str(r.get("priorite_h5"))
+
+        if priorite not in {"P1", "P2"}:
+            skipped.append({
+                "course_uid": uid,
+                "reason": "PRIORITE_NON_P1_P2",
+                "priorite_h5": priorite or "ND",
+                "heure": _h5auto_safe_str(r.get("heure")) or "ND",
+            })
+            continue
+
+        course_date = _h5auto_parse_course_date_from_uid(uid)
+        if not course_date:
+            skipped.append({
+                "course_uid": uid,
+                "reason": "DATE_ND",
+                "priorite_h5": priorite,
+                "heure": "ND",
+            })
+            continue
+
+        heure = ""
+        heure_source = ""
+        pdf_source = ""
+
+        for col in ["heure_depart", "heure", "horaire", "depart", "heure_course"]:
+            v = _h5auto_safe_str(r.get(col))
+            if v and v != "ND":
+                m = re.search(r"(\d{1,2})[:hH](\d{2})", v)
+                if m:
+                    heure = f"{int(m.group(1)):02d}:{int(m.group(2)):02d}"
+                    heure_source = f"WATCHLIST_COL_{col}"
+                    break
+
+        if not heure:
+            heure, heure_source, pdf_source = _h5auto_extract_depart_time_from_morning_pdf(uid)
+
+        if not heure:
+            skipped.append({
+                "course_uid": uid,
+                "reason": heure_source or "HEURE_ND",
+                "priorite_h5": priorite,
+                "heure": "ND",
+            })
+            continue
+
+        mapped = url_map.get(uid, {})
+        url = _h5auto_safe_str(mapped.get("url_zeturf"))
+
+        if not url:
+            skipped.append({
+                "course_uid": uid,
+                "reason": "URL_ZETURF_ND",
+                "priorite_h5": priorite,
+                "heure": heure,
+            })
+            continue
+
+        try:
+            depart_dt = datetime.fromisoformat(f"{course_date}T{heure}:00").replace(tzinfo=paris_tz)
+        except Exception:
+            skipped.append({
+                "course_uid": uid,
+                "reason": "HEURE_FORMAT_KO",
+                "priorite_h5": priorite,
+                "heure": heure,
+            })
+            continue
+
+        for label, minutes_before in [("H10", 10), ("H5", 5)]:
+            capture_dt = depart_dt - timedelta(minutes=minutes_before)
+            due_from = capture_dt - timedelta(minutes=3)
+            due_to = capture_dt + timedelta(minutes=3)
+
+            if now < due_from:
+                status = "PENDING"
+            elif due_from <= now <= due_to:
+                status = "DUE"
+            elif now > due_to and now < depart_dt:
+                status = "LATE_BUT_PRECOURSE"
+            else:
+                status = "EXPIRED_OR_STARTED"
+
+            plan_rows.append({
+                "course_uid": uid,
+                "priorite_h5": priorite,
+                "url_zeturf": url,
+                "heure_depart": heure,
+                "heure_source": heure_source,
+                "pdf_source": pdf_source,
+                "depart_dt": depart_dt.isoformat(),
+                "capture_label": label,
+                "capture_dt": capture_dt.isoformat(),
+                "due_from": due_from.isoformat(),
+                "due_to": due_to.isoformat(),
+                "status": status,
+                "created_at": now.isoformat(),
+                "ticket_strict": "NO_BET",
+                "strict_allowed_oui_non": "non",
+            })
+
+    fieldnames = [
+        "course_uid", "priorite_h5", "url_zeturf", "heure_depart",
+        "heure_source", "pdf_source",
+        "depart_dt", "capture_label", "capture_dt",
+        "due_from", "due_to", "status", "created_at",
+        "ticket_strict", "strict_allowed_oui_non",
+    ]
+
+    out_path = Path("data/output/h5_auto_plan.csv")
+    _h5auto_write_csv_dicts(out_path, plan_rows, fieldnames)
+
+    skipped_path = Path("data/output/h5_auto_plan_skipped.csv")
+    _h5auto_write_csv_dicts(
+        skipped_path,
+        skipped,
+        ["course_uid", "reason", "priorite_h5", "heure"],
+    )
+
+    return {
+        "ok": True,
+        "phase": "h5_auto_plan",
+        "watchlist_source": watchlist_source,
+        "watchlist_rows": len(watchlist_rows),
+        "morning_sync": {
+            "ok": morning_sync.get("ok", "ND") if isinstance(morning_sync, dict) else "ND",
+            "files_count": morning_sync.get("files_count", "ND") if isinstance(morning_sync, dict) else "ND",
+            "local_dir": morning_sync.get("local_dir", "ND") if isinstance(morning_sync, dict) else "ND",
+        },
+        "planned_count": len(plan_rows),
+        "skipped_count": len(skipped),
+        "due_count": sum(1 for r in plan_rows if r.get("status") in {"DUE", "LATE_BUT_PRECOURSE"}),
+        "plan_csv": str(out_path),
+        "skipped_csv": str(skipped_path),
+        "strict_policy": "NO STRICT. Horaires extraits des PDF morning. P1/P2 uniquement.",
+    }
+
 @app.post("/upload/h5", dependencies=[Depends(require_api_key)])
 async def upload_h5(file: UploadFile = File(...), filename: Optional[str] = None):
     return await save_pdf_upload(file, H5_DIR, filename)
