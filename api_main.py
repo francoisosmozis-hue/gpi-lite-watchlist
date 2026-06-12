@@ -1709,14 +1709,55 @@ def _h5auto_parse_course_date_from_uid(course_uid):
     return f"{yyyy}-{mm}-{dd}"
 
 def _h5auto_load_latest_watchlist_rows():
+    """
+    Charge la watchlist morning.
+    Priorité :
+    1. fichiers locaux si présents dans l'instance Cloud Run ;
+    2. fallback GCS latest_daily_watchlist_priorisee.csv.
+    """
     candidates = [
         Path("data/output/latest_daily_watchlist_priorisee.csv"),
         Path("data/output/daily_watchlist.csv"),
     ]
+
     for p in candidates:
         rows = _h5auto_read_csv_dicts(p)
         if rows:
             return rows, str(p)
+
+    try:
+        import os
+        import io
+        from google.cloud import storage
+
+        bucket_name = (
+            os.getenv("GPI_BUCKET_NAME")
+            or os.getenv("GCS_BUCKET")
+            or "gpi-lite-watchlist-data"
+        )
+
+        gcs_candidates = [
+            "gpi-lite/outputs/latest_daily_watchlist_priorisee.csv",
+            "gpi-lite/outputs/daily_watchlist.csv",
+        ]
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+
+        for blob_name in gcs_candidates:
+            blob = bucket.blob(blob_name)
+            if not blob.exists():
+                continue
+
+            content = blob.download_as_text(encoding="utf-8")
+            rows = list(csv.DictReader(io.StringIO(content)))
+
+            if rows:
+                return rows, f"gs://{bucket_name}/{blob_name}"
+
+    except Exception:
+        pass
+
     return [], "ND"
 
 def _h5auto_load_url_mapping():
@@ -2020,6 +2061,8 @@ def drive_run_h5_auto_plan():
         "planned_count": len(plan_rows),
         "skipped_count": len(skipped),
         "due_count": sum(1 for r in plan_rows if r.get("status") in {"DUE", "LATE_BUT_PRECOURSE"}),
+        "plan_sample": plan_rows[:5],
+        "skipped_sample": skipped[:10],
         "plan_csv": str(out_path),
         "skipped_csv": str(skipped_path),
         "strict_policy": "NO STRICT. Horaires extraits des PDF morning. P1/P2 uniquement.",
