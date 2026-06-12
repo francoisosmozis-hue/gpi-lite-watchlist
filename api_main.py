@@ -2530,6 +2530,383 @@ def drive_run_h5_auto_capture():
     }
 
 
+
+@app.post("/drive/run/h5-auto-brief", dependencies=[Depends(require_api_key)])
+def drive_run_h5_auto_brief():
+    """
+    Construit le mouvement H10/H5, le gate volatilite, latest_odds_context
+    et un brief H-5 auto. Aucun ticket strict.
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path
+    import json
+
+    from engine.odds.odds_movement_builder import (
+        build_odds_movements,
+        write_movements_csv,
+        write_movements_json,
+    )
+    from engine.odds.odds_volatility_gate import (
+        build_volatility_gate,
+        write_gate_csv,
+        write_gate_json,
+    )
+    from engine.odds.latest_odds_context import (
+        build_latest_odds_context,
+        write_latest_odds_context,
+    )
+    from engine.odds.brief_odds_enricher import build_odds_brief_lines
+
+    resolved_path = Path("data/output/h5_auto_plan_resolved.csv")
+
+    download_resolved = _h5auto_download_file_from_gcs(
+        "gpi-lite/outputs/h5_auto_plan_resolved.csv",
+        resolved_path,
+    )
+
+    if not download_resolved.get("ok"):
+        return {
+            "ok": False,
+            "phase": "h5_auto_brief",
+            "download_resolved": download_resolved,
+            "reason": "H5_AUTO_PLAN_RESOLVED_GCS_DOWNLOAD_FAILED",
+            "matched_courses": 0,
+            "movement_rows_total": 0,
+            "briefs_created": 0,
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    rows = _h5auto_read_csv_dicts(resolved_path)
+
+    by_course = {}
+
+    for row in rows:
+        course_uid = str(row.get("course_uid", "") or "").strip()
+        capture_label = str(row.get("capture_label", "") or "").strip().upper()
+        url_status = str(row.get("url_status", "") or "").strip()
+
+        if not course_uid:
+            continue
+
+        if capture_label not in {"H10", "H5"}:
+            continue
+
+        if url_status and url_status != "OK":
+            continue
+
+        by_course.setdefault(course_uid, {})[capture_label] = row
+
+    processed = []
+    errors = []
+    movement_rows_total = 0
+    latest_brief_payload = None
+
+    odds_from_gcs_dir = Path("data/output/odds_from_gcs")
+    odds_out_dir = Path("data/output/odds")
+    brief_out_dir = Path("data/output/h5_briefs")
+
+    odds_from_gcs_dir.mkdir(parents=True, exist_ok=True)
+    odds_out_dir.mkdir(parents=True, exist_ok=True)
+    brief_out_dir.mkdir(parents=True, exist_ok=True)
+
+    for course_uid, labels in by_course.items():
+        if "H10" not in labels or "H5" not in labels:
+            continue
+
+        course_slug = _h5auto_safe_slug(course_uid)
+
+        h10_slug = "_".join([course_slug, _h5auto_safe_slug("H10")])
+        h5_slug = "_".join([course_slug, _h5auto_safe_slug("H5")])
+
+        h10_blob = f"gpi-lite/outputs/odds/{h10_slug}_odds.csv"
+        h5_blob = f"gpi-lite/outputs/odds/{h5_slug}_odds.csv"
+
+        h10_local = odds_from_gcs_dir / f"{h10_slug}_odds.csv"
+        h5_local = odds_from_gcs_dir / f"{h5_slug}_odds.csv"
+
+        download_h10 = _h5auto_download_file_from_gcs(h10_blob, h10_local)
+        download_h5 = _h5auto_download_file_from_gcs(h5_blob, h5_local)
+
+        if not download_h10.get("ok") or not download_h5.get("ok"):
+            errors.append({
+                "course_uid": course_uid,
+                "reason": "ODDS_H10_OR_H5_DOWNLOAD_FAILED",
+                "download_h10": download_h10,
+                "download_h5": download_h5,
+                "ticket_strict": "NO_BET",
+            })
+            continue
+
+        movement_csv = odds_out_dir / f"{course_slug}_h10_to_h5_movements.csv"
+        movement_json = odds_out_dir / f"{course_slug}_h10_to_h5_movements.json"
+        gate_csv = odds_out_dir / f"{course_slug}_h10_to_h5_volatility_gate.csv"
+        gate_json = odds_out_dir / f"{course_slug}_h10_to_h5_volatility_gate.json"
+        latest_context_json = odds_out_dir / "latest_odds_context.json"
+        brief_json = brief_out_dir / f"{course_slug}_h5_auto_brief.json"
+        latest_brief_json = Path("data/output/latest_h5_auto_brief.json")
+
+        try:
+            movement_rows = build_odds_movements(
+                previous_csv=h10_local,
+                current_csv=h5_local,
+                previous_snapshot_label="H10",
+                current_snapshot_label="H5",
+            )
+            write_movements_csv(movement_rows, movement_csv)
+            write_movements_json(movement_rows, movement_json)
+
+            gate_result = build_volatility_gate(
+                current_odds_csv=h5_local,
+                movements_csv=movement_csv,
+                top_n=6,
+            )
+            write_gate_csv(gate_result, gate_csv)
+            write_gate_json(gate_result, gate_json)
+
+            odds_context = build_latest_odds_context(
+                current_odds_csv=h5_local,
+                movements_csv=movement_csv,
+                gate_json=gate_json,
+            )
+            write_latest_odds_context(odds_context, latest_context_json)
+
+            context_payload = json.loads(
+                latest_context_json.read_text(encoding="utf-8")
+            )
+
+            context_payload["odds_context_found"] = "oui"
+
+            odds_brief_lines = build_odds_brief_lines(context_payload)
+
+            course_statut_marche = str(
+                context_payload.get("course_statut_marche", "ND")
+            )
+            strict_allowed_by_odds_context = str(
+                context_payload.get("strict_allowed_by_odds_context", "non")
+            )
+            edge_status_by_odds_context = str(
+                context_payload.get("edge_status_by_odds_context", "EDGE_FRAGILE")
+            )
+            reason_codes = str(context_payload.get("reason_codes", ""))
+
+            qualite = "C"
+            if course_statut_marche.startswith("KILL_SWITCH"):
+                qualite = "D"
+            elif course_statut_marche in {"STABLE", "SURVEILLABLE"}:
+                qualite = "B"
+
+            brief_payload = {
+                "ok": True,
+                "phase": "h5_auto_brief",
+                "brief_version": "h5_auto_brief_v0_1",
+                "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                "course_uid": course_uid,
+                "current_snapshot_label": "H5",
+                "runners_count": context_payload.get("runners_count", 0),
+                "top_n_numbers": context_payload.get("top_n_numbers", ""),
+                "top_n_instable_numbers": context_payload.get("top_n_instable_numbers", ""),
+                "top_n_kill_switch_numbers": context_payload.get("top_n_kill_switch_numbers", ""),
+                "global_kill_switch_count": context_payload.get("global_kill_switch_count", 0),
+                "global_instable_count": context_payload.get("global_instable_count", 0),
+                "top_n_kill_switch_count": context_payload.get("top_n_kill_switch_count", 0),
+                "top_n_instable_count": context_payload.get("top_n_instable_count", 0),
+                "kill_switch_topn_oui_non": context_payload.get("kill_switch_topn_oui_non", "non"),
+                "course_statut_marche": course_statut_marche,
+                "strict_allowed_by_odds_context": strict_allowed_by_odds_context,
+                "edge_status_by_odds_context": edge_status_by_odds_context,
+                "reason_codes": reason_codes,
+                "odds_brief_lines": odds_brief_lines,
+                "VERDICT": "NO_BET",
+                "Qualite": qualite,
+                "Structure_max": "SIMULATION",
+                "Validation_economique": "ND",
+                "Ticket_exact_ou_NO_BET": "NO_BET",
+                "Segment_ROI": "NO_BET",
+                "Edge": edge_status_by_odds_context,
+                "Action_GPT": "Confirmer NO BET strict. Couche marche H-5 exploitable uniquement pour audit/simulation.",
+                "strict_allowed_oui_non": "non",
+                "strict_usable_oui_non": "non",
+                "ticket_strict": "NO_BET",
+            }
+
+            brief_json.write_text(
+                json.dumps(brief_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            latest_brief_json.write_text(
+                json.dumps(brief_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            upload_movement_csv = _h5auto_upload_file_to_gcs(
+                movement_csv,
+                f"gpi-lite/outputs/odds/{course_slug}_h10_to_h5_movements.csv",
+            )
+            upload_movement_json = _h5auto_upload_file_to_gcs(
+                movement_json,
+                f"gpi-lite/outputs/odds/{course_slug}_h10_to_h5_movements.json",
+            )
+            upload_gate_csv = _h5auto_upload_file_to_gcs(
+                gate_csv,
+                f"gpi-lite/outputs/odds/{course_slug}_h10_to_h5_volatility_gate.csv",
+            )
+            upload_gate_json = _h5auto_upload_file_to_gcs(
+                gate_json,
+                f"gpi-lite/outputs/odds/{course_slug}_h10_to_h5_volatility_gate.json",
+            )
+            upload_latest_context = _h5auto_upload_file_to_gcs(
+                latest_context_json,
+                "gpi-lite/outputs/odds/latest_odds_context.json",
+            )
+            upload_brief = _h5auto_upload_file_to_gcs(
+                brief_json,
+                f"gpi-lite/outputs/h5_briefs/{course_slug}_h5_auto_brief.json",
+            )
+            upload_latest_brief = _h5auto_upload_file_to_gcs(
+                latest_brief_json,
+                "gpi-lite/outputs/latest_h5_auto_brief.json",
+            )
+
+            # Sorties generiques pour lecture simple.
+            _h5auto_upload_file_to_gcs(
+                movement_csv,
+                "gpi-lite/outputs/odds/odds_movement_snapshots.csv",
+            )
+            _h5auto_upload_file_to_gcs(
+                movement_json,
+                "gpi-lite/outputs/odds/odds_movement_snapshots.json",
+            )
+            _h5auto_upload_file_to_gcs(
+                gate_csv,
+                "gpi-lite/outputs/odds/odds_volatility_gate.csv",
+            )
+            _h5auto_upload_file_to_gcs(
+                gate_json,
+                "gpi-lite/outputs/odds/odds_volatility_gate.json",
+            )
+
+            movement_rows_total += len(movement_rows)
+            latest_brief_payload = brief_payload
+
+            processed.append({
+                "course_uid": course_uid,
+                "ok": True,
+                "movement_rows": len(movement_rows),
+                "course_statut_marche": course_statut_marche,
+                "kill_switch_topn_oui_non": context_payload.get("kill_switch_topn_oui_non", "non"),
+                "strict_allowed_by_odds_context": strict_allowed_by_odds_context,
+                "edge_status_by_odds_context": edge_status_by_odds_context,
+                "reason_codes": reason_codes,
+                "upload_movement_csv_ok": upload_movement_csv.get("ok"),
+                "upload_movement_json_ok": upload_movement_json.get("ok"),
+                "upload_gate_csv_ok": upload_gate_csv.get("ok"),
+                "upload_gate_json_ok": upload_gate_json.get("ok"),
+                "upload_latest_context_ok": upload_latest_context.get("ok"),
+                "upload_brief_ok": upload_brief.get("ok"),
+                "upload_latest_brief_ok": upload_latest_brief.get("ok"),
+                "ticket_strict": "NO_BET",
+            })
+
+        except Exception as exc:
+            errors.append({
+                "course_uid": course_uid,
+                "reason": f"H5_AUTO_BRIEF_ERROR:{type(exc).__name__}:{exc}",
+                "ticket_strict": "NO_BET",
+            })
+
+    return {
+        "ok": True,
+        "phase": "h5_auto_brief",
+        "rows_input": len(rows),
+        "matched_courses": len(processed),
+        "errors_count": len(errors),
+        "movement_rows_total": movement_rows_total,
+        "briefs_created": len(processed),
+        "processed_sample": processed[:10],
+        "errors_sample": errors[:10],
+        "latest_brief": latest_brief_payload,
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
+
+
+
+@app.get("/gpi/latest-h5-auto-brief", dependencies=[Depends(require_api_key)])
+def gpi_latest_h5_auto_brief():
+    """
+    Lit le dernier brief H-5 auto depuis GCS.
+    Ne relance aucun traitement.
+    Aucun ticket strict.
+    """
+    from pathlib import Path
+    import json
+
+    local_path = Path("data/output/latest_h5_auto_brief.json")
+
+    download_latest = _h5auto_download_file_from_gcs(
+        "gpi-lite/outputs/latest_h5_auto_brief.json",
+        local_path,
+    )
+
+    if not download_latest.get("ok"):
+        return {
+            "ok": False,
+            "source": "cloud_storage",
+            "phase": "latest_h5_auto_brief",
+            "download_latest": download_latest,
+            "reason": "LATEST_H5_AUTO_BRIEF_GCS_DOWNLOAD_FAILED",
+            "VERDICT": "NO_BET",
+            "Ticket_exact_ou_NO_BET": "NO_BET",
+            "Segment_ROI": "NO_BET",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    try:
+        payload = json.loads(local_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {
+            "ok": False,
+            "source": "cloud_storage",
+            "phase": "latest_h5_auto_brief",
+            "download_latest": download_latest,
+            "reason": f"LATEST_H5_AUTO_BRIEF_JSON_READ_ERROR:{type(exc).__name__}:{exc}",
+            "VERDICT": "NO_BET",
+            "Ticket_exact_ou_NO_BET": "NO_BET",
+            "Segment_ROI": "NO_BET",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    if not isinstance(payload, dict):
+        payload = {}
+
+    payload["ok"] = bool(payload.get("ok", True))
+    payload["source"] = "cloud_storage"
+    payload["gcs_uri"] = "gs://gpi-lite-watchlist-data/gpi-lite/outputs/latest_h5_auto_brief.json"
+    payload["download_latest"] = download_latest
+
+    # Verrou doctrine : cette route lit un brief, elle ne doit jamais ouvrir un ticket strict.
+    payload["strict_allowed_oui_non"] = "non"
+    payload["strict_usable_oui_non"] = "non"
+    payload["ticket_strict"] = "NO_BET"
+
+    if not payload.get("VERDICT"):
+        payload["VERDICT"] = "NO_BET"
+    if not payload.get("Ticket_exact_ou_NO_BET"):
+        payload["Ticket_exact_ou_NO_BET"] = "NO_BET"
+    if not payload.get("Segment_ROI"):
+        payload["Segment_ROI"] = "NO_BET"
+
+    return payload
+
+
 @app.post("/upload/h5", dependencies=[Depends(require_api_key)])
 async def upload_h5(file: UploadFile = File(...), filename: Optional[str] = None):
     return await save_pdf_upload(file, H5_DIR, filename)
