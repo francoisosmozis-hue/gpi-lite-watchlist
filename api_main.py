@@ -1952,6 +1952,73 @@ def _h5auto_upload_file_to_gcs(local_path, blob_name):
         }
 
 
+
+
+def _h5auto_download_file_from_gcs(blob_name, local_path):
+    """
+    Download best-effort depuis GCS.
+    Ne doit jamais casser brutalement les routes H5 auto.
+    """
+    import os
+
+    bucket_name = (
+        os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+    )
+
+    if not bucket_name:
+        return {
+            "ok": False,
+            "reason": "BUCKET_ENV_MISSING",
+            "bucket": "ND",
+            "blob": blob_name,
+            "local_path": str(local_path),
+            "gcs_uri": "ND",
+        }
+
+    local_path = Path(local_path)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+
+        if not blob.exists():
+            return {
+                "ok": False,
+                "reason": "GCS_BLOB_MISSING",
+                "bucket": bucket_name,
+                "blob": blob_name,
+                "local_path": str(local_path),
+                "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+            }
+
+        blob.download_to_filename(str(local_path))
+
+        return {
+            "ok": True,
+            "reason": "DOWNLOADED",
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "local_path": str(local_path),
+            "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+        }
+
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"GCS_DOWNLOAD_ERROR:{type(exc).__name__}:{exc}",
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "local_path": str(local_path),
+            "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+        }
+
+
 @app.post("/drive/run/h5-auto-plan", dependencies=[Depends(require_api_key)])
 def drive_run_h5_auto_plan():
     """
@@ -2146,6 +2213,67 @@ def drive_run_h5_auto_plan():
         "gcs_skipped_uri": "gs://gpi-lite-watchlist-data/gpi-lite/outputs/h5_auto_plan_skipped.csv",
         "strict_policy": "NO STRICT. Horaires extraits des PDF morning. P1/P2 uniquement.",
     }
+
+
+
+@app.post("/drive/run/h5-url-resolver", dependencies=[Depends(require_api_key)])
+def drive_run_h5_url_resolver():
+    """
+    Résout les URLs ZEturf depuis le plan H-10/H-5 stocké dans GCS.
+    Aucun ticket strict.
+    """
+    from engine.odds.zeturf_url_resolver import resolve_plan
+
+    plan_path = Path("data/output/h5_auto_plan.csv")
+    resolved_path = Path("data/output/h5_auto_plan_resolved.csv")
+    report_path = Path("data/output/h5_url_resolver_report.json")
+
+    download_plan = _h5auto_download_file_from_gcs(
+        "gpi-lite/outputs/h5_auto_plan.csv",
+        plan_path,
+    )
+
+    if not download_plan.get("ok"):
+        return {
+            "ok": False,
+            "phase": "h5_url_resolver",
+            "download_plan": download_plan,
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+            "reason": "H5_AUTO_PLAN_GCS_DOWNLOAD_FAILED",
+        }
+
+    report = resolve_plan(
+        plan_csv=plan_path,
+        output_csv=resolved_path,
+        report_json=report_path,
+    )
+
+    upload_resolved = _h5auto_upload_file_to_gcs(
+        resolved_path,
+        "gpi-lite/outputs/h5_auto_plan_resolved.csv",
+    )
+
+    upload_report = _h5auto_upload_file_to_gcs(
+        report_path,
+        "gpi-lite/outputs/h5_url_resolver_report.json",
+    )
+
+    return {
+        "ok": True,
+        "phase": "h5_url_resolver",
+        "download_plan": download_plan,
+        "report": report,
+        "upload_resolved": upload_resolved,
+        "upload_report": upload_report,
+        "gcs_resolved_uri": "gs://gpi-lite-watchlist-data/gpi-lite/outputs/h5_auto_plan_resolved.csv",
+        "gcs_report_uri": "gs://gpi-lite-watchlist-data/gpi-lite/outputs/h5_url_resolver_report.json",
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
 
 @app.post("/upload/h5", dependencies=[Depends(require_api_key)])
 async def upload_h5(file: UploadFile = File(...), filename: Optional[str] = None):
