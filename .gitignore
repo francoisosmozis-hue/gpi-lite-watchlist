@@ -80,3 +80,11 @@ engine/*_V0_*.py
 tools/*_STABLE.py
 tools/*_AVANT*.py
 tools/*_V0_*.py
+
+# Local secrets
+.secrets/
+
+# Local runtime outputs
+logs/
+audit_gpi_lite_*/
+h5_run_debug_*.json
