@@ -1891,6 +1891,67 @@ def _h5auto_extract_depart_time_from_morning_pdf(course_uid):
 
     return heure, "PDF_MORNING", str(pdf)
 
+
+
+def _h5auto_upload_file_to_gcs(local_path, blob_name):
+    """
+    Upload best-effort vers GCS.
+    Ne doit jamais casser /drive/run/h5-auto-plan.
+    """
+    import os
+
+    bucket_name = (
+        os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+    )
+
+    if not bucket_name:
+        return {
+            "ok": False,
+            "reason": "BUCKET_ENV_MISSING",
+            "bucket": "ND",
+            "blob": blob_name,
+            "gcs_uri": "ND",
+        }
+
+    local_path = Path(local_path)
+
+    if not local_path.exists():
+        return {
+            "ok": False,
+            "reason": "LOCAL_FILE_MISSING",
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+        }
+
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        blob.upload_from_filename(str(local_path))
+
+        return {
+            "ok": True,
+            "reason": "UPLOADED",
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+        }
+
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"GCS_UPLOAD_ERROR:{type(exc).__name__}:{exc}",
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+        }
+
+
 @app.post("/drive/run/h5-auto-plan", dependencies=[Depends(require_api_key)])
 def drive_run_h5_auto_plan():
     """
@@ -2073,6 +2134,16 @@ def drive_run_h5_auto_plan():
         "skipped_sample": skipped[:10],
         "plan_csv": str(out_path),
         "skipped_csv": str(skipped_path),
+        "gcs_plan_upload": _h5auto_upload_file_to_gcs(
+            out_path,
+            "gpi-lite/outputs/h5_auto_plan.csv",
+        ),
+        "gcs_skipped_upload": _h5auto_upload_file_to_gcs(
+            skipped_path,
+            "gpi-lite/outputs/h5_auto_plan_skipped.csv",
+        ),
+        "gcs_plan_uri": "gs://gpi-lite-watchlist-data/gpi-lite/outputs/h5_auto_plan.csv",
+        "gcs_skipped_uri": "gs://gpi-lite-watchlist-data/gpi-lite/outputs/h5_auto_plan_skipped.csv",
         "strict_policy": "NO STRICT. Horaires extraits des PDF morning. P1/P2 uniquement.",
     }
 
