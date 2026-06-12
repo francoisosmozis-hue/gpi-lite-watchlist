@@ -1923,6 +1923,7 @@ def drive_run_h5_auto_plan():
 
     paris_tz = ZoneInfo("Europe/Paris")
     now = datetime.now(paris_tz)
+    today_date = now.date().isoformat()
 
     plan_rows = []
     skipped = []
@@ -1945,6 +1946,15 @@ def drive_run_h5_auto_plan():
             skipped.append({
                 "course_uid": uid,
                 "reason": "DATE_ND",
+                "priorite_h5": priorite,
+                "heure": "ND",
+            })
+            continue
+
+        if course_date != today_date:
+            skipped.append({
+                "course_uid": uid,
+                "reason": "NOT_TODAY",
                 "priorite_h5": priorite,
                 "heure": "ND",
             })
@@ -1977,15 +1987,7 @@ def drive_run_h5_auto_plan():
 
         mapped = url_map.get(uid, {})
         url = _h5auto_safe_str(mapped.get("url_zeturf"))
-
-        if not url:
-            skipped.append({
-                "course_uid": uid,
-                "reason": "URL_ZETURF_ND",
-                "priorite_h5": priorite,
-                "heure": heure,
-            })
-            continue
+        url_status = "OK" if url else "URL_REQUIRED"
 
         try:
             depart_dt = datetime.fromisoformat(f"{course_date}T{heure}:00").replace(tzinfo=paris_tz)
@@ -2012,10 +2014,14 @@ def drive_run_h5_auto_plan():
             else:
                 status = "EXPIRED_OR_STARTED"
 
+            if url_status == "URL_REQUIRED":
+                status = "URL_REQUIRED"
+
             plan_rows.append({
                 "course_uid": uid,
                 "priorite_h5": priorite,
-                "url_zeturf": url,
+                "url_zeturf": url or "ND",
+                "url_status": url_status,
                 "heure_depart": heure,
                 "heure_source": heure_source,
                 "pdf_source": pdf_source,
@@ -2031,7 +2037,7 @@ def drive_run_h5_auto_plan():
             })
 
     fieldnames = [
-        "course_uid", "priorite_h5", "url_zeturf", "heure_depart",
+        "course_uid", "priorite_h5", "url_zeturf", "url_status", "heure_depart",
         "heure_source", "pdf_source",
         "depart_dt", "capture_label", "capture_dt",
         "due_from", "due_to", "status", "created_at",
@@ -2061,7 +2067,9 @@ def drive_run_h5_auto_plan():
         "planned_count": len(plan_rows),
         "skipped_count": len(skipped),
         "due_count": sum(1 for r in plan_rows if r.get("status") in {"DUE", "LATE_BUT_PRECOURSE"}),
-        "plan_sample": plan_rows[:5],
+        "url_required_count": sum(1 for r in plan_rows if r.get("url_status") == "URL_REQUIRED"),
+        "today_date": today_date,
+        "plan_sample": plan_rows[:8],
         "skipped_sample": skipped[:10],
         "plan_csv": str(out_path),
         "skipped_csv": str(skipped_path),
