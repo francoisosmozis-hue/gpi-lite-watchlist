@@ -8,7 +8,7 @@ import csv
 import hashlib
 import json
 import re
-from typing import Iterable
+from typing import Iterable, Any
 
 
 PARSER_VERSION = "odds_html_parser_v0_1"
@@ -62,6 +62,149 @@ def _strip_html(html: str) -> str:
     html = re.sub(r"[ \t]+", " ", html)
     html = re.sub(r"\n+", "\n", html)
     return html.strip()
+
+
+def _extract_balanced_object_after_marker(html: str, marker: str) -> str | None:
+    idx = html.find(marker)
+    if idx < 0:
+        return None
+
+    start = html.find("{", idx)
+    if start < 0:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for pos in range(start, len(html)):
+        char = html[pos]
+
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return html[start:pos + 1]
+
+    return None
+
+
+def _extract_runner_names_from_html(html: str) -> dict[int, str]:
+    names: dict[int, str] = {}
+
+    pattern_popup = re.compile(
+        r'href="[^"]*/(?P<num>\d{1,2})/infos"(?P<body>.*?)data-popup-name="Fiche Partant\s*:\s*(?P<horse>[^"]+)"',
+        flags=re.I | re.S,
+    )
+
+    for match in pattern_popup.finditer(html):
+        try:
+            numero = int(match.group("num"))
+        except ValueError:
+            continue
+
+        horse = unescape(match.group("horse"))
+        horse = re.sub(r"\s+", " ", horse).strip()
+
+        if horse:
+            names.setdefault(numero, horse)
+
+    pattern_reverse = re.compile(
+        r'data-popup-name="Fiche Partant\s*:\s*(?P<horse>[^"]+)"(?P<body>.*?)href="[^"]*/(?P<num>\d{1,2})/infos"',
+        flags=re.I | re.S,
+    )
+
+    for match in pattern_reverse.finditer(html):
+        try:
+            numero = int(match.group("num"))
+        except ValueError:
+            continue
+
+        horse = unescape(match.group("horse"))
+        horse = re.sub(r"\s+", " ", horse).strip()
+
+        if horse:
+            names.setdefault(numero, horse)
+
+    return names
+
+
+def _parse_cotes_infos_rows(
+    html: str,
+    course_uid: str,
+    snapshot_label: str,
+    source_html_path: Path,
+    extracted_at_utc: str,
+) -> list[OddsRunnerRow]:
+    raw_object = _extract_balanced_object_after_marker(html, "cotesInfos:")
+    if not raw_object:
+        return []
+
+    try:
+        payload: dict[str, Any] = json.loads(raw_object)
+    except json.JSONDecodeError:
+        return []
+
+    names = _extract_runner_names_from_html(html)
+    rows: list[OddsRunnerRow] = []
+
+    for key, value in payload.items():
+        if not str(key).isdigit():
+            continue
+
+        if not isinstance(value, dict):
+            continue
+
+        odds = value.get("odds")
+        if not isinstance(odds, dict):
+            continue
+
+        numero = int(key)
+        sg = odds.get("SG")
+        sp_min = odds.get("SPMin")
+        sp_max = odds.get("SPMax")
+
+        cote_sg = _to_float(str(sg)) if sg not in (None, False) else None
+        cote_sp_min = _to_float(str(sp_min)) if sp_min not in (None, False) else None
+        cote_sp_max = _to_float(str(sp_max)) if sp_max not in (None, False) else None
+
+        if cote_sg is None:
+            continue
+
+        cheval = names.get(numero, "ND")
+
+        rows.append(
+            OddsRunnerRow(
+                course_uid=course_uid,
+                snapshot_label=snapshot_label,
+                numero=numero,
+                cheval=cheval,
+                cote_sg=cote_sg,
+                cote_sp_min=cote_sp_min,
+                cote_sp_max=cote_sp_max,
+                source_html_path=str(source_html_path),
+                parser_version=PARSER_VERSION,
+                confidence="COTESINFOS_JSON" if cheval != "ND" else "COTESINFOS_JSON_NAME_ND",
+                raw_fragment_hash=_hash_text(json.dumps(value, ensure_ascii=False, sort_keys=True)),
+                extracted_at_utc=extracted_at_utc,
+            )
+        )
+
+    return sorted(rows, key=lambda item: item.numero)
 
 
 def _iter_candidate_lines(text: str) -> Iterable[str]:
@@ -133,8 +276,20 @@ def extract_odds_from_html(
         raise FileNotFoundError(f"HTML introuvable : {source_html_path}")
 
     html = source_html_path.read_text(encoding="utf-8", errors="ignore")
-    text = _strip_html(html)
     extracted_at_utc = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    cotes_infos_rows = _parse_cotes_infos_rows(
+        html=html,
+        course_uid=course_uid,
+        snapshot_label=snapshot_label,
+        source_html_path=source_html_path,
+        extracted_at_utc=extracted_at_utc,
+    )
+
+    if cotes_infos_rows:
+        return cotes_infos_rows
+
+    text = _strip_html(html)
 
     rows: list[OddsRunnerRow] = []
     seen_numbers: set[int] = set()

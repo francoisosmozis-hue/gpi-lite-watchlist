@@ -2019,6 +2019,95 @@ def _h5auto_download_file_from_gcs(blob_name, local_path):
         }
 
 
+
+
+def _h5auto_safe_slug(value):
+    cleaned = "".join(
+        c.lower() if c.isalnum() else "_"
+        for c in str(value or "").strip()
+    )
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return cleaned.strip("_") or "nd"
+
+
+def _h5auto_download_url_to_file(url, local_path, timeout=30):
+    """
+    Capture HTML simple via urllib.
+    Aucun ticket strict.
+    """
+    from pathlib import Path
+    from urllib.request import Request, urlopen
+
+    local_path = Path(local_path)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        req = Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 GPI-Lite Watchlist HTML Capture",
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.5",
+            },
+        )
+
+        with urlopen(req, timeout=timeout) as response:
+            html = response.read().decode("utf-8", errors="ignore")
+
+        local_path.write_text(html, encoding="utf-8")
+
+        return {
+            "ok": True,
+            "reason": "DOWNLOADED",
+            "url": url,
+            "local_path": str(local_path),
+            "html_size": len(html),
+        }
+
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"HTML_DOWNLOAD_ERROR:{type(exc).__name__}:{exc}",
+            "url": url,
+            "local_path": str(local_path),
+            "html_size": 0,
+        }
+
+
+def _h5auto_read_csv_dicts(path):
+    import csv
+    from pathlib import Path
+
+    path = Path(path)
+    if not path.exists():
+        return []
+
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _h5auto_is_due_capture(row, now_iso):
+    """
+    Capture uniquement si now est dans la fenêtre due_from / due_to.
+    """
+    from datetime import datetime
+
+    due_from = str(row.get("due_from", "") or "").strip()
+    due_to = str(row.get("due_to", "") or "").strip()
+
+    if not due_from or not due_to:
+        return False
+
+    try:
+        now = datetime.fromisoformat(now_iso)
+        start = datetime.fromisoformat(due_from)
+        end = datetime.fromisoformat(due_to)
+        return start <= now <= end
+    except Exception:
+        return False
+
+
 @app.post("/drive/run/h5-auto-plan", dependencies=[Depends(require_api_key)])
 def drive_run_h5_auto_plan():
     """
@@ -2269,6 +2358,172 @@ def drive_run_h5_url_resolver():
         "upload_report": upload_report,
         "gcs_resolved_uri": "gs://gpi-lite-watchlist-data/gpi-lite/outputs/h5_auto_plan_resolved.csv",
         "gcs_report_uri": "gs://gpi-lite-watchlist-data/gpi-lite/outputs/h5_url_resolver_report.json",
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
+
+
+
+@app.post("/drive/run/h5-auto-capture", dependencies=[Depends(require_api_key)])
+def drive_run_h5_auto_capture():
+    """
+    Capture HTML ZEturf pour les snapshots H10/H5 dus.
+    Aucun ticket strict.
+    """
+    from datetime import datetime
+    from pathlib import Path
+    from zoneinfo import ZoneInfo
+
+    from engine.odds.zeturf_html_odds_parser import (
+        extract_odds_from_html,
+        write_odds_csv,
+        write_odds_json,
+    )
+
+    paris_tz = ZoneInfo("Europe/Paris")
+    now = datetime.now(paris_tz).replace(microsecond=0)
+    now_iso = now.isoformat()
+
+    resolved_path = Path("data/output/h5_auto_plan_resolved.csv")
+
+    download_resolved = _h5auto_download_file_from_gcs(
+        "gpi-lite/outputs/h5_auto_plan_resolved.csv",
+        resolved_path,
+    )
+
+    if not download_resolved.get("ok"):
+        return {
+            "ok": False,
+            "phase": "h5_auto_capture",
+            "download_resolved": download_resolved,
+            "reason": "H5_AUTO_PLAN_RESOLVED_GCS_DOWNLOAD_FAILED",
+            "capture_count": 0,
+            "odds_rows_total": 0,
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    rows = _h5auto_read_csv_dicts(resolved_path)
+
+    captures = []
+    skipped = []
+    odds_rows_total = 0
+
+    for row in rows:
+        course_uid = str(row.get("course_uid", "") or "").strip()
+        capture_label = str(row.get("capture_label", "") or "").strip()
+        url_status = str(row.get("url_status", "") or "").strip()
+        url = str(row.get("url_zeturf", "") or "").strip()
+        status = str(row.get("status", "") or "").strip()
+
+        if url_status != "OK" or not url.startswith("https://"):
+            skipped.append({
+                "course_uid": course_uid,
+                "capture_label": capture_label,
+                "reason": "URL_NOT_OK",
+                "url_status": url_status,
+                "status": status,
+            })
+            continue
+
+        if not _h5auto_is_due_capture(row, now_iso):
+            skipped.append({
+                "course_uid": course_uid,
+                "capture_label": capture_label,
+                "reason": "NOT_DUE",
+                "due_from": row.get("due_from", ""),
+                "due_to": row.get("due_to", ""),
+                "now": now_iso,
+            })
+            continue
+
+        slug = "_".join([
+            _h5auto_safe_slug(course_uid),
+            _h5auto_safe_slug(capture_label),
+        ])
+
+        html_path = Path("data/raw/zeturf_snapshots/html") / f"{slug}.html"
+        odds_csv_path = Path("data/output/odds") / f"{slug}_odds.csv"
+        odds_json_path = Path("data/output/odds") / f"{slug}_odds.json"
+
+        html_capture = _h5auto_download_url_to_file(url, html_path)
+
+        if not html_capture.get("ok"):
+            captures.append({
+                "course_uid": course_uid,
+                "capture_label": capture_label,
+                "ok": False,
+                "reason": html_capture.get("reason"),
+                "url": url,
+                "html_size": 0,
+                "odds_rows": 0,
+                "ticket_strict": "NO_BET",
+            })
+            continue
+
+        try:
+            odds_rows = extract_odds_from_html(
+                html_path=html_path,
+                course_uid=course_uid,
+                snapshot_label=capture_label,
+            )
+
+            write_odds_csv(odds_rows, odds_csv_path)
+            write_odds_json(odds_rows, odds_json_path)
+
+            odds_rows_total += len(odds_rows)
+
+            html_blob = f"gpi-lite/raw/zeturf_snapshots/html/{slug}.html"
+            odds_csv_blob = f"gpi-lite/outputs/odds/{slug}_odds.csv"
+            odds_json_blob = f"gpi-lite/outputs/odds/{slug}_odds.json"
+
+            upload_html = _h5auto_upload_file_to_gcs(html_path, html_blob)
+            upload_odds_csv = _h5auto_upload_file_to_gcs(odds_csv_path, odds_csv_blob)
+            upload_odds_json = _h5auto_upload_file_to_gcs(odds_json_path, odds_json_blob)
+
+            captures.append({
+                "course_uid": course_uid,
+                "capture_label": capture_label,
+                "ok": True,
+                "url": url,
+                "html_size": html_capture.get("html_size"),
+                "odds_rows": len(odds_rows),
+                "html_gcs_uri": upload_html.get("gcs_uri"),
+                "odds_csv_gcs_uri": upload_odds_csv.get("gcs_uri"),
+                "odds_json_gcs_uri": upload_odds_json.get("gcs_uri"),
+                "upload_html_ok": upload_html.get("ok"),
+                "upload_odds_csv_ok": upload_odds_csv.get("ok"),
+                "upload_odds_json_ok": upload_odds_json.get("ok"),
+                "ticket_strict": "NO_BET",
+            })
+
+        except Exception as exc:
+            captures.append({
+                "course_uid": course_uid,
+                "capture_label": capture_label,
+                "ok": False,
+                "reason": f"ODDS_PARSE_ERROR:{type(exc).__name__}:{exc}",
+                "url": url,
+                "html_size": html_capture.get("html_size"),
+                "odds_rows": 0,
+                "ticket_strict": "NO_BET",
+            })
+
+    return {
+        "ok": True,
+        "phase": "h5_auto_capture",
+        "now": now_iso,
+        "download_resolved": download_resolved,
+        "rows_input": len(rows),
+        "capture_count": len([c for c in captures if c.get("ok")]),
+        "capture_error_count": len([c for c in captures if not c.get("ok")]),
+        "skipped_count": len(skipped),
+        "odds_rows_total": odds_rows_total,
+        "captures_sample": captures[:10],
+        "skipped_sample": skipped[:10],
         "strict_allowed_oui_non": "non",
         "strict_usable_oui_non": "non",
         "ticket_strict": "NO_BET",
