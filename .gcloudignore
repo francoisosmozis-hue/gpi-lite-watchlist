@@ -1,4 +1,4 @@
-ï»¿# Environnement local
+# Environnement local
 .venv/
 venv/
 env/
@@ -33,7 +33,7 @@ Thumbs.db
 *.json.key
 secrets/
 
-# DonnÃ©es lourdes non nÃ©cessaires au build
+# Données lourdes non nécessaires au build
 data/
 outputs/
 uploads/
@@ -43,7 +43,7 @@ temp/
 
 # Sources et archives locales hors build
 sources/
-project_sources/
+# project_sources/
 debug/
 
 # PDF, exports et captures
