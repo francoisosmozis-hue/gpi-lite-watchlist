@@ -1,10 +1,10 @@
-# Environnement local
+# Local environment
 .venv/
 venv/
 env/
 ENV/
 
-# Git et caches
+# Git and caches
 .git/
 __pycache__/
 **/__pycache__/
@@ -17,7 +17,7 @@ __pycache__/
 .cache/
 .ipynb_checkpoints/
 
-# Fichiers temporaires
+# Temporary files
 *.log
 *.tmp
 *.bak
@@ -25,15 +25,16 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Variables et secrets locaux
+# Local env and secrets
 .env
 .env.*
 *.key
 *.pem
 *.json.key
 secrets/
+.secrets/
 
-# Données lourdes non nécessaires au build
+# Heavy data not needed for build
 data/
 outputs/
 uploads/
@@ -41,12 +42,12 @@ tmp/
 temp/
 .tmp.driveupload/
 
-# Sources et archives locales hors build
+# Local sources excluded except project_sources
 sources/
 # project_sources/
 debug/
 
-# PDF, exports et captures
+# Documents, exports and captures
 *.pdf
 *.xlsx
 *.xls
@@ -63,7 +64,7 @@ debug/
 *.sqlite
 *.db
 
-# Backups de code
+# Code backups
 *_backup.py
 *backup*.py
 *.bak*
@@ -77,8 +78,9 @@ h5_main_V*
 # Notebooks
 *.ipynb
 
-# Docker local inutile dans Cloud Build
+# Local Docker compose
 docker-compose.yml
 
 # Local Cloud Run env files
 cloudrun-env-action-safe.yaml
+gpi-lite-watchlist/
