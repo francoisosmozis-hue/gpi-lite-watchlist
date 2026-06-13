@@ -267,27 +267,6 @@ def derive_refusal_reasons(row: Dict[str, Any]) -> List[str]:
 
 
 
-def enrich_watchlist_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(row)
-
-    cp = derive_cp_status(row)
-    reasons = derive_refusal_reasons(row)
-
-    out["watchlist_quality"] = derive_watchlist_quality(row)
-    out["h5_surveillance_value"] = derive_h5_surveillance_value(row)
-    out["course_gate_preview"] = derive_course_gate_preview(row)
-    out["strict_ticket_status"] = derive_strict_ticket_status(row)
-    out["volatilite_risk_pre_h5"] = derive_volatilite_risk(row)
-    out["favorite_value_status"] = derive_favorite_value_status(row)
-    out["cp_sec_status"] = cp["cp_sec_status"]
-    out["cp3_status"] = cp["cp3_status"]
-    out["cp_sec_domine"] = cp["cp_sec_domine"]
-    out["top_refusal_reason_1"] = reasons[0]
-    out["top_refusal_reason_2"] = reasons[1]
-    out["top_refusal_reason_3"] = reasons[2]
-    out["action_gpt"] = derive_action_gpt(row)
-
-    return out
 
 # ---------------------------------------------------------------------------
 # WATCHLIST PRECISION OVERRIDE V0.2
@@ -362,27 +341,6 @@ def derive_refusal_reasons(row: Dict[str, Any]) -> List[str]:
 
 
 
-def enrich_watchlist_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(row)
-
-    cp = derive_cp_status(row)
-    reasons = derive_refusal_reasons(row)
-
-    out["watchlist_quality"] = derive_watchlist_quality(row)
-    out["h5_surveillance_value"] = derive_h5_surveillance_value(row)
-    out["course_gate_preview"] = derive_course_gate_preview(row)
-    out["strict_ticket_status"] = derive_strict_ticket_status(row)
-    out["volatilite_risk_pre_h5"] = derive_volatilite_risk(row)
-    out["favorite_value_status"] = derive_favorite_value_status(row)
-    out["cp_sec_status"] = cp["cp_sec_status"]
-    out["cp3_status"] = cp["cp3_status"]
-    out["cp_sec_domine"] = cp["cp_sec_domine"]
-    out["top_refusal_reason_1"] = reasons[0]
-    out["top_refusal_reason_2"] = reasons[1]
-    out["top_refusal_reason_3"] = reasons[2]
-    out["action_gpt"] = derive_action_gpt(row)
-
-    return out
 
 # ---------------------------------------------------------------------------
 # WATCHLIST PRECISION FIX V0.3 - ND DETECTION
@@ -527,3 +485,169 @@ def derive_action_gpt(row: Dict[str, Any]) -> str:
     if h5_value == "H5_SUIVI_SIMPLE":
         return "Suivi H-5 simple. Aucun ticket strict depuis morning."
     return "Surveillance faible. Aucun ticket strict."
+
+
+# ---------------------------------------------------------------------------
+# P6 compact H5 watchlist summary fields
+# ---------------------------------------------------------------------------
+
+def _p6_clean(value: Any, default: str = "ND") -> str:
+    text = str(value).strip() if value is not None else ""
+    if not text or text.upper() in {"NAN", "NULL", "NONE"}:
+        return default
+    return text
+
+
+def _p6_active_code(value: Any) -> bool:
+    text = _p6_clean(value, "").strip().upper()
+    return text not in {"", "ND", "AUCUN", "NONE", "NULL", "NAN"}
+
+
+def derive_h5_compact_bucket(row: Dict[str, Any]) -> str:
+    priority = _upper(_pick(row, "priorite_h5", "priority_h5", default="ND"))
+    quality = derive_watchlist_quality(row)
+    h5_value = derive_h5_surveillance_value(row)
+    strict_status = derive_strict_ticket_status(row)
+    structure = _upper(_pick(row, "structure_max", "latest_structure", default="ND"))
+
+    if priority == "P9" or quality == "D" or h5_value == "NO_BET_STRUCTUREL":
+        return "REFUS_STRUCTUREL"
+
+    if strict_status == "NO_BET_SIMULATION_ONLY" or "SIMULATION" in structure:
+        return "SIMULATION_ONLY"
+
+    if h5_value == "H5_PRIORITAIRE":
+        return "PRIORITE_H5"
+
+    if h5_value == "H5_SUIVI_SIMPLE":
+        return "SUIVI_SIMPLE"
+
+    if h5_value == "SURVEILLANCE_FAIBLE":
+        return "SURVEILLANCE_FAIBLE"
+
+    return "ND"
+
+
+def derive_h5_compact_rank(row: Dict[str, Any]) -> str:
+    priority = _upper(_pick(row, "priorite_h5", "priority_h5", default="ND"))
+    bucket = derive_h5_compact_bucket(row)
+
+    if bucket == "REFUS_STRUCTUREL" or priority == "P9":
+        return "9"
+
+    if bucket == "PRIORITE_H5":
+        return "1"
+
+    if bucket == "SUIVI_SIMPLE":
+        return "2"
+
+    if bucket in {"SIMULATION_ONLY", "SURVEILLANCE_FAIBLE"}:
+        return "3"
+
+    return "5"
+
+
+def derive_h5_compact_alert(row: Dict[str, Any]) -> str:
+    vol = _upper(_pick(row, "volatilite_status", "latest_volatilite_status", default=derive_volatilite_risk(row)))
+    ks = _pick(row, "kill_switch_codes", "latest_kill_switch_codes", "kill_switchs_matin", "no_bet_reason", default="ND")
+    fav = str(_pick(row, "favorite_fragile", "favori_fragile", default="ND")).strip().lower()
+    strict_status = derive_strict_ticket_status(row)
+
+    if vol in {"KILL", "KILL_PROBABLE"}:
+        return "KILL_VOLATILITE"
+
+    if _p6_active_code(ks):
+        return f"KILL_SWITCH:{_p6_clean(ks)}"
+
+    if fav == "oui":
+        return "FAVORI_FRAGILE"
+
+    if strict_status != "STRICT_ALLOWED":
+        return "STRICT_FERME"
+
+    return "OK"
+
+
+def derive_h5_compact_reason(row: Dict[str, Any]) -> str:
+    reasons = derive_refusal_reasons(row)
+    for reason in reasons:
+        if _p6_active_code(reason):
+            return _p6_clean(reason)
+
+    for key in ("decision_block_reason", "motifs_filtrage", "priorite_h5_reason", "raison", "no_bet_reason"):
+        value = _pick(row, key, default="ND")
+        if _p6_active_code(value):
+            return _p6_clean(value)
+
+    return "ND"
+
+
+def derive_h5_compact_action(row: Dict[str, Any]) -> str:
+    bucket = derive_h5_compact_bucket(row)
+    alert = derive_h5_compact_alert(row)
+
+    if bucket == "REFUS_STRUCTUREL":
+        return "NO BET structurel. Ne pas transformer en surveillance."
+
+    if alert.startswith("KILL_") or alert.startswith("KILL_SWITCH"):
+        return "Kill-switch actif ou probable. Confirmer NO BET."
+
+    if bucket == "PRIORITE_H5":
+        return "Surveiller H-5 prioritaire. Verifier SG, NP, statut et volatilite."
+
+    if bucket == "SUIVI_SIMPLE":
+        return "Suivi H-5 simple. Aucun ticket strict depuis morning."
+
+    if bucket == "SIMULATION_ONLY":
+        return "Simulation only. Aucun ticket strict."
+
+    if bucket == "SURVEILLANCE_FAIBLE":
+        return "Surveillance faible. Aucun ticket strict."
+
+    return "Aucun ticket strict depuis morning."
+
+
+def derive_h5_compact_line(row: Dict[str, Any]) -> str:
+    priority = _p6_clean(_pick(row, "priorite_h5", "priority_h5", default="ND"))
+    quality = derive_watchlist_quality(row)
+    bucket = derive_h5_compact_bucket(row)
+    structure = _p6_clean(_pick(row, "structure_max", "latest_structure", default="ND"))
+    strict_status = derive_strict_ticket_status(row)
+    ks = _p6_clean(_pick(row, "kill_switch_codes", "latest_kill_switch_codes", "kill_switchs_matin", "no_bet_reason", default="ND"))
+    sp = _p6_clean(_pick(row, "sp_status", "sp_status_morning", default="ND"))
+    action = derive_h5_compact_action(row)
+
+    return (
+        f"[{priority}][{quality}][{bucket}] "
+        f"{structure} | strict={strict_status} | ks={ks} | sp={sp} | action={action}"
+    )
+
+
+def enrich_watchlist_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(row)
+
+    cp = derive_cp_status(row)
+    reasons = derive_refusal_reasons(row)
+
+    out["watchlist_quality"] = derive_watchlist_quality(row)
+    out["h5_surveillance_value"] = derive_h5_surveillance_value(row)
+    out["course_gate_preview"] = derive_course_gate_preview(row)
+    out["strict_ticket_status"] = derive_strict_ticket_status(row)
+    out["volatilite_risk_pre_h5"] = derive_volatilite_risk(row)
+    out["favorite_value_status"] = derive_favorite_value_status(row)
+    out["cp_sec_status"] = cp["cp_sec_status"]
+    out["cp3_status"] = cp["cp3_status"]
+    out["cp_sec_domine"] = cp["cp_sec_domine"]
+    out["top_refusal_reason_1"] = reasons[0]
+    out["top_refusal_reason_2"] = reasons[1]
+    out["top_refusal_reason_3"] = reasons[2]
+    out["action_gpt"] = derive_action_gpt(row)
+
+    out["h5_compact_rank"] = derive_h5_compact_rank(out)
+    out["h5_compact_bucket"] = derive_h5_compact_bucket(out)
+    out["h5_compact_alert"] = derive_h5_compact_alert(out)
+    out["h5_compact_reason"] = derive_h5_compact_reason(out)
+    out["h5_compact_action"] = derive_h5_compact_action(out)
+    out["h5_compact_line"] = derive_h5_compact_line(out)
+
+    return out
