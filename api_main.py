@@ -5699,22 +5699,61 @@ def _action_pick(row, *names, default="ND"):
 
 
 def _action_compact_watchlist_row(row):
-    return {
+    base = {
         "course_uid": _action_pick(row, "course_uid", "uid", "course_id", "nom_course"),
         "reunion": _action_pick(row, "reunion", "R", "num_reunion"),
         "course": _action_pick(row, "course", "C", "num_course"),
         "hippodrome": _action_pick(row, "hippodrome"),
         "prix": _action_pick(row, "prix", "nom_prix"),
         "heure": _action_pick(row, "heure", "heure_depart", "depart"),
-        "priorite_h5": _action_pick(row, "priorite_h5"),
-        "qualite": _action_pick(row, "qualite"),
-        "structure_max": _action_pick(row, "structure_max"),
-        "verdict": _action_pick(row, "verdict", "verdict_python"),
-        "ticket_exact": _action_pick(row, "ticket_exact"),
-        "edge_status": _action_pick(row, "edge_status", "edge"),
+        "priorite_h5": _action_pick(row, "priorite_h5", "priority_h5", "priorite"),
+        "qualite": _action_pick(row, "qualite", "quality"),
+        "structure_max": _action_pick(row, "structure_max", "latest_structure"),
+        "verdict": _action_pick(row, "verdict", "verdict_python", "latest_verdict"),
+        "ticket_exact": _action_pick(row, "ticket_exact", "latest_ticket"),
+        "edge_status": _action_pick(row, "edge_status", "edge", "latest_edge"),
         "raison": _action_pick(row, "raison", "reason", "reason_codes"),
         "source": _action_pick(row, "source", "source_file"),
+
+        # Champs moteur / strict gate si deja presents dans le CSV
+        "strict_allowed_oui_non": _action_pick(row, "strict_allowed_oui_non", "latest_strict_allowed_oui_non"),
+        "decision_strict_allowed": _action_pick(row, "decision_strict_allowed", "latest_decision_strict_allowed"),
+        "decision_block_reason": _action_pick(row, "decision_block_reason", "latest_decision_block_reason"),
+        "strict_gate_summary": _action_pick(row, "strict_gate_summary", "latest_strict_gate_summary"),
+
+        # Champs CP si deja presents
+        "cp_sec_candidate": _action_pick(row, "cp_sec_candidate", "latest_cp_sec_candidate"),
+        "cp_sg_pair_sum": _action_pick(row, "cp_sg_pair_sum", "latest_cp_sg_pair_sum"),
+        "cp_sg_filter_status": _action_pick(row, "cp_sg_filter_status", "latest_cp_sg_filter_status"),
+        "cp3_candidate": _action_pick(row, "cp3_candidate", "latest_cp3_candidate"),
+        "cp3_sg_filter_status": _action_pick(row, "cp3_sg_filter_status", "latest_cp3_sg_filter_status"),
+
+        # Champs volatilite si deja presents
+        "volatilite_status": _action_pick(row, "volatilite_status", "latest_volatilite_status"),
+        "volatilite_top6_max_pct": _action_pick(row, "volatilite_top6_max_pct", "latest_volatilite_top6_max_pct"),
+        "volatilite_top6_direction": _action_pick(row, "volatilite_top6_direction", "latest_volatilite_top6_direction"),
+
+        # Champs value favoris si disponibles
+        "favorite_sg": _action_pick(row, "favorite_sg", "favori_sg", "sg_favori", "cote_favori"),
+        "favorite_fragile": _action_pick(row, "favorite_fragile", "favori_fragile"),
     }
+
+    try:
+        from engine.watchlist_precision import enrich_watchlist_row
+
+        merged = dict(row)
+        merged.update(base)
+        return enrich_watchlist_row(merged)
+    except Exception as exc:
+        base["watchlist_quality"] = "C"
+        base["h5_surveillance_value"] = "SURVEILLANCE_FAIBLE"
+        base["course_gate_preview"] = "PRE_H5_UNKNOWN"
+        base["strict_ticket_status"] = "NO_BET"
+        base["top_refusal_reason_1"] = "WATCHLIST_PRECISION_ERROR"
+        base["top_refusal_reason_2"] = f"{type(exc).__name__}"
+        base["top_refusal_reason_3"] = "ND"
+        base["action_gpt"] = "Erreur enrichissement Watchlist. Aucun ticket strict."
+        return base
 
 
 
