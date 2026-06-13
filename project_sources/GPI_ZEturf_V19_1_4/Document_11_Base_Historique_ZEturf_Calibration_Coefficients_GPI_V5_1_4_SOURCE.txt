@@ -1,0 +1,266 @@
+DOCUMENT 11 - BASE HISTORIQUE ZETURF & CALIBRATION DES RAPPORTS V5.1.4
+Source critique du projet | Proxy CP/2sur4 depuis SG | Moteur reproductible | Split hors echantillon | Calibration SP | MAJ 2026-05-23 | remplace V5.1.3
+
+STATUT
+ACTIF - source critique prioritaire. Ce document prime sur les intuitions, anciennes conversations, captures, exports non normalises et sorties narratives. V5.1.4 conserve les verrous V5.1.3 et ajoute trois obligations : moteur de decision reproductible, validation hors echantillon renforcee, calibration SP independante.
+
+1. FONCTION
+Construire et maintenir une base CSV + SQLite permettant d'estimer des rapports prudents avant course et de rejouer toute decision GPI. Document 11 ne selectionne jamais un cheval. Il fournit les donnees, coefficients, splits, sorties moteur et tables de validation necessaires a la decision.
+
+Le document convertit une probabilite de marche issue des SG ZEturf en R_prudent par type de pari, partants, concentration marche, profil de selection, rangs et discipline.
+
+V5.1.4 transforme la base en socle reproductible : meme input, meme ruleset_version, meme engine_version = meme verdict. Une sortie conversationnelle ne peut pas contredire decision_engine_outputs.
+
+CORRECTIONS V5.1.4
+- Ajout decision_engine_outputs pour figer les decisions pre-course.
+- Renforcement train/validation/test_live avec leakage_check obligatoire.
+- Ajout events_sp et sp_calibration_segments pour calibration SP independante.
+- Ajout des champs split, calibration_version, leakage_check_ok dans les tables de validation.
+- Ajout des controles replay_match, input_hash et reason_codes.
+- Maintien des verrous V5.1.3 : proxy_error_by_segment, CP_SEC vs CP3, ROI segmente, volatilite SG, proba_basse calibree, historique utilisateur separe.
+
+2. SOURCES
+A. PDF ZEturf Resultats & Rapports : verite post-course, arrivee, rapports officiels, disqualifies, NP, partants, cotes finales si presentes.
+B. PDF ZEturf Pronostics & Cotes : replay pre-course, SG, statut, snapshot H-30/H-10/H-5/T-8, SP si presentes.
+C. Historique tickets utilisateur : ROI personnel reel, type exact, mise, retour. Il reste separe des rapports publics.
+D. Courses etrangeres : exclues de la calibration France.
+E. Sorties moteur : decision_engine_outputs. Elles servent a rejouer et auditer les decisions, jamais a recalibrer les rapports publics.
+
+3. ARCHITECTURE
+/data/raw : PDF bruts.
+/data/bronze : source_files.csv, extracted_text.csv, parsing_errors.csv.
+/data/silver : courses.csv, runners_results.csv, runners_pronostics.csv, reports.csv, odds_snapshots.csv.
+/data/gold : events_cp.csv, events_2sur4.csv, events_sp.csv, calibration_segments.csv, sp_calibration_segments.csv, proxy_error_by_segment.csv, backtest_cp_sec_vs_cp3.csv, backtest_decisions.csv, backtest_kpi.csv, paper_trading_50_decisions.csv, odds_movement_snapshots.csv, proba_basse_calibration.csv, train_test_split.csv, decision_engine_outputs.csv, user_ticket_history.csv.
+/data/sqlite : zeturf_calibration.sqlite.
+/data/exports : fichiers de lecture seulement.
+
+4. TABLES CIBLES
+source_files : source_pdf_id, file_name, pdf_type, content_hash, duplicate_group_id, kept_file, parsed_status, error_reason.
+
+courses : course_uid, date_course, hippodrome, nom_course, reunion, course_number, discipline, distance, terrain, partants_declares, partants_reels, arrivee, disqualifies, non_partants, quality_flag.
+
+runners_results : course_uid, numero, cheval, cote_SG_finale, rang_marche_final, statut, arrivee_rank, is_non_partant, is_disqualified.
+
+runners_pronostics : course_uid, snapshot_time, numero, cheval, driver_jockey, entraineur, cote_SG, cote_SP_min, cote_SP_max, rang_marche, statut, source_pronostics_pdf_id.
+
+reports : report_id, course_uid, bet_type, selection_sorted, rapport_officiel, mise_reference, retour_reference, source_pdf_id, report_quality.
+
+events_cp/events_2sur4 : event_id, course_uid, bet_type, selection, P_event_market, rapport_officiel, C_observe, buckets, valid_for_calibration, exclusion_reason, split, calibration_version, leakage_check_ok.
+
+events_sp : event_sp_id, course_uid, snapshot_time, numero, cheval, discipline, partants_reels, top_paid_places, SG_snapshot, SP_min, SP_max, rang_marche, score_total, statut_score, tranche_SP, resultat_place_oui_non, rapport_SP_officiel, mise_reference, retour_reference, ROI, ratio_retour, valid_for_calibration, exclusion_reason, split, calibration_version, leakage_check_ok.
+
+calibration_segments : segment_id, bet_type, bucket_N, bucket_marche, bucket_selection, bucket_rangs, discipline_bucket, sample_n, C_median, C_q25, C_q20, C_prudent, confidence, fallback_level, last_update, split_source, calibration_version.
+
+sp_calibration_segments : segment_sp_id, discipline_bucket, bucket_N, tranche_SP, rang_marche_bucket, score_bucket, sample_n, taux_place_reel, ROI_median, ratio_median, hit_rate, drawdown_max, losing_streak_max, statut_segment_SP, split_source, calibration_version, date_update.
+
+proxy_error_by_segment : segment_id, bet_type, bucket_N, bucket_marche, bucket_selection, bucket_rangs, discipline_bucket, sample_n, C_prudent, confidence, fallback_level, n_events_testes, R_prudent_median, rapport_reel_median, erreur_moyenne, erreur_mediane, erreur_P25, erreur_P75, erreur_relative_mediane, taux_surestimation, taux_underestimate, ratio_reel_proxy_median, ROI_CP_SEC, ROI_CP3, ratio_median_CP_SEC, ratio_median_CP3, drawdown_max_CP_SEC, drawdown_max_CP3, segment_statut_proxy, segment_degrade_oui_non, motif_degradation, split, calibration_version, leakage_check_ok, date_update.
+
+backtest_cp_sec_vs_cp3 : decision_id, course_uid, snapshot_time, selection_CP_SEC, selection_CP3, P_event_market_CP_SEC, R_prudent_CP_SEC, R_prudent_meilleure_paire_CP3, nb_paires_defendables, decision_pre_course, official_return_sec, official_return_cp3, ROI_sec, ROI_cp3, ratio_sec, ratio_cp3, drawdown_sec, drawdown_cp3, cp3_remboursant_flag, CP_SEC_domine_oui_non, structure_retenue, cause_ecart, split, calibration_version, leakage_check_ok.
+
+backtest_decisions : decision_id, course_uid, snapshot_time, bet_type, selection, stake, P_event_market, report_est_prudent, C_prudent_used, sample_n, confidence, fallback_level, proba_basse_score, decision_GPI, official_return, gain_net, ROI, ratio_retour, segment_GPI, split, calibration_version, leakage_check_ok.
+
+paper_trading_50_decisions : decision_id, date, course_uid, reunion_course, hippodrome, discipline, partants_reels, snapshot_time, qualite, score_jouabilite, SG_source, NP_status_ok, shortlist_top6, anomalies_7_12, segment_id, sample_n, confidence, fallback_level, C_prudent, R_prudent, proxy_error_status, segment_degrade_oui_non, CP_SEC_selection, CP_SEC_R_prudent, CP_SEC_decision, CP3_selection, CP3_nb_paires_defendables, CP3_decision, structure_retenue, verdict_pre_course, mise_paper, segment_ROI, arrivee, rapport_officiel, retour_paper, gain_net_paper, ROI_paper, ratio_retour, cause_resultat, split, calibration_version, leakage_check_ok, decision_before_race_oui_non.
+
+odds_movement_snapshots : course_uid, snapshot_time, numero, cheval, SG, rang_marche, SG_previous, variation_pct, variation_abs, statut_marche, impact_marche, source_pronostics_pdf_id, split, calibration_version.
+
+proba_basse_calibration : calibration_id, segment_id, discipline, type_course, bet_type, score_total, decisions, taux_top3, taux_top4, taux_faute, ROI_CP_SEC, ROI_CP3, ratio_median_CP_SEC, ratio_median_CP3, drawdown_max, statut_score, split, calibration_version, leakage_check_ok, date_update.
+
+train_test_split : course_uid, date_course, split, utilisation, calibration_version, leakage_check_ok, motif_exclusion, created_at.
+
+decision_engine_outputs : decision_id, course_uid, snapshot_time, engine_version, ruleset_version, input_hash, input_source_ids, qualite, score_jouabilite, verdict, structure_max, structure_retenue, selection_CP_SEC, selection_CP3, selection_SP, mise_theorique, segment_ROI, edge_status, reason_codes, kill_switch_codes, proxy_status, segment_id, sample_n, confidence, fallback_level, C_prudent, R_prudent, CP_SEC_domine_oui_non, score_total, statut_score, statut_marche, split, calibration_version, leakage_check_ok, decision_before_race_oui_non, output_replayed_oui_non, replay_match_oui_non, created_at.
+
+user_ticket_history : ticket_id, date, course_uid, reunion_course, type_pari, selection, mise, retour, gain_net, ROI, ratio_retour, conseille_GPI_oui_non, joue_utilisateur_oui_non, ecart_type, segment_GPI, hors_doctrine_oui_non.
+
+5. DEDOUBLONNAGE
+Cle primaire course : date_course + hippodrome + nom_course. Si contenu identique : conserver un seul fichier. Si divergence : statut CONFLIT ; aucune course en conflit non resolu n'alimente C_prudent. Hash obligatoire.
+
+6. CALCUL MARCHE
+Pour chaque partant reel : q_i = 1 / SG_i ; M = somme(q_i) sur partants reels hors NP ; p_i = q_i / M. NP retires avant normalisation. Disqualifies conserves comme partants reels. P_event_market par Harville / Plackett-Luce.
+
+Controle : toute normalisation realisee avec partants declares au lieu de partants reels est invalide. Tout calcul sans source_snapshot_time est exclu du strict.
+
+7. EVENEMENTS CP
+Chaque course >=8 partants genere les paires officielles top3 : 1-2, 1-3, 2-3. Pour chaque paire : P_pair_top3 ; C_observe_CP = rapport_CP_officiel x P_pair_top3. Le CP3 est un panier ; son ROI se calcule sur mise totale.
+
+8. EVENEMENTS 2SUR4
+Chaque course >=10 partants genere 6 paires top4 : 1-2, 1-3, 1-4, 2-3, 2-4, 3-4. C_observe_2sur4 = rapport_2sur4_officiel x P_pair_top4.
+
+9. EVENEMENTS SP
+Chaque partant avec SP_min visible peut generer un event_sp. Le resultat place depend du nombre de partants reels : top 2 paye de 4 a 7 partants ; top 3 paye a partir de 8 partants.
+
+Tranches SP obligatoires :
+SP_1_20_1_80 ; SP_2_00_2_90 ; SP_3_00_5_00 ; SP_SUP_5_00.
+
+Regle : le SP ne se calibre jamais via le proxy CP. Il doit etre evalue par tranche_SP, discipline, bucket_N, rang_marche_bucket et score_bucket.
+
+10. COEFFICIENTS CP/2SUR4
+C_prudent = q25 si sample_n >=30 ; si 10-29 = min(q25 disponible, mediane*0,85) ; si <10 = ND. R_prudent = C_prudent / P_event_market. Standard reel : sample_n >=50. Robuste : sample_n >=100. Segment degrade si taux de surestimation proxy trop eleve, meme avec sample_n >=50.
+
+11. STATUTS SEGMENTAIRES PROXY
+Statut | Conditions | Usage
+VERT | sample_n >=50 ; taux_surestimation <=35 % ; erreur_relative_mediane >=0 | Decision standard possible si autres criteres OK
+ORANGE | sample_n >=50 ; taux_surestimation 35-45 % ou erreur_relative_mediane entre -10 % et 0 % | Edge fragile ; CP_SEC prioritaire ; CP3 tres limite
+ROUGE | taux_surestimation >45 % ou erreur_relative_mediane < -10 % | Segment degrade ; CP/CP3 reel interdit
+FRAGILE | sample_n 10-49 | Simulation ou exception documentee ; jamais edge net
+ND | sample_n <10 ; proxy absent ; fallback non declare | Aucun ticket reel
+
+Un segment ROUGE est exclu de toute decision reelle stricte. Un segment ORANGE doit etre signale dans la sortie et ne peut pas justifier un CP3 sans marge forte.
+
+12. STATUTS SEGMENTAIRES SP
+Statut | Conditions | Usage
+UTILISABLE | sample_n >=30 ; ROI_median >=0 ; ratio_median acceptable ; drawdown_max acceptable | SP reel possible si SP_min, proba_basse et faits independants passent
+FRAGILE | sample_n 10-29 ou variance elevee | micro-SP 1 EUR ou simulation uniquement
+REJETE | ROI_median negatif, drawdown excessif, hit_rate insuffisant ou taux reel incoherent | SP reel interdit
+ND | sample_n <10 ou calibration absente | SP reel interdit
+
+Le seuil theorique proba_basse > 1,20 / SP_min reste necessaire mais insuffisant. La calibration SP par segment decide si un SP peut etre autre chose qu'une simulation ou un micro-SP.
+
+13. FALLBACK
+Exact : type+N+marche+selection+rangs+discipline. Puis : type+N+marche+selection -> type+N+marche -> type+N -> type global -> ND. Tout fallback doit etre trace dans le ticket. Fallback non declare = ticket reel interdit.
+
+Fallback parent = edge fragile par defaut, meme si sample_n parent est eleve. Un fallback ne doit jamais masquer une absence de segment comparable.
+
+14. MOTEUR DE DECISION REPRODUCTIBLE
+Toute decision GPI pre-course doit produire une ligne decision_engine_outputs.
+
+Contrat :
+- Meme input_hash + meme ruleset_version + meme engine_version = meme verdict.
+- Si le verdict change, il faut une nouvelle ruleset_version ou un nouvel input_hash.
+- La sortie moteur prime sur l'analyse narrative.
+- Si input_hash, P_event_market, proxy_status, score_total, statut_score ou CP_SEC_domine sont ND, la decision stricte est interdite.
+- Toute sortie doit inclure reason_codes et kill_switch_codes.
+
+Reason_codes standards :
+PROXY_VERT ; PROXY_ORANGE ; PROXY_ROUGE ; PROXY_ND ; FALLBACK_PARENT ; FALLBACK_ND ; CP_SEC_DOMINE ; CP3_ONE_PAIR_ONLY ; CP3_TWO_WEAK_PAIRS ; SP_MIN_ABSENT ; SP_SEGMENT_ND ; SP_SEGMENT_REJETE ; SCORE_UTILISABLE ; SCORE_FRAGILE ; SCORE_REJETE ; SCORE_ND ; VOLATILITE_STABLE ; VOLATILITE_INSTABLE ; VOLATILITE_KILL_SWITCH ; NP_STATUS_INCERTAIN ; SG_INCOHERENTE ; QUALITE_D ; NO_BET_DEFAULT.
+
+Controle replay :
+output_replayed_oui_non et replay_match_oui_non doivent etre renseignes lors des audits. Si replay_match_oui_non = non, la decision est exclue du KPI strict jusqu'a correction.
+
+15. SPLIT TEMPOREL TRAIN / VALIDATION / TEST_LIVE
+Aucune preuve n'est valide si les memes courses servent a calibrer et valider.
+
+TRAIN : sert a calculer C_prudent, sp_calibration_segments et calibrer les scores.
+VALIDATION : sert a controler proxy_error_by_segment, backtest_cp_sec_vs_cp3, SP et proba_basse hors echantillon.
+TEST_LIVE : sert aux decisions paper trading horodatees avant course.
+
+Interdictions :
+- recalibrer un segment avec les courses utilisees pour le valider ;
+- utiliser l'arrivee dans une decision pre-course ;
+- valider CP3 sur un gros retour isole ;
+- fusionner train, validation et test_live dans un KPI unique ;
+- utiliser une ligne avec leakage_check_ok = false dans un KPI strict ;
+- produire une decision stricte sans calibration_version.
+
+Champs obligatoires dans les tables de validation : split, calibration_version, leakage_check_ok, source_snapshot_time ou snapshot_time, decision_before_race_oui_non.
+
+16. ETAT MASTER PLUS4 AU 2026-05-22
+Pipeline : 2 363 sources PDF, 2 140 courses parsees, 26 304 runners extraits, 6 411 rapports CP extraits, 6 105 events CP, 6 083 events CP valides, 161 segments CP, 30 segments sample_n >=50, max segment sample_n 784, parsing_errors = 0.
+
+Utilisation : autorisee uniquement sur segments comparables >=50 avec fallback declare, controle proxy_error_by_segment et split hors echantillon. Ces metriques n'autorisent pas la generalisation aux exotiques, au plat, a l'obstacle, au SP ou aux segments faibles.
+
+17. SEGMENTS EXPLOITABLES PRIORITAIRES
+Priorite CP attele : segments >=50, statut VERT, fallback exact ou parent tres proche. Les segments monte exploitables restent prudents et ne valident pas automatiquement le monte 3 ans. Pour toute discipline ou bucket non represente : simulation ou edge fragile.
+
+SP : aucun segment SP n'est exploitable tant que events_sp et sp_calibration_segments ne sont pas produits, valides hors echantillon et classes UTILISABLE.
+
+18. BACKTEST CP_SEC VS CP3
+Obligatoire avant conservation d'un CP3 reel. Pour chaque decision candidate CP3, conserver la meilleure paire CP_SEC pre-course et comparer : ROI, ratio median, drawdown, taux de remboursement, cause d'ecart.
+
+CP_SEC domine si au moins deux conditions sont vraies : ROI_CP_SEC >= ROI_CP3 ; drawdown_CP_SEC < drawdown_CP3 ; ratio_median_CP_SEC >= ratio_median_CP3 ; CP3 remboursant frequent ; une seule paire CP3 concentre l'essentiel de la probabilite ; deux paires CP3 ont R_prudent <3,00.
+
+Si CP_SEC domine : CP3 refuse. Si CP3 gagne uniquement par un gros retour isole : CP3 reste simulation. Si CP3 bat CP_SEC en ROI median, ratio median et drawdown acceptable : CP3 peut etre autorise sur ce segment uniquement.
+
+19. CALIBRATION SP INDEPENDANTE
+Le SP est une structure distincte du CP, du CP3 et du 2sur4. Il exige une calibration separee.
+
+Conditions minimales pour etudier un SP standard :
+- SP_min visible dans ZEturf ;
+- SP_min rattache a snapshot_time ;
+- top_paid_places calcule selon partants reels ;
+- segment_sp_id renseigne ;
+- statut_segment_SP = UTILISABLE ;
+- proba_basse > 1,20 / SP_min ;
+- au moins 3 faits independants ;
+- aucun kill-switch.
+
+Si statut_segment_SP = FRAGILE : micro-SP 1 EUR ou simulation.
+Si statut_segment_SP = REJETE ou ND : aucun SP reel strict.
+Si sp_calibration_segments absent : SP standard interdit, micro-SP seulement si profil tres propre et suivi separe.
+
+20. PAPER TRADING 50 DECISIONS
+Avant toute intensification de mise ou extension CP3, produire paper_trading_50_decisions.csv. Le score de jouabilite y est stocke comme filtre d'admissibilite, jamais comme validation d'EV.
+
+Conditions d'entree : France ; ZEturf ; H-5/H-10 ou T-8 ; SG propres ; NP/statut traites ; qualite A/B prioritaire ; proxy non ROUGE ; CP_SEC teste avant CP3 ; exotiques exclus ; hesitation forte = NO BET.
+
+Repartition attendue : NO BET 25-35 ; CP_SEC 8-12 ; CP3 5-8 ; SP 3-5 ; 2SUR4_EXP 0-3 ; exotiques 0. Si plus de 30 tickets sont retenus sur 50 decisions, filtre trop laxiste.
+
+Validation : ROI paper positif non dependant d'un seul gros ticket ; drawdown acceptable ; aucun segment ROUGE ; CP3 conserve seulement si CP_SEC ne domine pas ; ROI reel, simulation et paper trading separes ; split = TEST_LIVE ; leakage_check_ok = true.
+
+21. VOLATILITE MARCHE SG
+La volatilite SG devient une table de controle, pas un signal de pari automatique. Elle sert a detecter un marche instable qui peut invalider une decision CP/SP.
+
+Calcul : variation_pct = abs(SG_t2 - SG_t1) / SG_t1.
+
+Lectures minimales :
+0 a 10 % : stable.
+10 a 20 % : mouvement surveillable.
+20 a 35 % : instable, downgrade de qualite ou simulation.
+Plus de 35 % : kill-switch sauf justification forte et tracee.
+
+Champs obligatoires : SG_H30, SG_H10, SG_H5, SG_T8 si disponibles ; variation_pct_H30_H5 ; variation_pct_H5_T8 ; statut_marche ; impact_marche.
+
+22. CALIBRATION PROBA_BASSE
+Le score proba_basse ne doit plus rester une grille qualitative. Chaque score doit etre compare aux resultats reels.
+
+Pour chaque score_total et segment comparable, calculer : decisions ; taux_top3 ; taux_top4 ; taux_faute ; ROI_CP_SEC ; ROI_CP3 ; ratio_median ; drawdown_max ; statut_score.
+
+Statuts :
+UTILISABLE : decisions >=30, ROI non negatif, drawdown acceptable, taux reel coherent avec le seuil.
+FRAGILE : decisions 10 a 29 ou variance trop forte.
+REJETE : ROI negatif, drawdown excessif, score non reproductible ou taux reel inferieur au seuil.
+ND : moins de 10 decisions.
+
+Si la classe de score est REJETEE ou ND, proba_basse_defendable = non.
+
+23. HISTORIQUE UTILISATEUR
+L'historique utilisateur ne calibre jamais les rapports publics. Il mesure la discipline de jeu.
+
+Usage autorise : ecart entre ticket conseille et ticket joue ; surjeu ; ajout hors doctrine ; ROI par type exact de pari ; impact des micro-SP et exotiques joues hors validation.
+
+Usage interdit : modifier C_prudent ; recalibrer un segment public ; transformer un ticket gagnant hors doctrine en regle.
+
+24. CRITERES GO MVP
+Actions bloquantes :
+1. decision_engine_outputs produit et rejouable.
+2. train_test_split complet avec leakage_check_ok.
+3. proxy_error_by_segment controle sur segments CP sample_n >=50.
+4. backtest CP_SEC vs CP3 par segment.
+5. 50 decisions paper trading horodatees.
+6. events_sp et sp_calibration_segments produits avant tout SP standard.
+
+Criteres : inventaire PDF 100 % ; dedoublonnage 100 % ; courses exploitables >=70 % ; CP sample_n >=50 sur plusieurs buckets ; fallback declare 100 % ; backtest CP_SEC vs CP3 separe ; ROI reel, simulation, paper trading et hors doctrine separes ; absence de fuite d'arrivee dans les decisions pre-course ; replay_match_oui_non controle.
+
+25. KILL-SWITCHS BASE
+PDF illisible ; extraction ambiguë ; doublon divergent ; SG absente ; NP non traite ; rapport officiel absent ; sample_n <10 ; fallback non declare ; erreur proxy non auditee ; segment surestime non degrade ; segment ROUGE utilise ; ROI simule melange au ROI reel ; CP3 non compare au CP_SEC ; backtest utilisant l'arrivee pour decider ; export Excel utilise comme source de verite ; decision_engine_outputs absent ; input_hash absent ; ruleset_version absente ; calibration_version absente ; leakage_check_ok = false ; SP standard sans sp_calibration_segments UTILISABLE.
+
+26. SORTIES OBLIGATOIRES
+calibration_segments.csv ; sp_calibration_segments.csv ; events_sp.csv ; zeturf_calibration.sqlite ; proxy_error_by_segment.csv ; backtest_cp_sec_vs_cp3.csv ; backtest_decisions.csv ; backtest_kpi.csv ; paper_trading_50_decisions.csv ; odds_movement_snapshots.csv ; proba_basse_calibration.csv ; train_test_split.csv ; decision_engine_outputs.csv ; user_ticket_history.csv ; run_metrics.json.
+
+Toute decision reelle doit pouvoir etre rejouee depuis ces fichiers. Toute decision non rejouable est exclue du strict.
+
+27. REGLE D'USAGE OPERATIONNELLE
+- Sans decision_engine_outputs : pas de decision stricte reproductible.
+- Sans input_hash : pas de decision stricte.
+- Sans train_test_split : pas de preuve valide.
+- Sans leakage_check_ok : pas de KPI strict.
+- Sans proxy_error_by_segment.csv : pas d'edge net CP/CP3.
+- Sans backtest_cp_sec_vs_cp3.csv : pas de CP3 strict.
+- Sans paper_trading_50_decisions.csv : pas d'augmentation de mise.
+- Sans sp_calibration_segments.csv : pas de SP standard.
+- Sans fallback declare : ticket reel interdit.
+- Sans segmentation ROI : dashboard invalide.
+- Score de jouabilite eleve sans validation economique : ticket interdit.
+- ROI global flatteur : preuve invalide.
+
+28. PHRASE SOURCE
+Edge net uniquement si SG fiables, P_event_market calcule, C_prudent documente, fallback declare, erreur proxy suivie, segment non ROUGE, CP_SEC vs CP3 teste, decision_engine_outputs rejouable, split hors echantillon valide, leakage_check_ok, couverture minimale et proba_basse defendable. Edge fragile si coefficient degrade, fallback parent, SP non calibre ou score fragile. Edge absent si proxy ND, segment surestime non degrade, R=1/P brut, CP3 seulement remboursant, CP3 inferieur au CP_SEC, SP standard sans calibration, moteur absent, split absent ou arrivee utilisee pour decider.

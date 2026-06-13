@@ -1,0 +1,163 @@
+DOCUMENT 4 - HISTORIQUE ZETURF SEED REDUIT GPI V19.1.4
+Observations issues du projet | non doctrinal | moteur reproductible | split hors echantillon | calibration SP | MAJ 2026-05-23 | remplace V19.1.3
+
+1. FONCTION
+Ce document conserve uniquement les lecons utiles avant suppression des anciennes sources.
+Il n'est pas une source de verite statistique.
+Il sert a orienter les backtests Document 11 et a empecher la repetition des biais observes.
+
+Document 4 ne selectionne jamais un cheval.
+Document 4 ne valide jamais un ticket.
+Document 4 ne modifie jamais une regle active sans passage par Document 11, Document 10, Document 3, Document 2, Document 0 et Document 1.
+
+2. STATUT
+Priorite basse.
+Aucune observation ci-dessous ne valide un ticket.
+Toute hypothese doit etre testee dans la base CSV + SQLite et confirmee par :
+- decision_engine_outputs rejouable ;
+- split hors echantillon valide ;
+- leakage_check_ok = true ;
+- ROI reel segmente ;
+- erreur proxy maitrisee ;
+- arbitrage CP_SEC vs CP3 ;
+- calibration SP independante si SP standard ;
+- replay_match controle ;
+- proba_basse calibree.
+
+Une bonne arrivee post-course ne transforme jamais une observation en regle.
+
+3. VERROUS ISSUS DU RETOUR UTILISATEUR
+- decision_engine_outputs devient prioritaire : une decision non rejouable reste fragile ou exclue du strict.
+- input_hash, engine_version et ruleset_version doivent permettre de rejouer le meme verdict.
+- train_test_split devient bloquant : TRAIN calibre, VALIDATION controle, TEST_LIVE audite.
+- leakage_check_ok = false exclut la ligne du KPI strict.
+- Proxy_error_by_segment.csv reste prioritaire : un segment qui surestime regulierement les rapports reels doit etre degrade ou refuse.
+- CP_SEC vs CP3 reste prioritaire : CP3 n'est pas la structure reflexe ; une paire dominante doit etre testee en CP sec.
+- SP standard exige sp_calibration_segments UTILISABLE ; sinon micro-SP 1 EUR max ou simulation.
+- ROI reel, hors doctrine, simulation et paper trading ne doivent jamais etre fusionnes.
+- ROI global flatteur est invalide.
+- Historique utilisateur = discipline de jeu, jamais calibration publique.
+
+4. BIAIS A NE PLUS REINTRODUIRE
+- Transformer un regret en ticket.
+- Utiliser un favori sous-paye comme base par confort.
+- Jouer un CP3 avec une seule vraie paire.
+- Jouer un CP3 quand le CP_SEC couvre mieux l'exposition.
+- Confondre ticket qui touche et ticket rentable.
+- Jouer un exotique parce que la lecture sportive est correcte.
+- Ajouter un reducteur pour sauver une analyse faible.
+- Surponderer presse, top driver, deferrage, steam ou cote haute isoles.
+- Refaire l'analyse pre-course avec l'arrivee connue.
+- Melanger STRICT, MICRO-SP, SP, CP_SEC, CP3, HORS_DOCTRINE, SIMULATION ou PAPER_TRADING dans un ROI global.
+- Utiliser un segment proxy surestime comme edge net.
+- Utiliser une decision sans input_hash comme preuve.
+- Valider une regle sans split hors echantillon.
+- Valider un SP standard sans segment_SP UTILISABLE.
+- Transformer un micro-SP gagnant en doctrine SP standard.
+- Utiliser l'historique utilisateur pour recalibrer C_prudent.
+- Conserver un CP3 positif uniquement grace a un gros retour isole.
+- Presenter un CP3 remboursant comme edge.
+
+5. LECONS A TESTER
+Hypothese | Usage futur | Niveau
+Moteur reproductible stabilise les decisions | comparer replay_match et ecarts narratifs | actif MVP
+Split train/validation/test_live reduit le surapprentissage | controle obligatoire Document 11/3 | actif MVP
+CP_SEC peut battre CP3 quand une paire domine | backtest prioritaire | hypothese prioritaire
+CP3 proxy SG en attele 8-13 partants | 50 decisions ultra-filtrees | hypothese prioritaire
+Proxy surestime regulierement un segment = segment degrade | audit proxy_error | actif
+CP3 remboursant seulement = edge absent | regle mathematique | actif
+Favori fragile/sous-paye : tester noyau sans favori | backtest CP alternatif | hypothese
+Grand lot avec recul : integrer meilleure chance premier poteau | backtest 14-18 partants | hypothese
+SP value 3,00-5,00 avec 3DERMUS 9-13 et J/E >=0 | test SP apres events_sp | hypothese
+SP standard exige segment_SP UTILISABLE | sp_calibration_segments | actif MVP
+2SUR4_EXP : ancre top4 + value reguliere | suivi 50 decisions/tickets 1 EUR | hypothese
+Handicap plat >=14 : outsider value exige ligne top3 comparable ou J/E fort | filtre de prudence | hypothese
+Volatilite SG tardive >35 % sur cheval cle | kill-switch a tester | hypothese prioritaire
+Calibration proba_basse par score reel top3/top4 | transformer grille qualitative en preuve | hypothese prioritaire
+Ecart ticket conseille vs ticket joue | mesurer discipline utilisateur | actif tracker
+Replay_match non = exclusion KPI strict | audit decision_engine_outputs | actif MVP
+
+6. LECONS DE PERTES RECURRENTES
+Les pertes observees viennent principalement de :
+- profil fautif integre au panier ;
+- favori sous-paye utilise comme base ;
+- micro-SP trop speculatif ;
+- SP value sans calibration suffisante ;
+- CP3 avec une seule paire reelle ;
+- CP3 inferieur au CP_SEC ;
+- CP3 seulement remboursant ;
+- exotiques joues pour couvrir une incertitude ;
+- absence de mesure d'erreur proxy ;
+- volatilite SG tardive sous-estimee ;
+- decision post-course reinterpretee comme preuve ;
+- ticket utilisateur hors doctrine confondu avec validation GPI.
+
+7. LECONS DE REGRETS UTILES
+Profils a surveiller en backtest, jamais a jouer automatiquement :
+- forme pure + J/E positif ;
+- chevaux premier poteau dans grands lots ;
+- ancre top4 sous-payee mais fiable ;
+- duo propre ou CP_SEC aurait mieux couvert que CP3 ;
+- SP 3-5 avec forme propre, marche coherent et segment_SP UTILISABLE ;
+- outsider proche du top marche avec ligne recente solide ;
+- favori faible pouvant etre remplace par une paire CP_SEC plus couverte ;
+- profil steam fort mais fautif, uniquement si cela ne cree pas deux fautifs dans un panier ;
+- cheval refuse car SP bas mais utile en CP via SG, a tester seulement par proxy.
+
+8. DONNEES A RECUPERER
+Export compte ZEturf prive :
+date, course, type exact, chevaux, mise, statut, retour, gain net, ROI, segment_GPI, hors_doctrine_oui_non.
+
+PDF Resultats & Rapports :
+rapports officiels SP, CP, 2sur4, ZE4, Trio/Z5, arrivees, disqualifies, NP.
+
+PDF Pronostics & Cotes :
+SG H-30/H-10/H-5/T-8, SP si presentes, statut NP, snapshot_time.
+
+Tables MVP :
+decision_engine_outputs.csv ;
+train_test_split.csv ;
+proxy_error_by_segment.csv ;
+backtest_cp_sec_vs_cp3.csv ;
+backtest_kpi.csv ;
+paper_trading_50_decisions.csv ;
+odds_movement_snapshots.csv ;
+proba_basse_calibration.csv ;
+events_sp.csv ;
+sp_calibration_segments.csv ;
+user_ticket_history.csv ;
+run_metrics.json.
+
+9. USAGE AUTORISE
+Document 4 peut :
+- fournir des hypotheses de backtest ;
+- rappeler les erreurs a ne pas repeter ;
+- orienter les colonnes du tracker ;
+- aider a classer les causes post-course ;
+- signaler les structures a surveiller en paper trading.
+
+Document 4 ne peut pas :
+- valider un ticket strict ;
+- modifier C_prudent ;
+- modifier sp_calibration_segments ;
+- remplacer proxy_error_by_segment ;
+- remplacer decision_engine_outputs ;
+- remplacer train_test_split ;
+- transformer un ticket gagnant hors doctrine en regle ;
+- justifier un exotique reel ;
+- contredire Document 1, 0, 2, 3, 10 ou 11.
+
+10. REGLE DE PROMOTION D'UNE LECON
+Une lecon Document 4 peut devenir candidate de regle seulement si :
+- elle est traduite en variable mesurable ;
+- elle est testee hors echantillon ;
+- elle dispose d'au moins 30 a 50 cas selon le segment ;
+- le ROI median n'est pas negatif ;
+- le drawdown est acceptable ;
+- le replay_match est controle ;
+- le segment proxy ou SP n'est pas ROUGE/ND ;
+- la performance ne depend pas d'un seul gros retour ;
+- le tracker Document 3 valide le niveau de preuve.
+
+11. PHRASE SOURCE
+Document 4 oriente les tests, il ne valide jamais les tickets. Les ajouts V19.1.4 restent des hypotheses tant qu'ils ne passent pas Document 11, Document 10 et Document 3. Edge net seulement apres decision_engine_outputs rejouable, split valide, leakage_check_ok, proxy_error_by_segment, CP_SEC vs CP3 par segment, ROI reel segmente, 50 decisions paper trading, proba_basse standardisee et SP calibre si SP standard.

@@ -1,0 +1,503 @@
+DOCUMENT 2 - MATRICE ROI & STRUCTURES DE PARI ZETURF GPI V19.1.4
+Decision economique | Moteur reproductible | Split hors echantillon | Calibration SP | CP_SEC, CP3, SP, 2SUR4_EXP, Dutching, exotiques | MAJ 2026-05-23 | remplace V19.1.3
+
+1. FONCTION
+Document de decision economique. Il decide si une structure de pari peut etre defendue par le ROI long terme.
+
+Il ne choisit jamais les chevaux. Il arbitre la structure economique apres les calculs Document 10, les donnees Document 11, le tracker Document 3 et le workflow Document 0.
+
+Le ROI est calcule sur l'exposition totale, jamais sur la seule combinaison gagnante.
+Le rapport ZEturf inclut la mise.
+Gain net = retour - mise totale.
+Une structure qui touche mais rembourse seulement n'a pas d'edge.
+
+V19.1.4 conserve les verrous V19.1.3 :
+- seuils de degradation proxy VERT / ORANGE / ROUGE / FRAGILE / ND ;
+- arbitrage quantifie CP_SEC vs CP3 ;
+- interdiction de conserver un CP3 qui ne bat pas CP_SEC sur des criteres financiers ;
+- priorite a la preuve par segment, pas au ressenti sportif ;
+- cout marginal des structures pour bloquer les combinaisons de confort ;
+- exotiques hors MVP.
+
+V19.1.4 ajoute trois obligations economiques :
+- aucune decision stricte sans decision_engine_outputs rejouable ;
+- aucune validation economique sans split hors echantillon valide ;
+- aucun SP standard sans calibration SP independante UTILISABLE.
+
+2. REGLES PRIORITAIRES V19.1.4
+1. Moteur reproductible :
+Toute structure retenue doit etre compatible avec decision_engine_outputs.
+Sans decision_id, input_hash, engine_version, ruleset_version, reason_codes et kill_switch_codes : pas de strict.
+
+2. Split hors echantillon :
+Toute preuve economique stricte doit afficher split, calibration_version, leakage_check_ok et decision_before_race_oui_non.
+TRAIN calibre. VALIDATION controle. TEST_LIVE audite.
+Un KPI fusionnant TRAIN, VALIDATION et TEST_LIVE est invalide.
+
+3. Proxy audite :
+Utiliser proxy_error_by_segment.csv avant tout ticket CP/2sur4 par proxy.
+Segment surestimant regulierement = degrade ou refus.
+Segment ROUGE/ND = aucun ticket reel strict.
+
+4. CP_SEC vs CP3 obligatoire :
+CP sec est teste avant CP3.
+CP3 est refuse si CP_SEC domine, si une seule paire est credible, si deux paires sont faibles ou si le CP3 n'ameliore pas ROI median, ratio median et drawdown.
+
+5. Calibration SP independante :
+Le SP ne se valide jamais par proxy CP.
+SP standard seulement si sp_calibration_segments donne un segment SP UTILISABLE.
+SP visible seul = insuffisant.
+Sans calibration SP : micro-SP 1 EUR max ou simulation.
+
+6. ROI segmente :
+STRICT, MICRO-SP, SP, DUTCHING_SP, CP_SEC, CP3, CP_PROXY_SG, 2SUR4_EXP, ZE4_EXCEPTION, ZE4_SIMULATION, TRIO_SIMULATION, Z5_SIMULATION, HORS_DOCTRINE, SIMULATION, PAPER_TRADING et NO_BET ne sont jamais agreges.
+ROI global non utilise comme preuve de performance.
+
+7. Exotiques hors MVP :
+ZE4, Trio, Z5, Ordre, ZE234, ZE345 et CHANCE ne doivent pas compenser une faiblesse CP/SP.
+Un reducteur baisse le cout. Il ne cree jamais l'EV.
+
+8. Ticket qui rembourse = pas d'edge :
+Un CP3 qui touche mais retourne environ la mise est classe edge absent ou edge fragile, jamais edge net.
+
+3. HIERARCHIE ROI V19.1.4
+Rang | Structure | Statut | Decision
+1 | CP_SEC proxy SG | Actif reel si moteur complet, split valide, proxy exploitable et erreur segment acceptable | Priorite si une paire domine
+2 | SP value calibre | Actif reel si SP visible et segment SP UTILISABLE | Simple, controle, calibration separee
+3 | CP3 proxy SG | Actif reel seulement si noyau couvert et CP_SEC non superieur | Conserve uniquement si au moins deux paires defendables et backtest favorable
+4 | MICRO-SP | Degrade, 1 EUR max | Seulement si SP visible, profil tres propre, calibration SP absente ou fragile
+5 | DUTCHING_SP | Rare | Deux chevaux max, chaque SP couvre seul l'exposition totale
+6 | 2SUR4_EXP | Reel experimental | 1 EUR, suivi separe jusqu'a validation
+7 | CG3 | Simulation | Duo gagnant trop precis
+8 | ZE4_EXCEPTION | Exception | Seulement apres CP/SP robuste, rapport/proxy documente et cout marginal justifie
+9 | Trio/Z5/Ordre/ZE234/ZE345/CHANCE | Refus par defaut | Variance ou dilution incompatible ROI strict
+
+Regle :
+La structure prioritaire n'est pas celle qui pronostique le plus large. C'est celle qui maximise le retour prudent par euro expose avec la variance la plus acceptable.
+
+3B. ROI SEGMENTE - INTERDICTION DU ROI GLOBAL
+Une decision = un segment principal.
+Si un ticket contient plusieurs structures, il est eclate en lignes separees ou classe dans le segment le plus risque.
+Toute ambiguite de classification exclut le ticket du ROI strict.
+
+Segments autorises :
+STRICT, MICRO-SP, SP, DUTCHING_SP, CP_SEC, CP3, CP_PROXY_SG, 2SUR4_EXP, ZE4_EXCEPTION, ZE4_SIMULATION, TRIO_SIMULATION, Z5_SIMULATION, HORS_DOCTRINE, SIMULATION, PAPER_TRADING, NO_BET.
+
+NO_BET compte dans le nombre de decisions, pas dans la mise totale.
+
+Interdits :
+- ROI global toutes structures ;
+- reel + simulation ;
+- strict + hors doctrine ;
+- CP_SEC + CP3 sans lignes separees ;
+- SP + CP sans lignes separees ;
+- MICRO-SP + SP standard ;
+- 2SUR4_EXP + CP/exotiques ;
+- paper trading + mises reelles ;
+- ticket remboursant presente comme edge ;
+- gros retour isole comme regle ;
+- historique utilisateur utilise pour calibrer les rapports publics.
+
+KPI minimum par segment et par split :
+decisions, tickets, NO_BET, mise, retour, gain_net, ROI, hit_rate, ratio_moyen, ratio_median, ROI_median, drawdown_max, losing_streak, tickets_remboursants, erreur_proxy_moyenne, erreur_proxy_mediane, erreur_proxy_P75, taux_surestimation, ROI_CP_SEC_alternatif si CP3, ecart_CP3_vs_CP_SEC, statut observation/hypothese/provisoire/valide/rejete, replay_fail_count, leakage_fail_count.
+
+4. CONDITIONS ECONOMIQUES AVANT TOUT TICKET STRICT
+Un ticket strict exige :
+- decision_engine_outputs present ;
+- input_hash present ;
+- engine_version et ruleset_version presents ;
+- reason_codes et kill_switch_codes presents ;
+- split renseigne ;
+- calibration_version presente ;
+- leakage_check_ok = true ;
+- decision_before_race_oui_non = oui ;
+- segment ROI unique ;
+- rapport ou proxy prudent exploitable ;
+- proba_basse defendable ;
+- retour prudent couvrant ;
+- aucun kill-switch economique.
+
+Si un de ces points manque :
+edge fragile, simulation, micro ou NO BET selon le cas.
+Jamais edge net.
+
+5. STATUTS PROXY UTILISABLES EN DECISION
+Statut | Conditions minimales | Usage GPI
+VERT | sample_n >=50 ; taux_surestimation <=35 % ; erreur_relative_mediane >=0 ; leakage_check_ok = true | Ticket reel possible si autres criteres OK
+ORANGE | sample_n >=50 ; taux_surestimation 35-45 % ou erreur_relative_mediane entre -10 % et 0 % | Edge fragile ; CP_SEC prioritaire ; CP3 tres limite
+ROUGE | taux_surestimation >45 % ou erreur_relative_mediane < -10 % | Segment degrade ; CP/CP3 reel interdit
+FRAGILE | sample_n 10-49 | Simulation ou exception documentee ; jamais edge net
+ND | sample_n <10 ou fallback non declare ou calibration_version absente | Proxy inexploitable ; simulation uniquement
+
+Regles :
+Un segment ROUGE ne peut pas produire edge net, meme si sample_n >=50.
+Un segment ORANGE ne peut pas justifier un CP3 standard sans marge forte et justification explicite.
+Un segment ND interdit le ticket reel strict.
+Un fallback parent = edge fragile par defaut.
+
+6. STATUTS SP UTILISABLES EN DECISION
+Statut segment_SP | Conditions minimales | Usage GPI
+UTILISABLE | sample_n >=30 ; ROI_median >=0 ; ratio_median acceptable ; drawdown_max acceptable ; split valide | SP reel standard possible si autres criteres OK
+FRAGILE | sample_n 10-29 ou variance elevee | micro-SP 1 EUR max ou simulation
+REJETE | ROI_median negatif, drawdown excessif, hit_rate insuffisant ou taux reel incoherent | SP reel interdit
+ND | sample_n <10, calibration absente ou segment_sp_id absent | SP reel interdit
+
+Regles :
+SP visible ne suffit pas.
+SP standard interdit sans segment_SP UTILISABLE.
+SP >5,00 n'est pas automatiquement value. C'est souvent une variance haute.
+SP 1,20-1,80 exige une proba de placement trop elevee, donc souvent injouable ROI.
+SP entre 3,00 et 5,00 reste le terrain prioritaire a tester, mais seulement si calibration et faits independants confirment.
+
+7. SEUILS ECONOMIQUES
+Pari | Seuil minimal | Statut
+SP | proba_basse > 1,20 / SP_min | reel seulement si SP visible + segment_SP UTILISABLE
+MICRO-SP | proba_basse > 1,20 / SP_min | 1 EUR max si SP visible, profil propre, segment SP FRAGILE ou absent
+CP_SEC | proba_basse_paire > 1,30 / R_prudent_CP | reel si paire propre + proxy audite VERT ou ORANGE justifie
+CP3 | proba_basse_scenario > 1,30 / R_prudent_CP | reel si >=2 paires defendables, CP_SEC non dominant, proxy non ROUGE
+2SUR4_EXP | proba_basse_top4 > 1,30 / R_prudent | experimental
+Dutching SP | chaque SP couvre 1,20 x exposition totale | rare, calibration SP requise pour standard
+CG3 | proba_basse duo gagnant > 1,35 / R_prudent | simulation
+Trio/ZE4 | proba_basse > 1,50 x exposition / R_prudent decote | simulation ; ZE4 exception
+Z5 | proba_basse > 1,70 x exposition / R_prudent decote | refus quasi systematique
+
+Rappel :
+Le seuil mathematique est necessaire. Il n'est jamais suffisant.
+Un seuil passe avec segment ROUGE, SP_REJETE, leakage KO ou moteur absent = refus.
+
+8. ARBITRAGE CP_SEC VS CP3 - REGLE QUALITATIVE
+Objectif : choisir la structure la moins dilutive, pas celle qui donne le plus de combinaisons.
+
+CP_SEC devient prioritaire si :
+- une paire est nettement superieure ;
+- R_prudent couvre mieux l'exposition ;
+- une seule paire a une proba_basse defendable ;
+- les deux autres paires du CP3 sont faibles ;
+- un favori central est sous-paye ou fragile ;
+- CP3 serait seulement remboursant ;
+- proxy_error_by_segment classe le segment ORANGE ou ROUGE ;
+- correlation tactique elevee entre deux selections du panier ;
+- CP3 ajoute une combinaison qui ne couvre aucun scenario distinct.
+
+CP3 devient possible si :
+- trois paires plausibles ;
+- au moins deux paires reellement defendables ;
+- une paire tres plausible a R_prudent >=3,60 ;
+- aucun double profil fautif ;
+- correlation tactique acceptable ;
+- proxy_error_by_segment ne degrade pas le segment ;
+- CP_SEC ne domine pas ;
+- le backtest segmentaire ne montre pas une dilution recurrente.
+
+9. ARBITRAGE CP_SEC VS CP3 - REGLE QUANTIFIEE MVP
+CP_SEC domine si au moins deux conditions sont vraies :
+1. ROI_backtest_CP_SEC >= ROI_backtest_CP3 ;
+2. drawdown_CP_SEC < drawdown_CP3 ;
+3. ratio_median_CP_SEC >= ratio_median_CP3 ;
+4. taux_CP3_remboursant eleve ;
+5. une seule paire CP3 concentre l'essentiel de la probabilite ;
+6. deux paires CP3 ont R_prudent <3,00 ;
+7. segment CP3 ORANGE alors que la paire CP_SEC est VERT ou mieux couverte ;
+8. score_correlation_tactique >=2 sur le panier CP3.
+
+Decision :
+- Si CP_SEC domine : CP3 refuse.
+- Si CP3 bat CP_SEC uniquement grace a un gros retour isole : CP3 reste simulation.
+- Si CP3 bat CP_SEC en ROI median, ratio median et drawdown acceptable : CP3 autorise sur ce segment uniquement.
+- Si CP3 touche souvent mais rembourse : edge absent.
+- Si CP3 a un meilleur hit rate mais un ROI median inferieur : CP3 refuse.
+
+10. CP_SEC
+Validable si :
+- SG fiables ;
+- Document 11 exploitable ;
+- decision_engine_outputs complet ;
+- split valide ;
+- leakage_check_ok = true ;
+- fallback declare ;
+- erreur_proxy connue ou ND justifiee ;
+- statut proxy VERT ou ORANGE justifie ;
+- R_prudent coherent ;
+- proba_basse_paire > seuil ;
+- deux profils propres ;
+- correlation tactique acceptable ;
+- aucun kill-switch.
+
+Refus si :
+- proxy ND ;
+- sample_n <10 ;
+- fallback non declare ;
+- segment ROUGE ;
+- paire trop basse en rapport ;
+- favori sous-paye fragile ;
+- proba_basse forcee ;
+- volatilite kill-switch ;
+- absence de rapport officiel post-course pour audit ;
+- moteur absent ou non rejouable ;
+- split absent ou leakage KO.
+
+11. CP3
+Un CP3 n'est pas trois bons chevaux.
+C'est un panier de trois paires dont au moins deux doivent etre defendables.
+
+Validable si :
+- >=8 partants ;
+- 3 paires plausibles ;
+- >=2 profils propres ;
+- max 1 fragile ou fautif ;
+- pas deux fautifs ;
+- R_prudent >=3,60 sur une paire tres plausible ;
+- CP_SEC non superieur ;
+- aucun kill-switch ;
+- statut proxy VERT ou ORANGE tres justifie ;
+- backtest segmentaire non defavorable ;
+- moteur complet ;
+- split valide ;
+- correlation tactique acceptable.
+
+R_prudent CP | Decision CP3 3 EUR
+<3,00 | refus
+3,00-3,59 | remboursement / edge fragile ; preferer CP_SEC ou NO BET
+>=3,60 | ratio 1,20 possible si une paire touche
+>=4,50 | zone interessante
+>=6,00 | fort potentiel si proba_basse defendable
+
+Refus CP3 immediat si :
+- une seule paire plausible ;
+- deux paires faibles ;
+- CP_SEC domine selon la regle quantifiee ;
+- segment ROUGE ;
+- fallback non declare ;
+- CP3 construit pour completer un pronostic ;
+- deux chevaux du panier ont 3DERMUS >=19 ;
+- ticket probable seulement remboursant ;
+- score_correlation_tactique = 3 ;
+- CP3 non rejouable via decision_engine_outputs.
+
+12. SP ET DUTCHING
+SP standard seulement si :
+- SP ZEturf mini visible ;
+- SP rattache a snapshot_time ;
+- segment_sp_id renseigne ;
+- statut_segment_SP = UTILISABLE ;
+- retour couvrant ;
+- proba_basse > 1,20 / SP_min ;
+- au moins 3 faits independants ;
+- split valide ;
+- decision_engine_outputs complet ;
+- aucun kill-switch.
+
+Micro-SP :
+- 1 EUR max ;
+- segment MICRO-SP ;
+- SP visible ;
+- profil tres propre ;
+- statut_segment_SP FRAGILE ou calibration SP absente ;
+- jamais melange au SP standard.
+
+Refus SP si :
+- SP_min absent ;
+- SP_min incoherent ;
+- segment_SP REJETE ou ND ;
+- SP standard sans calibration ;
+- score REJETE ou ND ;
+- cheval dependant d'un parcours parfait ;
+- volatilite rouge sur cheval cle.
+
+Dutching SP :
+- deux chevaux maximum ;
+- chaque SP couvre seul l'exposition totale ;
+- interdit si deux fautifs, deux rentrants ou deux profils dependants du meme scenario ;
+- calibration SP requise pour standard ;
+- sans calibration SP : simulation.
+
+13. 2SUR4_EXP
+Experimental, pas automatique.
+
+Conditions :
+- course >=10 partants ;
+- duo top4 defendable ;
+- au moins une ancre propre ;
+- deuxieme cheval value regulier ;
+- proxy ou rapport exploitable ;
+- proba_basse_top4 > 1,30 / R_prudent ;
+- moteur complet ;
+- split valide ;
+- mise 1 EUR ;
+- suivi separe.
+
+Interdit si :
+- deux outsiders sans ancre ;
+- proxy ND ;
+- segment ROUGE ;
+- segment surestime ;
+- course defavorable ;
+- volatilite kill-switch ;
+- deux profils fautifs ;
+- score_correlation_tactique = 3.
+
+Validation seulement apres 50 tickets ou decisions segmentes, ROI median non negatif et drawdown acceptable.
+
+14. EXOTIQUES ET REDUCTEURS
+Reducteur = baisse de cout, jamais creation d'EV.
+
+ZE4 reel seulement si :
+- CP_SEC ou SP robuste deja valide ;
+- rapport ou proxy ZE4 documente ;
+- cout marginal justifie ;
+- decision_engine_outputs complet ;
+- split valide ;
+- aucun segment ROUGE/ND ;
+- structure hors CP/CP3 tracee ;
+- 2 bases propres + 1 value + 2 jokers factuels ;
+- maximum 1 fragile.
+
+Trio, Z5, Ordre, ZE234, ZE345, CHANCE :
+refus par defaut.
+Simulation possible pour apprentissage, jamais melangee au ROI reel strict.
+
+Usage autorise des reducteurs :
+- simulation ;
+- baisse de cout sur une structure deja validee par CP/SP robuste ;
+- apprentissage post-course.
+
+Usage interdit :
+- sauver une analyse faible ;
+- jouer ZE4/Trio faute de CP/SP ;
+- justifier une couverture floue ;
+- melanger exotiques et ROI strict.
+
+15. COUT MARGINAL DES STRUCTURES
+Une combinaison ajoutee doit ameliorer la couverture ou l'EV prudente.
+Sinon elle dilue le ticket.
+
+Pour chaque ajout, calculer ou qualifier :
+- combinaison ajoutee ;
+- cout marginal ;
+- R_prudent marginal ;
+- probabilite evenement marginale ;
+- scenario couvert ;
+- risque de correlation avec les autres selections ;
+- impact sur ratio minimal ;
+- impact sur drawdown.
+
+Regles :
+1. Si l'ajout ne couvre aucun scenario distinct, refus.
+2. Si l'ajout sert seulement a completer un pronostic, refus.
+3. Si l'ajout transforme un CP_SEC dominant en CP3 dilutif, refus.
+4. Si deux combinaisons dependent du meme favori fragile, refus.
+5. Si le retour probable devient seulement remboursant, edge absent.
+6. Si le cout marginal augmente plus vite que la couverture prudente, NO BET ou structure plus simple.
+7. Si score_correlation_tactique = 3, refus du panier.
+8. Si score_correlation_tactique = 2, CP_SEC prioritaire ou reduction du panier.
+
+16. CORRELATION TACTIQUE
+La correlation tactique ne cree pas l'edge.
+Elle sert a refuser les paniers qui semblent diversifies mais dependent du meme scenario.
+
+Score correlation tactique :
+0 = profils independants.
+1 = correlation faible.
+2 = correlation moyenne, downgrade.
+3 = correlation forte, panier refuse.
+
+Facteurs :
+- meme style de course ;
+- meme dependance au train ;
+- meme risque de faute ;
+- meme position defavorable ;
+- meme besoin de parcours cache ;
+- meme dependance au favori fragile ;
+- meme scenario tactique obligatoire ;
+- meme driver/entourage dominant comme unique signal ;
+- meme fragilite marche.
+
+Usage :
+CP_SEC peut rester valide si la paire est tres robuste.
+CP3 doit etre reduit ou refuse si deux paires dependent du meme scenario fragile.
+ZE4/Trio/Z5 sont refuses si correlation non maitrisee.
+
+17. MISES ET BANKROLL
+Bankroll de calibration : 100 EUR.
+Mise standard : 1 EUR par combinaison.
+CP3 standard : 3 EUR.
+Micro-SP : 1 EUR max.
+2SUR4_EXP : 1 EUR max.
+Une course = une structure principale.
+
+Ajouter seulement si l'ajout augmente vraiment couverture ou EV prudente.
+Jamais pour completer un pronostic.
+
+Protection :
+Tant que decision_engine_outputs, train_test_split, proxy_error_by_segment.csv, backtest_cp_sec_vs_cp3.csv et paper_trading_50_decisions.csv ne sont pas produits ou controles, CP/CP3 reel strict est interdit sauf exception documentee.
+Tant que sp_calibration_segments.csv n'est pas produit et valide, SP standard interdit.
+Sans segmentation ROI, dashboard invalide.
+
+18. MONTE CARLO
+Monte Carlo ne selectionne jamais un ticket.
+
+Usage autorise :
+- apres candidat structure ;
+- en backtest ;
+- pour stress test de variance ;
+- pour comparer sensibilite proxy.
+
+Refuser si :
+- ROI moyen positif mais mediane negative ;
+- drawdown incompatible ;
+- sensibilite forte au proxy ;
+- sample faible ;
+- split non valide ;
+- moteur non rejouable.
+
+19. DECISION FINALE
+Edge net :
+SG fiables + decision_engine_outputs complet + split valide + leakage_check_ok + proxy exploitable >=50 ou segment_SP UTILISABLE + statut proxy VERT ou SP_UTILISABLE + erreur proxy suivie + CP_SEC vs CP3 teste si CP + proba_basse standardisee et calibree + cout marginal acceptable + correlation tactique acceptable + couverture + aucun kill-switch.
+
+Edge fragile :
+sample 30-49, fallback parent, proxy ORANGE, erreur_proxy ND, CP3 3,00-3,59, variance elevee, SP segment FRAGILE, micro-SP, score FRAGILE, split incomplet mais decision paper, moteur present mais donnees partielles.
+
+Edge absent :
+proxy ND, segment ROUGE, SP segment REJETE/ND, R=1/P brut, une seule paire CP3, CP3 inferieur au CP_SEC, exotique sans CP/SP robuste, ticket qui rembourse seulement, moteur absent, input_hash absent, calibration_version absente, leakage_check_ok = false.
+
+20. SORTIE ECONOMIQUE OBLIGATOIRE
+Pour toute structure retenue ou refusee, afficher :
+- segment ROI ;
+- structure testee ;
+- structure retenue ou refusee ;
+- mise totale ;
+- retour prudent minimal attendu ;
+- ratio prudent ;
+- seuil economique applique ;
+- statut proxy ou statut_segment_SP ;
+- CP_SEC_domine oui/non/ND ;
+- cout marginal si combinaison ajoutee ;
+- score_correlation_tactique si panier ;
+- reason_codes principaux ;
+- edge net / fragile / absent.
+
+21. KILL-SWITCHS ECONOMIQUES
+NO BET ou simulation si :
+- decision_engine_outputs absent ;
+- input_hash absent ;
+- ruleset_version absente ;
+- split absent ;
+- calibration_version absente ;
+- leakage_check_ok = false ;
+- decision_before_race_oui_non = non ;
+- proxy ND/ROUGE ;
+- SP segment REJETE/ND ;
+- fallback non declare ;
+- CP3 non compare au CP_SEC ;
+- CP3 une seule paire plausible ;
+- CP3 deux paires faibles ;
+- CP3 seulement remboursant ;
+- SP standard sans calibration ;
+- exotique sans CP/SP robuste ;
+- cout marginal non justifie ;
+- score_correlation_tactique = 3 ;
+- ROI simulation melange au ROI reel ;
+- historique utilisateur utilise comme calibration publique.
+
+22. PHRASE SOURCE
+La bonne structure n'est pas celle qui predit le mieux l'arrivee. C'est celle qui maximise le retour prudent par exposition totale avec la variance la plus acceptable, dans un segment valide, hors echantillon, rejouable et auditable. Si CP_SEC couvre mieux que CP3, CP3 est refuse. Si SP n'est pas calibre, il reste micro ou simulation. Si une structure rembourse seulement, elle n'a pas d'edge.

@@ -1,0 +1,490 @@
+DOCUMENT 0 - WORKFLOW OPERATIONNEL H-5 GPI ZETURF V19.1.4
+Protocole court de decision pre-course | ZEturf France | Moteur reproductible | Split hors echantillon | Calibration SP | MAJ 2026-05-23 | remplace V19.1.3
+
+1. FONCTION
+Document de terrain. Il decide vite si une course merite une analyse courte, un ticket, une simulation ou NO BET.
+
+V19.1.4 conserve les verrous V19.1.3 :
+- controle volatilite SG ;
+- kill-switch double signal rouge ;
+- test CP_SEC avant CP3 ;
+- proxy_error_by_segment obligatoire ;
+- ROI strictement segmente ;
+- sortie courte obligatoire.
+
+V19.1.4 ajoute trois obligations operationnelles :
+- appel au moteur de decision reproductible ;
+- controle split train / validation / test_live ;
+- calibration SP independante.
+
+Le workflow ne remplace pas Document 10, Document 11 et Document 3. Il les appelle.
+Document 10 fournit les formules et fonctions.
+Document 11 fournit les donnees, splits, coefficients et sorties moteur.
+Document 3 prouve ou rejette les decisions.
+Document 2 arbitre les structures ROI.
+
+Regle mere :
+La sortie moteur prime sur l'analyse narrative. Si le moteur est absent, incomplet ou non rejouable, la decision stricte est interdite.
+
+2. REGLES PRIORITAIRES V19.1.4
+R1 - Moteur reproductible :
+Toute decision pre-course doit produire ou lire decision_engine_outputs avec decision_id, input_hash, engine_version, ruleset_version, reason_codes et kill_switch_codes.
+Meme input_hash + meme engine_version + meme ruleset_version = meme verdict.
+Si decision_engine_outputs est absent ou incomplet : edge fragile, simulation ou NO BET.
+
+R2 - Split hors echantillon :
+Toute decision stricte doit afficher split, calibration_version, leakage_check_ok et decision_before_race_oui_non.
+Si split est absent, calibration_version absente, leakage_check_ok = false ou decision_before_race_oui_non = non : ticket strict interdit.
+
+R3 - Proxy audite :
+Tout CP/CP3/2SUR4 decide par proxy doit afficher segment_id, sample_n, confidence, fallback_level, C_prudent, R_prudent, erreur_proxy connue ou ND, statut_proxy et split.
+Si proxy_error_by_segment montre une surestimation recurrente, segment degrade ou refuse.
+
+R4 - CP_SEC avant CP3 :
+CP sec est toujours teste avant CP3.
+CP3 refuse si CP_SEC domine, si une seule paire est plausible, si deux paires sont faibles ou si le CP3 rembourse seulement.
+
+R5 - SP calibre separement :
+SP standard interdit sans sp_calibration_segments UTILISABLE.
+SP visible ne suffit pas.
+Si calibration SP absente, SP = micro-SP 1 EUR max ou simulation.
+
+R6 - ROI segmente :
+STRICT, MICRO-SP, SP, DUTCHING_SP, CP_SEC, CP3, CP_PROXY_SG, 2SUR4_EXP, ZE4_EXCEPTION, ZE4_SIMULATION, TRIO_SIMULATION, Z5_SIMULATION, HORS_DOCTRINE, SIMULATION, PAPER_TRADING et NO_BET ne sont jamais melanges.
+ROI global non decisif.
+
+R7 - NO BET normal :
+Hesitation forte, donnee incomplete ou conflit entre moteur et narration = NO BET ou simulation.
+
+3. PORTE D'ENTREE
+Course analysable seulement si :
+- hippodrome francais ;
+- marche ZEturf France disponible ;
+- SG H-5/H-10 lisibles ;
+- NP, statut et disponibilite traites ;
+- partants reels identifies ;
+- aucun conflit non resolu ;
+- snapshot_time connu ;
+- source_snapshot_time exploitable ;
+- decision_before_race_oui_non = oui.
+
+Point critique manquant = qualite D = NO BET.
+
+H-30 n'est utilisable que si :
+- SG + NP + statut sont propres ;
+- marche stable ;
+- variation SG <20 % sur chevaux cles ;
+- aucun changement NP/statut ;
+- sortie H-5 indisponible mais H-30 tracee.
+
+CP/CP3 H-30 = simulation sauf validation explicite H-5/T-8.
+
+4. FILTRE COURSE
+Controle | Validation | Refus / degradation
+Perimetre | France + ZEturf France | Etranger = simulation sauf demande explicite
+SG | H-5/H-10 fiables | SG absentes ou incoherentes = NO BET
+NP/statut | retires ou traites avant calcul | incertain = NO BET
+Snapshot | snapshot_time + decision_before_race oui | absent = pas de strict
+Moteur | decision_engine_outputs complet | absent = edge fragile ou NO BET
+Split | split + calibration_version + leakage_check_ok | absent ou KO = pas de strict
+SP | SP visible + segment_SP UTILISABLE | SP standard interdit si segment_SP ND/REJETE
+CP/CP3 | SG + Doc11 + proxy audite | proxy ND/ROUGE = pas de reel
+Qualite | A/B etude ; C micro/simulation | D = NO BET
+Type course | priorite trot attele 8-13 partants | monte 3 ans, obstacle lourd, haies 3 ans, reclamer lourd, majorite inedits/rentrants
+
+5. SCORE JOUABILITE 0-5
+Filtre d'admissibilite structurelle. Il ne mesure ni edge, ni EV, ni rentabilite.
+
++1 marche SG ZEturf H-5/H-10 lisible, coherent, partants reels identifies, NP/statut/disponibilite traites.
++1 au moins 70 % des chevaux cles ont 5 courses exploitables ou un historique sportif suffisant.
++1 noyau A/B/C sain : moins de deux profils fautifs, rentrants, dependants d'un parcours parfait ou tres instables.
++1 absence de favori central fragile/sous-paye : pas de favori avec 3DERMUS >=18, faute lourde, SP injouable ou dependance excessive au scenario.
++1 rapport ou proxy exploitable : SP visible avec segment_SP utilisable pour SP ; proxy CP/2SUR4 avec segment_id, sample_n, confidence, fallback, C_prudent, R_prudent, erreur_proxy et statut non ROUGE/ND.
+
+Lecture :
+0-1 = NO BET strict.
+2 = course degradee : micro-SP seulement si SP visible, profil tres propre, segment_SP non REJETE et aucun kill-switch ; sinon simulation ou NO BET.
+3 = CP_SEC ou SP etudiable, jamais automatique.
+4 = CP3 ou 2SUR4_EXP etudiable seulement si CP_SEC ne domine pas, proxy non degrade et au moins deux paires defendables.
+5 = course favorable a l'etude, pas au pari automatique.
+
+Verrous :
+Score eleve != edge.
+Score eleve avec moteur absent, split absent, leakage KO, proxy ROUGE/ND, SP segment ND/REJETE, proba_basse floue, CP_SEC dominant, deux fautifs, retour remboursant ou rapport/proxy non couvrant = refus.
+
+6. SHORTLIST OBLIGATOIRE
+Ne jamais traiter tout le peloton en detail.
+Shortlist standard = top 6 SG ZEturf.
+Rangs 7-12 seulement si anomalie factuelle :
+- forme recente ;
+- chrono ou record ;
+- ligne directe ;
+- engagement ;
+- J/E positif ;
+- configuration optimale ;
+- steam coherent ;
+- SP value potentielle avec segment_SP utilisable.
+
+Rang >12 = simulation sauf exception documentee.
+
+7. CALCUL MARCHE
+Retirer les NP avant normalisation.
+
+Pour chaque partant reel :
+q_i = 1 / SG_i
+M = somme(q_i)
+p_i = q_i / M
+
+P_event_market se calcule par Harville / Plackett-Luce selon le pari.
+A defaut d'implementation complete : simulation ou edge fragile.
+Jamais de validation par R = 1 / P brut.
+Jamais de validation par somme SG.
+
+Controle :
+- partants declares au lieu de partants reels = calcul invalide ;
+- SG nulle, absente ou incoherente = calcul invalide ;
+- source_snapshot_time absent = pas de strict.
+
+8. GRILLE PROBA_BASSE RAPIDE
+Pour chaque finaliste :
++1 forme recente propre
++1 3DERMUS 3-13
++1 J/E >=0
++1 aptitude/config prouvee
++1 marche stable ou steam coherent
+-1 faute recente lourde
+-1 rentree ou dependance parcours parfait
+-2 fautif chronique
+kill-switch favori sous-paye fragile
+
+Score <=1 : refus.
+Score 2 : simulation ou micro.
+Score 3 : CP_SEC/SP possible.
+Score >=4 : CP3 possible si proxy OK et CP_SEC non dominant.
+
+La grille autorise une classe de proba_basse. Elle ne cree pas l'EV.
+
+Controle V19.1.4 :
+- statut_score UTILISABLE : proba_basse defendable si seuil economique passe.
+- statut_score FRAGILE : micro, simulation ou mise minimale.
+- statut_score REJETE/ND : aucun ticket reel strict.
+
+9. ORDRE DE TEST NON NEGOCIABLE
+1. Filtre course + SG + NP/statut.
+2. Controle snapshot_time et decision_before_race_oui_non.
+3. Controle split, calibration_version et leakage_check_ok.
+4. Lecture ou production decision_engine_outputs.
+5. Calcul proxy et controle erreur segment.
+6. CP_SEC.
+7. CP3 seulement si CP_SEC ne domine pas.
+8. SP seulement si SP visible et calibration SP exploitable.
+9. 2SUR4_EXP si top4 plus defendable que top3.
+10. Dutching SP rare.
+11. CG3, ZE4, Trio, Z5, Ordre, CHANCE = simulation ou refus.
+12. NO BET si doute.
+
+Arbitrage :
+couverture > proba_basse calibree > EV prudente > variance > simplicite.
+Une course = une structure principale.
+
+10. WORKFLOW OPERATIONNEL 8 MINUTES
+Objectif : passer de la donnee brute a la decision sans analyse narrative longue.
+
+Minute 0-1 :
+Verifier France, ZEturf France, SG H-5/H-10, NP, statut, partants reels, snapshot_time.
+
+Minute 1-2 :
+Classer qualite A/B/C/D.
+Verifier split, calibration_version, leakage_check_ok et decision_before_race_oui_non.
+Qualite D ou split KO = NO BET immediat.
+
+Minute 2-3 :
+Construire shortlist top 6 SG.
+Ajouter rangs 7-12 seulement si anomalie factuelle.
+
+Minute 3-4 :
+Calculer q_i, p_i, P_event_market.
+Verifier que les NP sont retires.
+
+Minute 4-5 :
+Lire Document 11 :
+segment_id, sample_n, C_prudent, R_prudent, fallback, statut_proxy, proxy_error_status, statut_score, statut_segment_SP si SP.
+
+Minute 5-6 :
+Produire ou lire decision_engine_outputs.
+Verifier input_hash, engine_version, ruleset_version, reason_codes, kill_switch_codes.
+
+Minute 6-7 :
+Tester CP_SEC puis CP3.
+CP3 seulement si CP_SEC ne domine pas et si au moins deux paires sont defendables.
+
+Minute 7-8 :
+Tester SP si SP visible et segment_SP UTILISABLE.
+Finaliser ticket, micro-ticket, simulation ou NO BET.
+
+Tout depassement sans donnee nouvelle = simulation ou NO BET.
+Une analyse longue ne compense jamais une preuve economique faible.
+
+11. MOTEUR DE DECISION REPRODUCTIBLE
+Le workflow doit produire ou lire decision_engine_outputs avant toute conclusion stricte.
+
+Champs minimum a verifier :
+decision_id
+course_uid
+snapshot_time
+engine_version
+ruleset_version
+input_hash
+qualite
+score_jouabilite
+verdict
+structure_max
+structure_retenue
+selection_CP_SEC
+selection_CP3
+selection_SP
+segment_ROI
+edge_status
+reason_codes
+kill_switch_codes
+proxy_status
+segment_id
+sample_n
+fallback_level
+C_prudent
+R_prudent
+CP_SEC_domine_oui_non
+score_total
+statut_score
+statut_marche
+split
+calibration_version
+leakage_check_ok
+decision_before_race_oui_non
+
+Regles :
+- sortie moteur complete = base de decision ;
+- sortie moteur absente = edge fragile ou NO BET ;
+- input_hash absent = pas de strict ;
+- reason_codes absents = pas de strict ;
+- kill_switch_codes non controles = pas de strict ;
+- replay_match_oui_non = non en audit = exclusion KPI strict.
+
+Reason_codes a utiliser :
+PROXY_VERT ; PROXY_ORANGE ; PROXY_ROUGE ; PROXY_ND ; FALLBACK_PARENT ; FALLBACK_ND ; CP_SEC_DOMINE ; CP3_ONE_PAIR_ONLY ; CP3_TWO_WEAK_PAIRS ; SP_MIN_ABSENT ; SP_SEGMENT_ND ; SP_SEGMENT_REJETE ; SCORE_UTILISABLE ; SCORE_FRAGILE ; SCORE_REJETE ; SCORE_ND ; VOLATILITE_STABLE ; VOLATILITE_INSTABLE ; VOLATILITE_KILL_SWITCH ; NP_STATUS_INCERTAIN ; SG_INCOHERENTE ; QUALITE_D ; NO_BET_DEFAULT.
+
+12. KILL-SWITCH DOUBLE SIGNAL ROUGE
+Si deux signaux rouges sont presents, NO BET immediat.
+
+Signaux rouges :
+- decision_engine_outputs absent ou incomplet ;
+- input_hash absent ;
+- split absent ;
+- calibration_version absente ;
+- leakage_check_ok = false ;
+- decision_before_race_oui_non = non ;
+- proxy ND ou ROUGE ;
+- fallback non declare ;
+- NP/statut incertain ;
+- SG incoherentes ou variation tardive >35 % sur cheval cle ;
+- SP standard sans segment_SP UTILISABLE ;
+- score REJETE/ND ;
+- course defavorable : monte 3 ans, obstacle lourd, haies 3 ans, reclamer lourd, majorite inedits/rentrants ;
+- deux profils fautifs dans le meme panier ;
+- CP3 avec une seule paire plausible ;
+- deux paires CP3 faibles ;
+- R_prudent <3,00 sur la paire dominante ;
+- CP_SEC domine CP3 ;
+- structure exotique sans CP/SP robuste deja valide.
+
+Un seul signal rouge peut suffire si le signal touche une base, le proxy ou le statut pre-course.
+
+13. DECISION CP_SEC
+CP sec prioritaire si :
+- une paire A-B domine ;
+- CP3 ajoute deux paires faibles ;
+- favori central sous-paye ou fragile ;
+- R_prudent de la paire dominante couvre mieux l'exposition ;
+- proba_basse de la paire est seule defendable ;
+- segment CP3 ORANGE mais paire CP_SEC mieux couverte.
+
+CP sec reel seulement si :
+- proxy exploitable ;
+- sample_n >=50 en standard ou fallback declare ;
+- erreur_proxy acceptable ;
+- split valide ;
+- leakage_check_ok = true ;
+- decision_engine_outputs complet ;
+- proba_basse_paire > 1,30 / R_prudent ;
+- deux profils propres ;
+- aucun kill-switch.
+
+Refus si :
+proxy ND/ROUGE, sample_n <10, fallback non declare, segment surestime non degrade, score REJETE/ND, volatilite KILL_SWITCH, CP sec seulement remboursant.
+
+14. DECISION CP3
+CP3 possible si :
+- >=8 partants ;
+- 3 paires plausibles ;
+- au moins 2 profils propres ;
+- maximum 1 fragile/fautif ;
+- pas deux fautifs ;
+- au moins deux paires defendables ;
+- R_prudent >=3,60 sur une paire tres plausible ;
+- CP_SEC ne domine pas ;
+- segment non degrade par proxy_error ;
+- split valide ;
+- moteur complet.
+
+Refus si :
+- une seule paire plausible ;
+- deux paires faibles ;
+- proxy ND ;
+- proxy ROUGE ;
+- sample_n <10 ;
+- fallback non declare ;
+- favori central fragile ;
+- marche trop disperse ;
+- R_prudent <3,00 ;
+- CP3 seulement remboursant ;
+- CP_SEC domine ;
+- CP3 gagne seulement par gros retour isole en backtest ;
+- deux chevaux du panier ont 3DERMUS >=19.
+
+Sample 30-49 = edge fragile.
+Sample >=50 = standard possible si proxy non degrade.
+Sample >=100 = robuste si erreur proxy acceptable.
+
+15. SP, DUTCHING ET CALIBRATION SP
+SP standard seulement si :
+- SP_min visible ;
+- SP_min rattache a snapshot_time ;
+- top_paid_places connu ;
+- segment_sp_id renseigne ;
+- statut_segment_SP = UTILISABLE ;
+- proba_basse > 1,20 / SP_min ;
+- au moins 3 faits independants ;
+- retour couvrant ;
+- split valide ;
+- decision_engine_outputs complet ;
+- aucun kill-switch.
+
+Si statut_segment_SP = FRAGILE :
+micro-SP 1 EUR max ou simulation.
+
+Si statut_segment_SP = REJETE ou ND :
+aucun SP reel strict.
+
+Si sp_calibration_segments absent :
+SP standard interdit.
+Micro-SP possible seulement si profil tres propre, SP visible, exposition 1 EUR max, segment ROI MICRO-SP et suivi separe.
+
+Dutching SP :
+- 2 chevaux max ;
+- chaque SP couvre seul l'exposition totale ;
+- aucun des deux ne doit etre fautif lourd, rentrant ou dependant du meme scenario ;
+- calibration SP requise pour standard ;
+- sinon simulation.
+
+16. 2SUR4_EXP
+Experimental, pas automatique.
+
+Conditions :
+- course >=10 partants ;
+- ancre top4 fiable ;
+- deuxieme cheval value regulier ;
+- proxy ou rapport exploitable ;
+- proba_basse_top4 > 1,30 / R_prudent ;
+- proxy non ROUGE/ND ;
+- mise 1 EUR ;
+- suivi separe ;
+- split et moteur valides.
+
+Refus si :
+- deux outsiders sans ancre ;
+- proxy ND/ROUGE ;
+- segment surestime ;
+- course defavorable ;
+- volatilite rouge ;
+- deux profils fautifs.
+
+17. EXOTIQUES, REDUCTEURS ET COUT MARGINAL
+CG3, ZE4, Trio, Z5, Ordre, ZE234, ZE345 et CHANCE ne sont pas des structures MVP.
+
+ZE4 reel exceptionnel seulement si :
+- CP_SEC ou SP robuste deja valide ;
+- rapport ou proxy ZE4 documente ;
+- cout marginal justifie ;
+- 2 bases propres + 1 value + 2 jokers factuels ;
+- maximum 1 fragile ;
+- aucun segment ROUGE/ND ;
+- decision tracee hors CP/CP3.
+
+Reducteur = baisse de cout, jamais creation d'EV.
+Toute combinaison ajoutee doit ameliorer un scenario distinct.
+Si l'ajout sert a completer un pronostic, refus.
+Si l'ajout transforme un CP_SEC dominant en CP3 dilutif, refus.
+Si retour probable seulement remboursant, edge absent.
+
+18. DOC8 CIBLE
+Uniquement sur finalistes A/B/C ou duo 2SUR4_EXP :
+distance, parcours, terrain, corde/depart, ferrure/equipement, poids/rating, live/canter.
+
+Positif seul insuffisant.
+Negatif clair = refus.
+Doc8 ne remplace jamais proxy, SP calibration, split ou moteur.
+
+19. SORTIE COURTE OBLIGATOIRE
+VERDICT :
+NO BET / TICKET / MICRO-TICKET / SIMULATION
+
+Qualite :
+A/B/C/D
+
+Score jouabilite :
+0-5 + interpretation filtre structurel
+
+Moteur :
+decision_engine_id, engine_version, ruleset_version, input_hash, reason_codes, kill_switch_codes
+
+Split :
+TRAIN / VALIDATION / TEST_LIVE / ND, calibration_version, leakage_check_ok, decision_before_race_oui_non
+
+Structure maximale autorisee :
+NO BET / micro-SP / CP_SEC-SP / CP3-2SUR4_EXP / ND
+
+Validation economique :
+validee / refusee / ND
+
+Shortlist :
+numeros + role A/B/C
+
+Proxy :
+segment_id, sample_n, confidence, fallback, C_prudent, R_prudent, erreur_proxy connue/ND, statut VERT/ORANGE/ROUGE/FRAGILE/ND, surestimation segment oui/non
+
+SP :
+SP_min, tranche_SP, segment_sp_id, statut_segment_SP, seuil 1,20/SP_min, decision SP
+
+Arbitrage :
+CP_SEC teste, CP3 teste, CP_SEC_domine oui/non/ND, structure retenue/refusee
+
+Proba_basse :
+score profil + seuil + statut_score + decision
+
+Marche :
+SG_H30/H10/H5/T8 si disponibles + variation_pct + statut_marche
+
+Decision :
+ticket exact ou refus
+
+Segment ROI :
+STRICT / MICRO-SP / SP / DUTCHING_SP / CP_SEC / CP3 / CP_PROXY_SG / 2SUR4_EXP / ZE4_EXCEPTION / ZE4_SIMULATION / TRIO_SIMULATION / Z5_SIMULATION / HORS_DOCTRINE / SIMULATION / PAPER_TRADING / NO_BET
+
+ROI global :
+non utilise pour la decision
+
+Conclusion :
+edge net / edge fragile / edge absent
+
+20. PHRASE SOURCE
+Le workflow H-5 ne doit plus produire une opinion. Il doit produire une decision courte, tracee, rejouable et rejetable. Edge net seulement si moteur complet, split valide, proxy audite, CP_SEC vs CP3 teste, SP calibre si SP standard, proba_basse defendable, volatilite acceptable et aucun kill-switch. Sinon edge fragile, simulation ou NO BET.

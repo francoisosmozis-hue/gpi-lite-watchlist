@@ -1,0 +1,100 @@
+{
+  "pack": "GPI_ZEturf_V19_1_4",
+  "created_at": "2026-05-23",
+  "replace_previous_sources": true,
+  "previous_pack_replaced": "GPI_ZEturf_V19_1_3",
+  "prompt_status": "UPDATED",
+  "purpose": "Apply V19.1.4 corrections: reproducible decision engine, out-of-sample validation, independent SP calibration, proxy audit, CP_SEC vs CP3 arbitration, strict segmented ROI.",
+  "rules_priority": [
+    "NO BET remains the default decision.",
+    "decision_engine_outputs is required for any strict reproducible decision.",
+    "Same input_hash plus engine_version plus ruleset_version must return the same verdict.",
+    "No strict ticket without split, calibration_version, leakage_check_ok and decision_before_race_oui_non.",
+    "No strict CP/CP3 without proxy_error_by_segment and CP_SEC vs CP3 by segment.",
+    "CP_SEC is tested before CP3 and CP3 is refused if CP_SEC dominates.",
+    "SP standard is forbidden without sp_calibration_segments and segment_SP UTILISABLE.",
+    "ROI is strictly segmented and global ROI is not proof.",
+    "proba_basse must be calibrated by score, segment and real outcome.",
+    "User betting history audits discipline only and never calibrates public ZEturf reports.",
+    "Exotics remain outside MVP unless CP/SP is already robust and marginal cost is justified.",
+    "Paper trading 50 decisions is required before expansion.",
+    "Replay mismatch excludes the decision from strict KPI until corrected."
+  ],
+  "files": [
+    {
+      "file": "Document_11_Base_Historique_ZEturf_Calibration_Coefficients_GPI_V5_1_4_SOURCE.txt",
+      "sha256": "70c4a892b78556241a7d5a21a7ab11d4656d21b2c2e6ff46a2760d43262b4498",
+      "bytes": 22313
+    },
+    {
+      "file": "Document_10_Formules_Proxy_CP_SG_ZEturf_GPI_V5_1_4_SOURCE.txt",
+      "sha256": "9102f5383d24a5a9c5756be71ca5bd17d19ce512528751fed68d0266d9908932",
+      "bytes": 20282
+    },
+    {
+      "file": "Document_3_Tracker_Audit_Gouvernance_GPI_V19_1_4_SOURCE.txt",
+      "sha256": "0293e00faefa60e514c754c00c49f3b94ec6912fb98f4f33d6e0d57558bef6db",
+      "bytes": 20227
+    },
+    {
+      "file": "Document_0_Workflow_Operationnel_H5_GPI_ZEturf_V19_1_4_SOURCE.txt",
+      "sha256": "34a3963cdbb5eddab3465cfcc9c92ea89a3e4baaa901ad70f207190c3c39055a",
+      "bytes": 17238
+    },
+    {
+      "file": "Document_2_Matrice_ROI_Paris_ZEturf_GPI_V19_1_4_SOURCE.txt",
+      "sha256": "88422943d851c80920a9835454d6d13496c3b0437916736495c86da4c83d0a4d",
+      "bytes": 20666
+    },
+    {
+      "file": "Document_4_Historique_ZEturf_Seed_Reduit_GPI_V19_1_4_SOURCE.txt",
+      "sha256": "fd97a4b4805a9cc6d450a7db91832af8331f163799b8b3b1b05b7375c4ffea25",
+      "bytes": 8159
+    },
+    {
+      "file": "Document_1_Prompt_Maitre_GPI_ZEturf_V19_1_4_ACTIF_MAJ_2026-05-23.txt",
+      "sha256": "25a86af61a2c8c1d1bef1a490b774e9c99a0af551b2021a9ee1121f9bdfc28e8",
+      "bytes": 7979
+    },
+    {
+      "file": "README_A_INTEGRER_SOURCE_PROJET_GPI_V19_1_4_2026-05-23.txt",
+      "sha256": "cefb080dbb63d613d35cd154b0527f2857ff7f6f7b791074a13611daf1df0212",
+      "bytes": 6029
+    }
+  ],
+  "data_files_to_keep_outside_prompt": [
+    "calibration_segments.csv",
+    "proxy_error_by_segment.csv",
+    "backtest_cp_sec_vs_cp3.csv",
+    "backtest_cp_sec_vs_cp3_excluded.csv",
+    "backtest_decisions.csv",
+    "backtest_kpi.csv",
+    "paper_trading_50_decisions.csv",
+    "odds_movement_snapshots.csv",
+    "proba_basse_calibration.csv",
+    "train_test_split.csv",
+    "decision_engine_outputs.csv",
+    "events_sp.csv",
+    "sp_calibration_segments.csv",
+    "user_ticket_history.csv",
+    "zeturf_calibration.sqlite",
+    "run_metrics.json",
+    "audit_calibration_cp.md",
+    "Template_Base_Historique_Rapports_ZEturf_GPI_V2_0.xlsx",
+    "Tracker_ROI_GPI_auto_completable_MAJ_2026-05-17_CORRIGE.xlsx"
+  ],
+  "kill_switchs_pack": [
+    "decision_engine_outputs absent",
+    "input_hash absent",
+    "ruleset_version absent",
+    "split absent",
+    "calibration_version absent",
+    "leakage_check_ok false",
+    "decision_before_race_oui_non non",
+    "proxy ROUGE or ND",
+    "SP standard without segment_SP UTILISABLE",
+    "CP3 not compared to CP_SEC",
+    "global ROI used as proof",
+    "arrival used to decide"
+  ]
+}

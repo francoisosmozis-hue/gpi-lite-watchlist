@@ -1,0 +1,271 @@
+DOCUMENT 3 - TRACKER, AUDIT & GOUVERNANCE GPI V19.1.4
+ROI reel, moteur reproductible, proxy audite, split hors echantillon, calibration SP, CP_SEC vs CP3, paper trading MVP | MAJ 2026-05-23 | remplace V19.1.3
+
+1. FONCTION
+Document de preuve. Le tracker reel prime sur le prompt, les simulations, Monte Carlo, intuitions post-course et regrets. Une regle issue d'une seule course ne modifie jamais la doctrine. Le proxy CP/2sur4 doit etre audite contre les rapports officiels ZEturf. Le CP_SEC doit etre compare au CP3 avant toute decision reelle. Le SP doit etre calibre independamment du CP.
+
+V19.1.4 conserve les verrous V19.1.3 et ajoute trois obligations operationnelles :
+- decision_engine_outputs.csv pour rendre les decisions rejouables ;
+- split train/validation/test_live avec leakage_check obligatoire ;
+- calibration SP independante via events_sp.csv et sp_calibration_segments.csv.
+
+Le tracker ne choisit pas les chevaux. Il mesure, controle, valide ou rejette les decisions GPI. Toute decision non tracee, non segmentee ou non rejouable est exclue du strict.
+
+2. REGLES PRIORITAIRES DE GOUVERNANCE
+R1. Moteur reproductible obligatoire : toute decision pre-course doit produire decision_engine_outputs avec input_hash, engine_version, ruleset_version, reason_codes, kill_switch_codes et replay_match.
+R2. proxy_error_by_segment.csv obligatoire : mesurer erreur_moyenne, erreur_mediane, erreur_P75, taux_surestimation, ratio_median, drawdown_max et ROI par structure. Segment surestime = degrade ou refuse.
+R3. CP_SEC vs CP3 obligatoire : toute decision CP3 doit conserver la meilleure paire CP_SEC pre-course, son R_prudent, son retour officiel, son ROI, son ratio, son drawdown et la cause d'ecart.
+R4. Split hors echantillon obligatoire : TRAIN calibre, VALIDATION controle, TEST_LIVE audite les decisions paper trading. Aucun KPI strict si leakage_check_ok = false.
+R5. Segmentation stricte : aucun ROI global ne peut melanger reel, simulation, hors doctrine, micro-SP, SP, CP_SEC, CP3, 2SUR4_EXP ou paper trading.
+R6. Calibration SP independante : le SP ne se valide jamais par proxy CP. Il exige un segment SP UTILISABLE ou reste micro/simulation.
+R7. Paper trading avant extension : 50 decisions ultra-filtrees doivent etre journalisees avant toute intensification CP/CP3/SP.
+R8. Preuve par segment : aucune regle globale ne remplace un segment valide.
+
+3. SEGMENTS ROI OBLIGATOIRES
+Segment | Definition
+STRICT | Ticket reel valide GPI complet
+MICRO-SP | SP degrade 1 EUR max, suivi separe
+SP | Simple place standard avec segment SP UTILISABLE
+DUTCHING_SP | Deux SP maximum, chaque SP couvre l'exposition
+CP_SEC | Couple/Jumele place sec
+CP3 | Couple place 3 chevaux, ROI sur mise totale
+CP_PROXY_SG | CP/CP3 decide par proxy SG ZEturf
+2SUR4_EXP | 2sur4 reel experimental, 1 EUR max avant validation
+ZE4_EXCEPTION | ZE4 reel exceptionnel apres CP/SP robuste
+ZE4_SIMULATION | ZE4 non joue ou non strict
+TRIO_SIMULATION | Trio pour apprentissage uniquement
+Z5_SIMULATION | Z5 pour apprentissage uniquement
+HORS_DOCTRINE | Ticket joue hors validation GPI
+SIMULATION | Non compte dans ROI reel
+PAPER_TRADING | Decision pre-course non jouee, evaluee apres course
+NO_BET | Decision de ne pas jouer ; compte dans decisions, pas dans mise
+
+Regle : un ticket = un segment principal. Si un ticket contient plusieurs structures, il doit etre eclate en lignes separees ou classe dans le segment le plus risque. Toute ambiguite de classification exclut le ticket du ROI strict. ROI global non utilise comme preuve.
+
+4. CHAMPS TICKET OBLIGATOIRES
+date ; reunion_course ; course_uid ; hippodrome ; discipline ; partants_reels ; terrain ; qualite ; score_jouabilite ; dispersion_marche ; statut_NP.
+type_exact_ZEturf ; selection ; mise ; retour ; gain_net ; ROI ; ratio_retour ; rapport_officiel_ZEturf.
+ticket_conseille_GPI_oui_non ; ticket_joue_utilisateur_oui_non ; ticket_paper_oui_non ; ecart_type ; cause_ecart.
+segment_GPI ; reel_simulation_paper ; cause_principale ; cause_secondaire.
+split ; calibration_version ; leakage_check_ok ; decision_before_race_oui_non.
+
+Regle : une ligne sans type exact, mise, retour ou segment_GPI ne peut pas entrer dans le ROI strict.
+
+5. CHAMPS MOTEUR REPRODUCTIBLE
+Champs obligatoires pour decision_engine_outputs :
+decision_id ; course_uid ; snapshot_time ; engine_version ; ruleset_version ; input_hash ; input_source_ids ; qualite ; score_jouabilite ; verdict ; structure_max ; structure_retenue ; selection_CP_SEC ; selection_CP3 ; selection_SP ; mise_theorique ; segment_ROI ; edge_status ; reason_codes ; kill_switch_codes ; proxy_status ; segment_id ; sample_n ; confidence ; fallback_level ; C_prudent ; R_prudent ; CP_SEC_domine_oui_non ; score_total ; statut_score ; statut_marche ; split ; calibration_version ; leakage_check_ok ; decision_before_race_oui_non ; output_replayed_oui_non ; replay_match_oui_non ; created_at.
+
+Regles :
+- meme input_hash + meme ruleset_version + meme engine_version = meme verdict ;
+- si le verdict change, une nouvelle ruleset_version ou un nouvel input_hash est obligatoire ;
+- replay_match_oui_non = non exclut la decision du KPI strict jusqu'a correction ;
+- decision_engine_outputs absent = decision non reproductible ;
+- input_hash absent = decision stricte interdite ;
+- reason_codes narratifs interdits.
+
+Reason_codes standards :
+PROXY_VERT ; PROXY_ORANGE ; PROXY_ROUGE ; PROXY_ND ; FALLBACK_PARENT ; FALLBACK_ND ; CP_SEC_DOMINE ; CP3_ONE_PAIR_ONLY ; CP3_TWO_WEAK_PAIRS ; SP_MIN_ABSENT ; SP_SEGMENT_ND ; SP_SEGMENT_REJETE ; SCORE_UTILISABLE ; SCORE_FRAGILE ; SCORE_REJETE ; SCORE_ND ; VOLATILITE_STABLE ; VOLATILITE_INSTABLE ; VOLATILITE_KILL_SWITCH ; NP_STATUS_INCERTAIN ; SG_INCOHERENTE ; QUALITE_D ; NO_BET_DEFAULT.
+
+6. CHAMPS SPLIT HORS ECHANTILLON
+Champs obligatoires dans toutes les tables de validation :
+split ; calibration_version ; leakage_check_ok ; snapshot_time ou source_snapshot_time ; decision_before_race_oui_non.
+
+Definition :
+TRAIN | Calcule C_prudent, sp_calibration_segments et proba_basse_calibration.
+VALIDATION | Controle proxy_error_by_segment, backtest_cp_sec_vs_cp3, SP et proba_basse hors echantillon.
+TEST_LIVE | Stocke paper_trading_50_decisions et decisions figees avant course.
+
+Regles :
+- une course ne peut pas servir a calibrer et valider le meme coefficient ;
+- une ligne leakage_check_ok = false est exclue du KPI strict ;
+- calibration_version absente = preuve invalide ;
+- decision_before_race_oui_non = non exclut la decision du pre-course strict ;
+- TRAIN, VALIDATION et TEST_LIVE ne sont jamais fusionnes dans un KPI de validation.
+
+7. CHAMPS VOLATILITE MARCHE
+SG_H30 ; SG_H10 ; SG_H5 ; SG_T8 ; rang_marche_H30 ; rang_marche_H10 ; rang_marche_H5 ; rang_marche_T8 ; variation_pct_H30_H5 ; variation_pct_H5_T8 ; statut_marche ; impact_marche ; cheval_cle_touche_oui_non.
+
+Statut_marche :
+STABLE = 0 a 10 %.
+SURVEILLABLE = 10 a 20 %.
+INSTABLE = 20 a 35 %.
+KILL_SWITCH = plus de 35 % sur base, favori central, paire CP ou cheval cle.
+
+Regle : la volatilite controle la fiabilite du snapshot. Elle ne selectionne jamais un cheval. Une variation rouge sur cheval cle impose NO BET sauf justification forte et tracee.
+
+8. CHAMPS HISTORIQUE UTILISATEUR
+user_ticket_history : ticket_id ; date ; course_uid ; reunion_course ; type_pari ; selection ; mise ; retour ; gain_net ; ROI ; ratio_retour ; conseille_GPI_oui_non ; joue_utilisateur_oui_non ; ecart_type ; segment_GPI ; hors_doctrine_oui_non.
+
+Ecarts autorises :
+AUCUN ; AJOUT ; RETRAIT ; MISE_MODIFIEE ; STRUCTURE_MODIFIEE ; HORS_DOCTRINE ; COURSE_NON_CONSEILLEE.
+
+Regle : l'historique utilisateur mesure la discipline de jeu. Il ne calibre jamais les rapports publics, C_prudent, proxy_error_by_segment ou sp_calibration_segments.
+
+9. CHAMPS PROXY SG
+course_uid ; source_results_pdf_id ; source_pronostics_pdf_id ; snapshot_time ; SG_snapshot ; N_partants_reels ; P_event_market ; C_prudent_used ; sample_n ; confidence ; fallback_level ; R_est_prudent ; rapport_officiel ; erreur_proxy ; erreur_relative ; surestimation_proxy_flag ; proxy_underestimate_flag ; bucket_N ; bucket_marche ; bucket_selection ; bucket_rangs ; discipline_bucket ; segment_statut_proxy ; segment_degrade_oui_non ; motif_degradation ; split ; calibration_version ; leakage_check_ok.
+
+10. STATUTS PROXY
+Statut | Conditions | Usage
+VERT | sample_n >=50 ; taux_surestimation <=35 % ; erreur_relative_mediane >=0 ; leakage_check_ok = true | Edge net possible si autres criteres OK
+ORANGE | sample_n >=50 ; taux_surestimation 35-45 % ou erreur_relative_mediane -10 % a 0 % | Edge fragile ; CP_SEC prioritaire
+ROUGE | taux_surestimation >45 % ou erreur_relative_mediane < -10 % | Segment degrade ; pas de reel strict
+FRAGILE | sample_n 10-49 | Simulation ou exception documentee
+ND | sample_n <10 ; proxy absent ; fallback non declare ; calibration_version absente | Simulation uniquement
+
+Un segment degrade ne peut jamais etre transforme en edge net par une bonne lecture sportive. Un segment ORANGE ne suffit pas pour CP3 standard sans marge forte.
+
+11. CHAMPS CP_SEC VS CP3
+selection_CP_SEC ; R_prudent_CP_SEC ; proba_basse_CP_SEC ; decision_CP_SEC_pre_course ; official_return_CP_SEC ; ROI_CP_SEC ; ratio_CP_SEC ; drawdown_CP_SEC.
+selection_CP3 ; R_prudent_meilleure_paire_CP3 ; nb_paires_defendables ; decision_CP3_pre_course ; official_return_CP3 ; ROI_CP3 ; ratio_CP3 ; drawdown_CP3 ; cp3_remboursant_flag ; structure_retenue ; cause_arbitrage ; CP_SEC_domine_oui_non ; split ; calibration_version ; leakage_check_ok.
+
+CP_SEC_domine_oui_non = oui si au moins deux criteres sont vrais : ROI_CP_SEC >= ROI_CP3 ; drawdown_CP_SEC < drawdown_CP3 ; ratio_median_CP_SEC >= ratio_median_CP3 ; CP3 remboursant frequent ; une seule paire CP3 concentre la probabilite ; deux paires CP3 R_prudent <3,00 ; segment CP3 ORANGE alors que CP_SEC est VERT ou mieux couvert.
+
+Regle : CP3 gagne seulement par gros retour isole = simulation. CP3 touche mais rembourse = edge absent ou fragile.
+
+12. CHAMPS SP INDEPENDANTS
+SP : numero ; cheval ; SP_min ; SP_max ; tranche_SP ; top_paid_places ; segment_sp_id ; sample_n_SP ; statut_segment_SP ; proba_basse ; seuil_1_20_SP ; faits_independants ; retour_min ; rapport_SP_officiel ; resultat_place_oui_non ; ROI_SP ; ratio_SP ; decision_SP ; split ; calibration_version ; leakage_check_ok.
+
+Tranches SP :
+SP_1_20_1_80 ; SP_2_00_2_90 ; SP_3_00_5_00 ; SP_SUP_5_00.
+
+Statuts segment_SP :
+UTILISABLE | sample_n >=30 ; ROI_median >=0 ; ratio_median acceptable ; drawdown_max acceptable | SP reel possible si autres criteres OK
+FRAGILE | sample_n 10-29 ou variance elevee | micro-SP 1 EUR ou simulation
+REJETE | ROI_median negatif, drawdown excessif, hit_rate insuffisant ou taux reel incoherent | SP reel interdit
+ND | sample_n <10 ou calibration absente | SP reel interdit
+
+Regle : SP visible ne suffit pas. SP standard interdit sans sp_calibration_segments UTILISABLE. Si calibration SP absente, seul micro-SP separe ou simulation peut etre envisage.
+
+13. CHAMPS PROBA_BASSE
+score_forme ; score_3DERMUS ; score_JE ; score_aptitude ; score_marche ; malus_faute ; malus_rentree ; malus_dependance_scenario ; kill_switch_favori_fragile ; score_total ; seuil_applique ; proba_basse_defendable_oui_non ; statut_score ; calibration_id ; split ; calibration_version ; leakage_check_ok.
+
+13B. CALIBRATION PROBA_BASSE
+Le tracker doit mesurer la performance reelle de chaque classe de score.
+
+Champs :
+classe_score ; decisions_score ; taux_top3_reel ; taux_top4_reel ; taux_faute_reel ; ROI_CP_SEC_score ; ROI_CP3_score ; ROI_SP_score ; ratio_median_score ; drawdown_score ; statut_score ; split ; calibration_version ; leakage_check_ok.
+
+Statuts :
+UTILISABLE : decisions >=30, ROI non negatif, drawdown acceptable, taux reel coherent.
+FRAGILE : decisions 10 a 29 ou variance elevee.
+REJETE : ROI negatif, drawdown excessif, taux reel insuffisant ou surestimation recurrente.
+ND : moins de 10 decisions.
+
+Regle : un score REJETE ou ND interdit un ticket reel strict, meme si la lecture sportive parait bonne.
+
+14. CHAMPS ANALYTIQUES COMPLEMENTAIRES
+CP/CP3 : CP_proxy_utilise, valeur, source, bucket, sample_n, percentile, statut_proxy, CP_reel_ZEturf, erreur_proxy, ROI_CP3, CP_sec_vs_CP3.
+2SUR4_EXP : teste, reel/simulation/refus, chevaux, proxy_valeur, sample_n, proba_basse_top4, seuil, resultat, ROI, raison.
+Doc8 : distance_ok, aptitude, poids/rating, terrain/corde, ferrure, live/canter, decision.
+Monte Carlo : backtest seulement, ticket teste, nb simulations, hit rate, ROI moyen/median, P10/P5, drawdown, losing streak, sensibilite proxy.
+Correlation tactique : score_correlation_tactique, scenario_couvert, risque_correlation, decision_correlation.
+
+15. FORMULES FINANCIERES
+Mise totale = somme engagee.
+Retour brut = somme payee par ZEturf.
+Gain net = Retour - Mise.
+ROI = (Retour - Mise) / Mise.
+Ratio retour = Retour / Mise.
+Ticket ratio 1,20 = Retour / Mise >=1,20.
+CP3 ROI = (retour des paires gagnantes - mise totale CP3) / mise totale CP3.
+Edge reel = taux reussite reel - break-even.
+Drawdown max = plus forte baisse de bankroll cumulee.
+ROI median = mediane des ROI tickets du segment.
+CP3_remboursant_flag = vrai si 0,90 <= ratio_retour <= 1,20.
+
+Regle : un ticket remboursant n'a pas d'edge. Il ne peut pas valider une structure.
+
+16. PAPER_TRADING_50_DECISIONS.CSV
+Une ligne = une decision pre-course figee avant l'arrivee. Le paper trading n'est pas un ticket reel et ne doit jamais etre melange au ROI reel.
+
+Colonnes minimales :
+decision_id ; date ; course_uid ; reunion_course ; hippodrome ; discipline ; partants_reels ; snapshot_time ; engine_version ; ruleset_version ; input_hash ; qualite ; score_jouabilite ; SG_source ; NP_status_ok ; SG_H30 ; SG_H10 ; SG_H5 ; SG_T8 ; variation_pct ; statut_marche ; shortlist_top6 ; anomalies_7_12 ; segment_id ; sample_n ; confidence ; fallback_level ; C_prudent ; R_prudent ; proxy_error_status ; segment_degrade_oui_non ; score_total ; statut_score ; segment_sp_id ; statut_segment_SP ; CP_SEC_selection ; CP_SEC_R_prudent ; CP_SEC_decision ; CP3_selection ; CP3_nb_paires_defendables ; CP3_decision ; SP_selection ; SP_decision ; structure_retenue ; verdict_pre_course ; mise_paper ; segment_ROI ; arrivee ; rapport_officiel ; retour_paper ; gain_net_paper ; ROI_paper ; ratio_retour ; cause_resultat ; split ; calibration_version ; leakage_check_ok ; decision_before_race_oui_non.
+
+Regles d'entree paper trading :
+- France + ZEturf France ;
+- H-5/H-10 ou T-8 disponible ;
+- SG propres ;
+- NP/statut traites ;
+- qualite A ou B sauf micro-simulation documentee ;
+- proxy segment non ROUGE ;
+- CP_SEC teste avant CP3 ;
+- SP standard seulement si segment_SP UTILISABLE ;
+- exotiques exclus ;
+- hesitation forte = NO BET paper ;
+- split = TEST_LIVE ;
+- leakage_check_ok = true.
+
+Repartition attendue sur 50 decisions :
+NO BET : 25 a 35 ; CP_SEC paper : 8 a 12 ; CP3 paper : 5 a 8 ; SP paper : 3 a 5 ; 2SUR4_EXP paper : 0 a 3 ; exotiques : 0.
+
+Si le protocole produit plus de 30 tickets sur 50 decisions, le filtre est trop laxiste.
+
+17. NIVEAU DE PREUVE
+Niveau | Definition | Usage
+Observation isolee | 1 cas | ne modifie pas la doctrine
+Hypothese | 3 a 5 cas similaires | a surveiller
+Regle provisoire | environ 10 cas avec tendance nette | applicable mais surveillee
+Regle validee | 30 a 50 cas minimum, ROI median non negatif, drawdown acceptable, split valide | peut modifier la doctrine
+Regle rejetee | ROI negatif, drawdown excessif, surestimation proxy, leakage ou non reproductible | supprimer du prompt actif
+
+18. ANTI-OVERFITTING
+Toute regle provisoire avec ROI negatif apres 20 cas est retiree. Un ticket gagnant hors doctrine n'est pas une preuve. Une simulation ne compte jamais dans le ROI reel. Un CP3 qui touche mais rembourse seulement n'a pas d'edge. Une erreur proxy favorable isolee ne valide pas un segment. Ne jamais refaire l'analyse pre-course avec l'arrivee connue. Un gros retour isole ne valide pas CP3 si la mediane, le drawdown ou le taux de remboursement sont mauvais. Une decision sans split ou avec leakage_check_ok = false est exclue du strict.
+
+19. AUDIT POST-COURSE STANDARD
+COURSE : date, reunion-course, discipline, partants, terrain.
+DONNEES : qualite, SG ZEturf, officiel, Document 11, Document 10, Doc8.
+MOTEUR : decision_id, engine_version, ruleset_version, input_hash, replay_match, reason_codes, kill_switch_codes.
+SPLIT : split, calibration_version, leakage_check_ok, decision_before_race.
+TICKET CONSEILLE : type, chevaux, mise, segment, reel/simulation/paper, R_prudent.
+TICKET JOUE : type, chevaux, mise, conseille GPI oui/non, ecart utilisateur.
+RESULTAT : arrivee, rapports ZEturf, retour, gain net, ROI, ratio.
+PROXY : segment_id, P_event_market, C_prudent, sample_n, fallback, erreur_proxy, surestimation flag, statut_proxy, segment_degrade.
+SP : segment_sp_id, tranche_SP, statut_segment_SP, SP_min, rapport_SP, ROI_SP.
+CP_SEC VS CP3 : meilleure paire, panier, ROI compare, cause de structure, CP_SEC_domine_oui_non.
+PROBA_BASSE : score profil, seuil, statut_score, decision.
+VOLATILITE : variation_pct, statut_marche, impact.
+CAUSE : principale, secondaire.
+REGLE CANDIDATE : courte, testable, niveau de preuve.
+ACTION : conserver / surveiller / integrer / rejeter.
+
+20. KPI CRASH TEST MVP
+Par segment et par split : decisions, tickets, NO BET, mise totale, retour total, gain net, ROI, hit rate, ratio moyen, ratio median, ROI median, drawdown max, losing streak max, erreur proxy moyenne/mediane/P75, erreur_relative_mediane, taux surestimation, taux sous-estimation, % CP3 remboursants, ROI CP_SEC alternatif, ROI CP3, ecart ROI CP3-CP_SEC, ecart ticket conseille vs joue, volatilite_marche_median, % marches instables, taux_top3 par classe_score, taux_top4 par classe_score, taux_place_SP, ROI_SP_median, statut_segment_SP, replay_fail_count, leakage_fail_count.
+
+Criteres de validation MVP :
+- decision_engine_outputs produit et rejouable ;
+- replay_match controle ;
+- train_test_split complet ;
+- leakage_check_ok = true pour les lignes strictes ;
+- proxy_error_by_segment.csv controle sur segments sample_n >=50 ;
+- backtest CP_SEC vs CP3 realise par segment, jamais globalement ;
+- sp_calibration_segments produit avant SP standard ;
+- 50 decisions pre-course completes ;
+- aucune fuite d'arrivee ;
+- 0 segment ROUGE utilise en reel strict ;
+- CP3 conserve seulement s'il bat CP_SEC sur ROI median, ratio median et drawdown acceptable ;
+- ROI paper positif non dependant d'un seul gros retour ;
+- NO BET accepte comme decision normale.
+
+21. TABLEAU DE BORD MINIMAL
+Afficher separement : STRICT, MICRO-SP, SP, DUTCHING_SP, CP_SEC, CP3, CP_PROXY_SG, 2SUR4_EXP, ZE4_EXCEPTION, ZE4_SIMULATION, TRIO_SIMULATION, Z5_SIMULATION, HORS_DOCTRINE, SIMULATION, PAPER_TRADING, NO_BET.
+
+Vues obligatoires :
+- par segment ROI ;
+- par split TRAIN / VALIDATION / TEST_LIVE ;
+- par discipline ;
+- par type de pari ;
+- par statut proxy ;
+- par statut_segment_SP ;
+- par engine_version et ruleset_version ;
+- par leakage_check_ok.
+
+Interdit : dashboard avec ROI global non segmente. Un dashboard flatteur mais non segmente est invalide.
+
+22. KILL-SWITCHS TRACKER
+Decision_engine_outputs absent ; input_hash absent ; ruleset_version absente ; output non rejouable ; replay_match non ; split absent ; calibration_version absente ; leakage_check_ok = false ; decision_before_race_oui_non = non ; proxy_error_by_segment absent ; segment ROUGE utilise ; fallback non declare ; SP standard sans sp_calibration_segments UTILISABLE ; CP3 non compare au CP_SEC ; ROI simule melange au ROI reel ; historique utilisateur utilise pour calibrer les rapports publics ; arrivee utilisee pour decider ; export Excel utilise comme source de verite.
+
+23. CONFORMITE
+Aide a la decision uniquement. Aucun outil ne doit automatiser la prise de jeu, remplir un panier ZEturf ou contourner l'operateur. L'utilisateur reste seul decideur de toute mise reelle.
+
+24. PHRASE SOURCE
+Une decision GPI n'est prouvable que si elle est segmentee, horodatee, rejouable et controlee hors echantillon. Edge net seulement si le moteur est rejouable, le split est valide, le proxy est audite, le CP_SEC a ete compare au CP3, le SP standard dispose d'un segment UTILISABLE, la proba_basse est calibree et le ROI reste positif par segment. Sinon, edge fragile, simulation ou NO BET.
