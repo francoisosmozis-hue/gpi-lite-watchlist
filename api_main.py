@@ -5707,12 +5707,12 @@ def _action_compact_watchlist_row(row):
         "prix": _action_pick(row, "prix", "nom_prix"),
         "heure": _action_pick(row, "heure", "heure_depart", "depart"),
         "priorite_h5": _action_pick(row, "priorite_h5", "priority_h5", "priorite"),
-        "qualite": _action_pick(row, "qualite", "quality"),
+        "qualite": _action_pick(row, "qualite", "quality", "qualite_matin"),
         "structure_max": _action_pick(row, "structure_max", "latest_structure"),
-        "verdict": _action_pick(row, "verdict", "verdict_python", "latest_verdict"),
+        "verdict": _action_pick(row, "verdict", "verdict_python", "latest_verdict", "decision_matin", "statut_matin"),
         "ticket_exact": _action_pick(row, "ticket_exact", "latest_ticket"),
         "edge_status": _action_pick(row, "edge_status", "edge", "latest_edge"),
-        "raison": _action_pick(row, "raison", "reason", "reason_codes"),
+        "raison": _action_pick(row, "raison", "reason", "reason_codes", "motifs_filtrage", "priorite_h5_reason", "no_bet_reason"),
         "source": _action_pick(row, "source", "source_file"),
 
         # Champs moteur / strict gate si deja presents dans le CSV
@@ -5722,9 +5722,9 @@ def _action_compact_watchlist_row(row):
         "strict_gate_summary": _action_pick(row, "strict_gate_summary", "latest_strict_gate_summary"),
 
         # Champs CP si deja presents
-        "cp_sec_candidate": _action_pick(row, "cp_sec_candidate", "latest_cp_sec_candidate"),
-        "cp_sg_pair_sum": _action_pick(row, "cp_sg_pair_sum", "latest_cp_sg_pair_sum"),
-        "cp_sg_filter_status": _action_pick(row, "cp_sg_filter_status", "latest_cp_sg_filter_status"),
+        "cp_sec_candidate": _action_pick(row, "cp_sec_candidate", "latest_cp_sec_candidate", "cp_sec_candidat"),
+        "cp_sg_pair_sum": _action_pick(row, "cp_sg_pair_sum", "latest_cp_sg_pair_sum", "cp_sec_sg_sum_9h"),
+        "cp_sg_filter_status": _action_pick(row, "cp_sg_filter_status", "latest_cp_sg_filter_status", "cp_sec_sg_filter_status_9h"),
         "cp3_candidate": _action_pick(row, "cp3_candidate", "latest_cp3_candidate"),
         "cp3_sg_filter_status": _action_pick(row, "cp3_sg_filter_status", "latest_cp3_sg_filter_status"),
 

@@ -583,3 +583,63 @@ def derive_action_gpt(row: Dict[str, Any]) -> str:
     if derive_h5_surveillance_value(row) == "SURVEILLANCE_FAIBLE":
         return "Surveillance faible. Aucun ticket strict."
     return "Surveiller H-5. Aucun ticket strict depuis morning."
+
+# ---------------------------------------------------------------------------
+# WATCHLIST PRECISION FIX V0.4
+# A interdit sans filtre CP/SG OK et somme CP/SG exploitable.
+# ---------------------------------------------------------------------------
+
+def derive_watchlist_quality(row: Dict[str, Any]) -> str:
+    priority = _upper(_pick(row, "priorite_h5", "priority_h5", default="ND"))
+    structure = _upper(_pick(row, "structure_max", "latest_structure", default="ND"))
+    qualite = str(_pick(row, "qualite", "quality", default="ND")).strip().upper()
+    edge = _upper(_pick(row, "edge_status", "edge", "latest_edge", default="ND"))
+    vol = derive_volatilite_risk(row)
+
+    cp_filter = str(_pick(
+        row,
+        "cp_sg_filter_status",
+        "latest_cp_sg_filter_status",
+        "cp_sec_sg_filter_status_9h",
+        "cp_sec_sg_filter_status",
+        default="ND"
+    )).strip().upper()
+
+    cp_sum = _f(_pick(
+        row,
+        "cp_sg_pair_sum",
+        "latest_cp_sg_pair_sum",
+        "cp_sec_sg_sum_9h",
+        "cp_sec_sg_sum",
+        default="ND"
+    ))
+
+    if priority == "P9" or structure == "NO_BET" or qualite == "D":
+        return "D"
+
+    if vol == "KILL_PROBABLE":
+        return "D"
+
+    if _core_data_nd_v02(row):
+        return "C"
+
+    if "SIMULATION" in structure:
+        return "C"
+
+    if edge in {"EDGE_ABSENT", "ABSENT"}:
+        return "C"
+
+    if edge in {"EDGE_FRAGILE", "FRAGILE"}:
+        return "B"
+
+    if structure in {"CP_SEC_ETUDE", "CP3_ETUDE", "SP_ETUDE"} and qualite in {"A", "B"}:
+        if cp_filter == "OK" and cp_sum is not None and cp_sum >= 8:
+            return "A"
+        if cp_filter == "OK":
+            return "B"
+        return "C"
+
+    if "ETUDE" in structure:
+        return "C"
+
+    return "C"
