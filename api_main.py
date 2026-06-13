@@ -2835,6 +2835,52 @@ def drive_run_h5_auto_brief():
 
 
 
+
+
+@app.get("/action/latest-h5-auto-brief")
+def action_latest_h5_auto_brief():
+    """
+    Fa?ade GPT lecture seule.
+    Lit le dernier brief H-5 automatique depuis la route backend /gpi/latest-h5-auto-brief.
+    Ne relance aucun traitement.
+    Ne capture aucune cote.
+    Ne cr?e jamais de ticket strict.
+    """
+    payload = gpi_latest_h5_auto_brief()
+
+    if not isinstance(payload, dict):
+        payload = {
+            "ok": False,
+            "source_route": "/gpi/latest-h5-auto-brief",
+            "action_route": "/action/latest-h5-auto-brief",
+            "reason": "LATEST_H5_AUTO_BRIEF_INVALID_PAYLOAD",
+            "VERDICT": "NO_BET",
+            "Ticket_exact_ou_NO_BET": "NO_BET",
+            "Segment_ROI": "NO_BET",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    payload["facade_version"] = "action_facade_v1_2_0"
+    payload["source_route"] = "/gpi/latest-h5-auto-brief"
+    payload["action_route"] = "/action/latest-h5-auto-brief"
+
+    # Verrou doctrine fa?ade : aucune action GPT ne doit ouvrir un ticket strict.
+    payload["strict_allowed_oui_non"] = "non"
+    payload["strict_usable_oui_non"] = "non"
+    payload["ticket_strict"] = "NO_BET"
+
+    if not payload.get("VERDICT"):
+        payload["VERDICT"] = "NO_BET"
+    if not payload.get("Ticket_exact_ou_NO_BET"):
+        payload["Ticket_exact_ou_NO_BET"] = "NO_BET"
+    if not payload.get("Segment_ROI"):
+        payload["Segment_ROI"] = "NO_BET"
+
+    return payload
+
+
 @app.get("/gpi/latest-h5-auto-brief", dependencies=[Depends(require_api_key)])
 def gpi_latest_h5_auto_brief():
     """
