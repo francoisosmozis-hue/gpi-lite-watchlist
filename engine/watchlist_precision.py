@@ -291,19 +291,17 @@ def derive_watchlist_quality(row: Dict[str, Any]) -> str:
 
 def derive_h5_surveillance_value(row: Dict[str, Any]) -> str:
     quality = derive_watchlist_quality(row)
-    priority = _upper(_pick(row, "priorite_h5", "priority_h5", default="ND"))
     structure = _upper(_pick(row, "structure_max", "latest_structure", default="ND"))
 
     if quality == "D":
         return "NO_BET_STRUCTUREL"
-    if priority == "P9" or structure == "NO_BET":
-        return "INUTILE_H5"
-    if quality == "C":
+    if quality == "A":
+        return "H5_PRIORITAIRE"
+    if quality == "B":
+        return "H5_SUIVI_SIMPLE"
+    if "SIMULATION" in structure:
         return "SURVEILLANCE_FAIBLE"
-    if priority in {"P1", "P2"}:
-        return "A_SURVEILLER"
     return "SURVEILLANCE_FAIBLE"
-
 
 def derive_action_gpt(row: Dict[str, Any]) -> str:
     strict_status = derive_strict_ticket_status(row)
@@ -643,3 +641,41 @@ def derive_watchlist_quality(row: Dict[str, Any]) -> str:
         return "C"
 
     return "C"
+
+# ---------------------------------------------------------------------------
+# WATCHLIST PRECISION OVERRIDE V0.5
+# Effective final definitions. Keep at end of file.
+# ---------------------------------------------------------------------------
+
+def derive_h5_surveillance_value(row: Dict[str, Any]) -> str:
+    quality = derive_watchlist_quality(row)
+    structure = _upper(_pick(row, "structure_max", "latest_structure", default="ND"))
+
+    if quality == "D":
+        return "NO_BET_STRUCTUREL"
+    if quality == "A":
+        return "H5_PRIORITAIRE"
+    if quality == "B":
+        return "H5_SUIVI_SIMPLE"
+    if "SIMULATION" in structure:
+        return "SURVEILLANCE_FAIBLE"
+    return "SURVEILLANCE_FAIBLE"
+
+
+def derive_action_gpt(row: Dict[str, Any]) -> str:
+    strict_status = derive_strict_ticket_status(row)
+    quality = derive_watchlist_quality(row)
+    h5_value = derive_h5_surveillance_value(row)
+    vol = derive_volatilite_risk(row)
+
+    if strict_status == "STRICT_ALLOWED":
+        return "Etude stricte possible seulement apres verification H-5 complete."
+    if vol == "KILL_PROBABLE":
+        return "Kill-switch probable ou actif. Confirmer NO BET."
+    if quality == "D":
+        return "Course structurellement refusee. NO BET."
+    if h5_value == "H5_PRIORITAIRE":
+        return "Surveiller H-5 prioritaire. Aucun ticket strict depuis morning."
+    if h5_value == "H5_SUIVI_SIMPLE":
+        return "Suivi H-5 simple. Aucun ticket strict depuis morning."
+    return "Surveillance faible. Aucun ticket strict."
