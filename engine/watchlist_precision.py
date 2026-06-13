@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from typing import Any, Dict, List, Optional
@@ -262,62 +262,9 @@ def derive_refusal_reasons(row: Dict[str, Any]) -> List[str]:
     return reasons[:3]
 
 
-def derive_watchlist_quality(row: Dict[str, Any]) -> str:
-    priority = _upper(_pick(row, "priorite_h5", "priority_h5", default="ND"))
-    structure = _upper(_pick(row, "structure_max", "latest_structure", default="ND"))
-    qualite = _upper(_pick(row, "qualite", "quality", default="ND"))
-    edge = _upper(_pick(row, "edge_status", "edge", "latest_edge", default="ND"))
-    reasons = derive_refusal_reasons(row)
-    vol = derive_volatilite_risk(row)
-
-    if priority == "P9" or structure == "NO_BET" or qualite == "D":
-        return "D"
-    if vol == "KILL_PROBABLE":
-        return "D"
-    if has_core_data_nd(row) or "DATA_ND" in reasons:
-        return "C"
-    if "SIMULATION" in structure:
-        return "C"
-    if edge in {"EDGE_ABSENT", "ABSENT"}:
-        return "C"
-    if edge in {"EDGE_FRAGILE", "FRAGILE"}:
-        return "B"
-    if structure in {"CP_SEC_ETUDE", "CP3_ETUDE", "SP_ETUDE"} and qualite in {"A", "B"}:
-        return "A"
-    if "ETUDE" in structure:
-        return "B"
-    return "C"
 
 
-def derive_h5_surveillance_value(row: Dict[str, Any]) -> str:
-    quality = derive_watchlist_quality(row)
-    structure = _upper(_pick(row, "structure_max", "latest_structure", default="ND"))
 
-    if quality == "D":
-        return "NO_BET_STRUCTUREL"
-    if quality == "A":
-        return "H5_PRIORITAIRE"
-    if quality == "B":
-        return "H5_SUIVI_SIMPLE"
-    if "SIMULATION" in structure:
-        return "SURVEILLANCE_FAIBLE"
-    return "SURVEILLANCE_FAIBLE"
-
-def derive_action_gpt(row: Dict[str, Any]) -> str:
-    strict_status = derive_strict_ticket_status(row)
-    quality = derive_watchlist_quality(row)
-    h5_value = derive_h5_surveillance_value(row)
-    vol = derive_volatilite_risk(row)
-
-    if strict_status == "STRICT_ALLOWED":
-        return "Etude stricte possible seulement apres verification H-5 complete."
-    if vol == "KILL_PROBABLE":
-        return "Kill-switch probable ou actif. Confirmer NO BET."
-    if quality == "D":
-        return "Course structurellement refusee. NO BET."
-    if h5_value == "SURVEILLANCE_FAIBLE":
-        return "Surveillance faible. Aucun ticket strict."
-    return "Surveiller H-5. Aucun ticket strict depuis morning."
 
 
 def enrich_watchlist_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -409,63 +356,10 @@ def derive_refusal_reasons(row: Dict[str, Any]) -> List[str]:
     return reasons[:3]
 
 
-def derive_watchlist_quality(row: Dict[str, Any]) -> str:
-    priority = _upper(_pick(row, "priorite_h5", "priority_h5", default="ND"))
-    structure = _upper(_pick(row, "structure_max", "latest_structure", default="ND"))
-    qualite = _upper(_pick(row, "qualite", "quality", default="ND"))
-    edge = _upper(_pick(row, "edge_status", "edge", "latest_edge", default="ND"))
-    vol = derive_volatilite_risk(row)
-
-    if priority == "P9" or structure == "NO_BET" or qualite == "D":
-        return "D"
-    if vol == "KILL_PROBABLE":
-        return "D"
-    if _core_data_nd_v02(row):
-        return "C"
-    if "SIMULATION" in structure:
-        return "C"
-    if edge in {"EDGE_ABSENT", "ABSENT"}:
-        return "C"
-    if edge in {"EDGE_FRAGILE", "FRAGILE"}:
-        return "B"
-    if structure in {"CP_SEC_ETUDE", "CP3_ETUDE", "SP_ETUDE"} and qualite in {"A", "B"}:
-        return "A"
-    if "ETUDE" in structure:
-        return "B"
-    return "C"
 
 
-def derive_h5_surveillance_value(row: Dict[str, Any]) -> str:
-    quality = derive_watchlist_quality(row)
-    priority = _upper(_pick(row, "priorite_h5", "priority_h5", default="ND"))
-    structure = _upper(_pick(row, "structure_max", "latest_structure", default="ND"))
-
-    if quality == "D":
-        return "NO_BET_STRUCTUREL"
-    if priority == "P9" or structure == "NO_BET":
-        return "INUTILE_H5"
-    if quality == "C":
-        return "SURVEILLANCE_FAIBLE"
-    if priority in {"P1", "P2"}:
-        return "A_SURVEILLER"
-    return "SURVEILLANCE_FAIBLE"
 
 
-def derive_action_gpt(row: Dict[str, Any]) -> str:
-    strict_status = derive_strict_ticket_status(row)
-    quality = derive_watchlist_quality(row)
-    h5_value = derive_h5_surveillance_value(row)
-    vol = derive_volatilite_risk(row)
-
-    if strict_status == "STRICT_ALLOWED":
-        return "Etude stricte possible seulement apres verification H-5 complete."
-    if vol == "KILL_PROBABLE":
-        return "Kill-switch probable ou actif. Confirmer NO BET."
-    if quality == "D":
-        return "Course structurellement refusee. NO BET."
-    if h5_value == "SURVEILLANCE_FAIBLE":
-        return "Surveillance faible. Aucun ticket strict."
-    return "Surveiller H-5. Aucun ticket strict depuis morning."
 
 
 def enrich_watchlist_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -511,30 +405,6 @@ def _core_data_nd_v02(row: Dict[str, Any]) -> bool:
     return all(_is_nd_value_v03(value) for value in core_fields)
 
 
-def derive_watchlist_quality(row: Dict[str, Any]) -> str:
-    priority = _upper(_pick(row, "priorite_h5", "priority_h5", default="ND"))
-    structure = _upper(_pick(row, "structure_max", "latest_structure", default="ND"))
-    qualite = _pick(row, "qualite", "quality", default="ND")
-    edge = _upper(_pick(row, "edge_status", "edge", "latest_edge", default="ND"))
-    vol = derive_volatilite_risk(row)
-
-    if priority == "P9" or structure == "NO_BET" or str(qualite).strip().upper() == "D":
-        return "D"
-    if vol == "KILL_PROBABLE":
-        return "D"
-    if _core_data_nd_v02(row):
-        return "C"
-    if "SIMULATION" in structure:
-        return "C"
-    if edge in {"EDGE_ABSENT", "ABSENT"}:
-        return "C"
-    if edge in {"EDGE_FRAGILE", "FRAGILE"}:
-        return "B"
-    if structure in {"CP_SEC_ETUDE", "CP3_ETUDE", "SP_ETUDE"} and str(qualite).strip().upper() in {"A", "B"}:
-        return "A"
-    if "ETUDE" in structure:
-        return "B"
-    return "C"
 
 
 def derive_refusal_reasons(row: Dict[str, Any]) -> List[str]:
@@ -557,30 +427,8 @@ def derive_refusal_reasons(row: Dict[str, Any]) -> List[str]:
     return reasons[:3]
 
 
-def derive_h5_surveillance_value(row: Dict[str, Any]) -> str:
-    quality = derive_watchlist_quality(row)
-    priority = _upper(_pick(row, "priorite_h5", "priority_h5", default="ND"))
-    structure = _upper(_pick(row, "structure_max", "latest_structure", default="ND"))
-
-    if quality == "D":
-        return "NO_BET_STRUCTUREL"
-    if priority == "P9" or structure == "NO_BET":
-        return "INUTILE_H5"
-    if quality == "C":
-        return "SURVEILLANCE_FAIBLE"
-    if priority in {"P1", "P2"}:
-        return "A_SURVEILLER"
-    return "SURVEILLANCE_FAIBLE"
 
 
-def derive_action_gpt(row: Dict[str, Any]) -> str:
-    if derive_volatilite_risk(row) == "KILL_PROBABLE":
-        return "Kill-switch probable ou actif. Confirmer NO BET."
-    if derive_watchlist_quality(row) == "D":
-        return "Course structurellement refusee. NO BET."
-    if derive_h5_surveillance_value(row) == "SURVEILLANCE_FAIBLE":
-        return "Surveillance faible. Aucun ticket strict."
-    return "Surveiller H-5. Aucun ticket strict depuis morning."
 
 # ---------------------------------------------------------------------------
 # WATCHLIST PRECISION FIX V0.4
