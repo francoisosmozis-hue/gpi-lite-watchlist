@@ -5732,6 +5732,18 @@ def _action_compact_watchlist_row(row):
         "volatilite_status": _action_pick(row, "volatilite_status", "latest_volatilite_status"),
         "volatilite_top6_max_pct": _action_pick(row, "volatilite_top6_max_pct", "latest_volatilite_top6_max_pct"),
         "volatilite_top6_direction": _action_pick(row, "volatilite_top6_direction", "latest_volatilite_top6_direction"),
+        # P5 missing actionWatchlist aliases.
+        # Source facts only. Morning/watchlist never opens a strict ticket.
+        "segment_roi": _action_pick(row, "segment_roi", "segment_ROI", "latest_segment_roi"),
+        "kill_switch_codes": _action_pick(row, "kill_switch_codes", "latest_kill_switch_codes", "kill_switchs_matin", "no_bet_reason"),
+        "volatilite_top6_max_numero": _action_pick(row, "volatilite_top6_max_numero", "latest_volatilite_top6_max_numero"),
+        "volatilite_top6_max_cheval": _action_pick(row, "volatilite_top6_max_cheval", "latest_volatilite_top6_max_cheval"),
+        "odds_context_found": _action_pick(row, "odds_context_found", "latest_odds_context_found"),
+        "odds_blocks_strict": _action_pick(row, "odds_blocks_strict", "latest_odds_blocks_strict"),
+        "proxy_status": _action_pick(row, "proxy_status", "statut_proxy", "proxy_statut"),
+        "proxy_segment_id": _action_pick(row, "proxy_segment_id", "segment_id", "proxy_segment"),
+        "sp_status": _action_pick(row, "sp_status", "sp_status_morning"),
+        "sp_segment_status": _action_pick(row, "sp_segment_status", "segment_SP", "segment_sp_status"),
 
         # Champs value favoris si disponibles
         "favorite_sg": _action_pick(row, "favorite_sg", "favori_sg", "sg_favori", "cote_favori"),
