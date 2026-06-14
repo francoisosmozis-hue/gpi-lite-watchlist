@@ -6974,3 +6974,199 @@ def action_h5_brief_safety_preview():
         **decision,
     }
 
+
+def _p10_norm_text(value):
+    import re
+    s = str(value or "").strip().lower()
+    s = s.replace("œ", "oe").replace("’", "'").replace("_", " ")
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _p10_find_clean_rows_for_course(course_uid):
+    """Find exact clean CSV rows for course_uid with statut/is_np.
+
+    Conservative: exact normalized course_uid match only.
+    """
+    from pathlib import Path
+    import pandas as pd
+
+    wanted = _p10_norm_text(course_uid)
+    if not wanted or wanted == "nd":
+        return None, "COURSE_UID_ND"
+
+    roots = [Path("data/output")]
+    patterns = ["*_course_9h_clean.csv", "*_h5_clean.csv", "*h5*clean*.csv", "*course*clean*.csv"]
+
+    seen = set()
+
+    for root in roots:
+        if not root.exists():
+            continue
+
+        for pattern in patterns:
+            for csv_path in root.rglob(pattern):
+                if csv_path in seen:
+                    continue
+                seen.add(csv_path)
+
+                try:
+                    df = pd.read_csv(csv_path)
+                except Exception:
+                    continue
+
+                cols = {str(c).lower(): c for c in df.columns}
+                if "course_uid" not in cols:
+                    continue
+                if "statut" not in cols or "is_np" not in cols:
+                    continue
+
+                cu_col = cols["course_uid"]
+                mask = df[cu_col].astype(str).map(_p10_norm_text) == wanted
+                rows = df[mask].copy()
+
+                if not rows.empty:
+                    return rows, str(csv_path)
+
+    return None, "NP_STATUT_SOURCE_ABSENT_FOR_COURSE"
+
+
+def _p10_compute_np_statut_gate_from_rows(rows, source):
+    import pandas as pd
+    from datetime import datetime, timezone
+
+    if rows is None or getattr(rows, "empty", True):
+        return {
+            "np_ok": "ND",
+            "statut_ok": "ND",
+            "np_source": source or "NP_STATUT_SOURCE_ABSENT_FOR_COURSE",
+            "statut_source": source or "NP_STATUT_SOURCE_ABSENT_FOR_COURSE",
+            "np_count": "ND",
+            "statut_missing_count": "ND",
+            "np_statut_rows_count": 0,
+            "np_statut_checked_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+
+    statut = rows["statut"].astype(str).str.strip().str.upper()
+    is_np = pd.to_numeric(rows["is_np"], errors="coerce")
+
+    statut_missing_count = int(statut.isin(["", "NAN", "NONE", "ND"]).sum())
+    np_by_flag = int((is_np.fillna(0) == 1).sum())
+    np_by_statut = int(statut.isin(["NP", "NON_PARTANT", "NON-PARTANT", "NON PARTANT"]).sum())
+    np_count = max(np_by_flag, np_by_statut)
+
+    unknown_is_np_count = int(is_np.isna().sum())
+
+    if statut_missing_count > 0 or unknown_is_np_count > 0:
+        statut_ok = "KO"
+    else:
+        valid_status = statut.isin(["PARTANT", "NP", "NON_PARTANT", "NON-PARTANT", "NON PARTANT"])
+        statut_ok = "OK" if bool(valid_status.all()) else "KO"
+
+    np_ok = "KO" if np_count > 0 else "OK"
+
+    return {
+        "np_ok": np_ok,
+        "statut_ok": statut_ok,
+        "np_source": source,
+        "statut_source": source,
+        "np_count": np_count,
+        "statut_missing_count": statut_missing_count,
+        "np_statut_rows_count": int(len(rows)),
+        "np_statut_checked_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _p10_compute_np_statut_gate_for_brief(brief):
+    if not isinstance(brief, dict):
+        brief = {}
+
+    course_uid = brief.get("course_uid", "ND")
+    rows, source = _p10_find_clean_rows_for_course(course_uid)
+    return _p10_compute_np_statut_gate_from_rows(rows, source)
+
+
+
+
+def _p10_read_local_latest_h5_auto_brief():
+    """Read local latest_h5_auto_brief.json as fallback for local preview tests."""
+    from pathlib import Path
+    import json
+
+    candidates = [
+        Path("data/output/latest_h5_auto_brief.json"),
+        Path("data\\output\\latest_h5_auto_brief.json"),
+    ]
+
+    for path in candidates:
+        if not path.exists():
+            continue
+
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                payload = dict(payload)
+                payload["_p10_local_fallback_used"] = "oui"
+                payload["_p10_local_fallback_path"] = str(path)
+                return payload
+        except Exception as exc:
+            return {
+                "ok": False,
+                "reason": f"LOCAL_LATEST_H5_AUTO_BRIEF_READ_ERROR:{type(exc).__name__}:{exc}",
+            }
+
+    return {
+        "ok": False,
+        "reason": "LOCAL_LATEST_H5_AUTO_BRIEF_ABSENT",
+    }
+
+@app.get("/action/h5-np-statut-preview")
+def action_h5_np_statut_preview():
+    """P10 read-only preview for np_ok/statut_ok.
+
+    Never writes GCS. Never opens a strict ticket.
+    """
+    source_payload = {
+        "ok": False,
+        "reason": "LATEST_H5_AUTO_BRIEF_NOT_READ",
+    }
+
+    try:
+        latest_func = globals().get("action_latest_h5_auto_brief")
+        if callable(latest_func):
+            source_payload = latest_func()
+    except Exception as exc:
+        source_payload = {
+            "ok": False,
+            "reason": f"LATEST_H5_AUTO_BRIEF_CALL_ERROR:{type(exc).__name__}:{exc}",
+        }
+
+    if not isinstance(source_payload, dict):
+        source_payload = {
+            "ok": False,
+            "reason": "LATEST_H5_AUTO_BRIEF_INVALID_PAYLOAD",
+        }
+
+    if source_payload.get("ok") is not True or source_payload.get("course_uid") in {None, "", "ND"}:
+        local_payload = _p10_read_local_latest_h5_auto_brief()
+        if isinstance(local_payload, dict) and local_payload.get("course_uid") not in {None, "", "ND"}:
+            source_payload = local_payload
+
+    fields = _p10_compute_np_statut_gate_for_brief(source_payload)
+
+    return {
+        "ok": True,
+        "source_route": "/action/h5-np-statut-preview",
+        "brief_source_route": "/action/latest-h5-auto-brief",
+        "brief_source_ok": source_payload.get("ok", "ND"),
+        "brief_generated_at_utc": source_payload.get("generated_at_utc", "ND"),
+        "course_uid": source_payload.get("course_uid", "ND"),
+        "preview_only": "oui",
+        "writes_gcs": "non",
+        "strict_policy": "P10 preview read-only. Aucun ticket strict.",
+        "np_statut_fields": fields,
+        "VERDICT": "NO_BET",
+        "ticket_exact": "NO_BET",
+        "strict_allowed_oui_non": "non",
+    }
+
