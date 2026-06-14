@@ -115,7 +115,7 @@ def _collect_blockers(ctx: Dict[str, Any]) -> List[str]:
         blockers.append("PROXY_NOT_USABLE")
 
     edge_status = _s(ctx, "edge_status").upper()
-    if edge_status in ("EDGE_ABSENT", "EDGE_FRAGILE", "ND"):
+    if edge_status in ("EDGE_ABSENT", "EDGE_FRAGILE", "EDGE_NON_DETERMINE", "EDGE_NOT_DETERMINED", "ND"):
         blockers.append("EDGE_NOT_NET")
 
     segment_roi = _s(ctx, "segment_roi").upper()
@@ -229,6 +229,7 @@ def build_h5_decision_context_from_brief(brief: Dict[str, Any]) -> Dict[str, str
                 "sg_status",
                 "sg_fiables",
                 "sg_fiable",
+                "current_snapshot_label",
             ],
         )
     )
@@ -285,6 +286,7 @@ def build_h5_decision_context_from_brief(brief: Dict[str, Any]) -> Dict[str, str
             "segment_roi",
             "roi_segment",
             "segment",
+                "Segment_ROI",
         ],
     )
 
@@ -294,6 +296,8 @@ def build_h5_decision_context_from_brief(brief: Dict[str, Any]) -> Dict[str, str
             "edge_status",
             "edge",
             "edge_net",
+                "Edge",
+                "edge_status_by_odds_context",
         ],
         default="EDGE_ABSENT",
     )
@@ -316,6 +320,7 @@ def build_h5_decision_context_from_brief(brief: Dict[str, Any]) -> Dict[str, str
             "volatilite_sg_status",
             "odds_volatility_status",
             "volatility_status",
+                "course_statut_marche",
         ],
     )
 
@@ -326,9 +331,25 @@ def build_h5_decision_context_from_brief(brief: Dict[str, Any]) -> Dict[str, str
             "kill_switch",
             "kill_switchs",
             "kill_switches",
+                "kill_switch_topn_oui_non",
         ],
         default="aucun",
     )
+
+    # latest_h5_auto_brief uses H5 as snapshot label, not an OK flag.
+    if _s(brief, "current_snapshot_label").upper() == "H5" and _s(brief, "top_n_numbers") != "ND":
+        ctx["sg_h5_ok"] = "OK"
+
+    # Market status STABLE is usable for the odds volatility layer.
+    if ctx["volatilite_status"].upper() == "STABLE":
+        ctx["volatilite_status"] = "OK"
+
+    # kill_switch_topn_oui_non = non means no volatility kill-switch.
+    if ctx["kill_switch_codes"].strip().lower() in ("non", "no", "false", "0"):
+        ctx["kill_switch_codes"] = "aucun"
+
+    if _s(brief, "kill_switch_topn_oui_non").strip().lower() in ("oui", "yes", "true", "1"):
+        ctx["kill_switch_codes"] = "VOLATILITE_KILL_SWITCH_TOPN"
 
     return ctx
 
