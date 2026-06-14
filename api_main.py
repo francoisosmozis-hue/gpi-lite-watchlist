@@ -7218,6 +7218,143 @@ def action_h5_np_statut_preview():
     }
 
 
+
+
+@app.get("/action/h5-business-validation")
+def action_h5_business_validation():
+    """P12 read-only business validation for latest H-5 brief.
+
+    Checks whether the latest H-5 brief contains the expected P11 NP/statut fields.
+    Does not run H-5.
+    Does not write GCS.
+    Never opens a strict ticket.
+    """
+    source_payload = {
+        "ok": False,
+        "reason": "LATEST_H5_AUTO_BRIEF_NOT_READ",
+    }
+
+    try:
+        latest_func = globals().get("action_latest_h5_auto_brief")
+        if callable(latest_func):
+            source_payload = latest_func()
+    except Exception as exc:
+        source_payload = {
+            "ok": False,
+            "reason": f"LATEST_H5_AUTO_BRIEF_CALL_ERROR:{type(exc).__name__}:{exc}",
+        }
+
+    if not isinstance(source_payload, dict):
+        source_payload = {
+            "ok": False,
+            "reason": "LATEST_H5_AUTO_BRIEF_INVALID_PAYLOAD",
+        }
+
+    # P12 : fallback local pour tests VS Code quand GCS/API n'est pas disponible.
+    # Ne modifie pas GCS. Ne lance pas H-5. Ne crée jamais de ticket strict.
+    if source_payload.get("ok") is not True or source_payload.get("course_uid") in {None, "", "ND"}:
+        try:
+            local_payload = _p10_read_local_latest_h5_auto_brief()
+            if isinstance(local_payload, dict) and local_payload.get("course_uid") not in {None, "", "ND"}:
+                source_payload = local_payload
+        except Exception as exc:
+            source_payload = {
+                **source_payload,
+                "local_fallback_error": f"LOCAL_LATEST_H5_AUTO_BRIEF_READ_ERROR:{type(exc).__name__}:{exc}",
+            }
+
+    # P12 : compat lecture anciens briefs sans champs P11.
+    p12_np_statut_defaults = {
+        "np_ok": "ND",
+        "statut_ok": "ND",
+        "np_source": "NP_STATUT_NOT_IN_LEGACY_BRIEF",
+        "statut_source": "NP_STATUT_NOT_IN_LEGACY_BRIEF",
+        "np_count": "ND",
+        "statut_missing_count": "ND",
+        "np_statut_rows_count": 0,
+        "np_statut_source_level": "LEGACY_BRIEF_NO_P11_FIELDS",
+        "np_statut_checked_at_utc": "ND",
+    }
+
+    for key, default_value in p12_np_statut_defaults.items():
+        if source_payload.get(key) in {None, ""}:
+            source_payload[key] = default_value
+
+    required_fields = [
+        "np_ok",
+        "statut_ok",
+        "np_source",
+        "statut_source",
+        "np_count",
+        "statut_missing_count",
+        "np_statut_rows_count",
+        "np_statut_source_level",
+        "np_statut_checked_at_utc",
+    ]
+
+    missing_fields = [
+        key for key in required_fields
+        if key not in source_payload or source_payload.get(key) in {None, ""}
+    ]
+
+    np_ok = source_payload.get("np_ok", "ND")
+    statut_ok = source_payload.get("statut_ok", "ND")
+    source_level = source_payload.get("np_statut_source_level", "ND")
+
+    hard_blocks = []
+
+    if source_payload.get("ok") is not True:
+        hard_blocks.append("LATEST_H5_AUTO_BRIEF_NOT_OK")
+
+    if missing_fields:
+        hard_blocks.append("P11_FIELDS_MISSING")
+
+    if np_ok == "KO":
+        hard_blocks.append("NP_DETECTED")
+
+    if statut_ok == "KO":
+        hard_blocks.append("STATUT_INVALID_OR_MISSING")
+
+    if source_level in {"LEGACY_BRIEF_NO_P11_FIELDS", "H5_SOURCE_ABSENT", "ND"}:
+        hard_blocks.append("NP_STATUT_NOT_VALIDATED_FROM_TRUE_H5")
+
+    if source_payload.get("strict_allowed_oui_non") != "non":
+        hard_blocks.append("STRICT_FLAG_UNEXPECTED")
+
+    validation_metier = "READY_FOR_AUDIT" if not hard_blocks else "BLOCKED"
+
+    return {
+        "ok": True,
+        "source_route": "/action/h5-business-validation",
+        "brief_source_route": "/action/latest-h5-auto-brief",
+        "read_only": "oui",
+        "writes_gcs": "non",
+        "runs_h5": "non",
+        "course_uid": source_payload.get("course_uid", "ND"),
+        "brief_ok": bool(source_payload.get("ok") is True),
+        "p11_fields_present_oui_non": "oui" if not missing_fields else "non",
+        "missing_fields": missing_fields,
+        "np_ok": np_ok,
+        "statut_ok": statut_ok,
+        "np_source": source_payload.get("np_source", "ND"),
+        "statut_source": source_payload.get("statut_source", "ND"),
+        "np_count": source_payload.get("np_count", "ND"),
+        "statut_missing_count": source_payload.get("statut_missing_count", "ND"),
+        "np_statut_rows_count": source_payload.get("np_statut_rows_count", 0),
+        "np_statut_source_level": source_level,
+        "np_statut_checked_at_utc": source_payload.get("np_statut_checked_at_utc", "ND"),
+        "validation_metier": validation_metier,
+        "hard_blocks": hard_blocks,
+        "VERDICT": "NO_BET",
+        "Ticket_exact_ou_NO_BET": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "Action_GPT": "Valider la présence des champs P11 après vrai H-5. Aucun ticket strict.",
+    }
+
+
 def _p11_norm_text(value):
     import re
     s = str(value or "").strip().lower()
