@@ -2702,9 +2702,7 @@ def drive_run_h5_auto_brief():
             input_hash_material = {
                 "course_uid": course_uid,
                 "decision_before_race_oui_non": "oui",
-                "input_hash": input_hash,
                 "input_hash_source": "H5_AUTO_BRIEF_PAYLOAD",
-                "input_hash_material_keys": sorted(input_hash_material.keys()),
                 "current_snapshot_label": "H5",
                 "runners_count": context_payload.get("runners_count", 0),
                 "top_n_numbers": context_payload.get("top_n_numbers", ""),
@@ -2730,14 +2728,45 @@ def drive_run_h5_auto_brief():
                 ).encode("utf-8")
             ).hexdigest()
 
+            try:
+                np_statut_fields = _p11_compute_np_statut_gate_for_h5_brief({
+                    "course_uid": course_uid,
+                    "current_snapshot_label": "H5",
+                })
+            except Exception as exc:
+                np_statut_fields = {
+                    "np_ok": "ND",
+                    "statut_ok": "ND",
+                    "np_source": f"NP_STATUT_COMPUTE_ERROR:{type(exc).__name__}",
+                    "statut_source": f"NP_STATUT_COMPUTE_ERROR:{type(exc).__name__}",
+                    "np_count": "ND",
+                    "statut_missing_count": "ND",
+                    "np_statut_rows_count": 0,
+                    "np_statut_source_level": "ERROR",
+                    "np_statut_checked_at_utc": datetime.now(timezone.utc).isoformat(),
+                }
+
             brief_payload = {
                 "ok": True,
                 "phase": "h5_auto_brief",
                 "brief_version": "h5_auto_brief_v0_1",
                 "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 "course_uid": course_uid,
+                "decision_before_race_oui_non": "oui",
+                "input_hash": input_hash,
+                "input_hash_source": "H5_AUTO_BRIEF_PAYLOAD",
+                "input_hash_material_keys": sorted(input_hash_material.keys()),
                 "current_snapshot_label": "H5",
                 "runners_count": context_payload.get("runners_count", 0),
+                "np_ok": np_statut_fields.get("np_ok", "ND"),
+                "statut_ok": np_statut_fields.get("statut_ok", "ND"),
+                "np_source": np_statut_fields.get("np_source", "ND"),
+                "statut_source": np_statut_fields.get("statut_source", "ND"),
+                "np_count": np_statut_fields.get("np_count", "ND"),
+                "statut_missing_count": np_statut_fields.get("statut_missing_count", "ND"),
+                "np_statut_rows_count": np_statut_fields.get("np_statut_rows_count", 0),
+                "np_statut_source_level": np_statut_fields.get("np_statut_source_level", "ND"),
+                "np_statut_checked_at_utc": np_statut_fields.get("np_statut_checked_at_utc", "ND"),
                 "top_n_numbers": context_payload.get("top_n_numbers", ""),
                 "top_n_instable_numbers": context_payload.get("top_n_instable_numbers", ""),
                 "top_n_kill_switch_numbers": context_payload.get("top_n_kill_switch_numbers", ""),
@@ -7169,4 +7198,142 @@ def action_h5_np_statut_preview():
         "ticket_exact": "NO_BET",
         "strict_allowed_oui_non": "non",
     }
+
+
+def _p11_norm_text(value):
+    import re
+    s = str(value or "").strip().lower()
+    s = s.replace("œ", "oe").replace("’", "'").replace("_", " ")
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _p11_is_h5_source(csv_path, rows):
+    name = str(csv_path).lower()
+    if "h5" in name or "h-5" in name:
+        return True
+
+    try:
+        cols = {str(c).lower(): c for c in rows.columns}
+        for key in ["snapshot_label", "snapshot_time", "capture_label"]:
+            col = cols.get(key)
+            if col:
+                values = rows[col].astype(str).str.lower().tolist()
+                if any(v in {"h5", "h-5"} or "h5" in v or "h-5" in v for v in values):
+                    return True
+    except Exception:
+        return False
+
+    return False
+
+
+def _p11_find_h5_np_statut_rows_for_course(course_uid):
+    from pathlib import Path
+    import pandas as pd
+
+    wanted = _p11_norm_text(course_uid)
+    if not wanted or wanted == "nd":
+        return None, "COURSE_UID_ND"
+
+    root = Path("data/output")
+    if not root.exists():
+        return None, "DATA_OUTPUT_ABSENT"
+
+    patterns = [
+        "*h5*clean*.csv",
+        "*h-5*clean*.csv",
+        "*h5*.csv",
+        "*h-5*.csv",
+    ]
+
+    seen = set()
+
+    for pattern in patterns:
+        for csv_path in root.rglob(pattern):
+            if csv_path in seen:
+                continue
+            seen.add(csv_path)
+
+            try:
+                df = pd.read_csv(csv_path)
+            except Exception:
+                continue
+
+            cols = {str(c).lower(): c for c in df.columns}
+            if "course_uid" not in cols:
+                continue
+            if "statut" not in cols or "is_np" not in cols:
+                continue
+
+            cu_col = cols["course_uid"]
+            rows = df[df[cu_col].astype(str).map(_p11_norm_text) == wanted].copy()
+
+            if rows.empty:
+                continue
+
+            if not _p11_is_h5_source(csv_path, rows):
+                continue
+
+            return rows, str(csv_path)
+
+    return None, "NP_STATUT_H5_SOURCE_ABSENT_FOR_COURSE"
+
+
+def _p11_compute_np_statut_gate_from_rows(rows, source):
+    import pandas as pd
+    from datetime import datetime, timezone
+
+    checked_at = datetime.now(timezone.utc).isoformat()
+
+    if rows is None or getattr(rows, "empty", True):
+        return {
+            "np_ok": "ND",
+            "statut_ok": "ND",
+            "np_source": source or "NP_STATUT_H5_SOURCE_ABSENT_FOR_COURSE",
+            "statut_source": source or "NP_STATUT_H5_SOURCE_ABSENT_FOR_COURSE",
+            "np_count": "ND",
+            "statut_missing_count": "ND",
+            "np_statut_rows_count": 0,
+            "np_statut_source_level": "H5_SOURCE_ABSENT",
+            "np_statut_checked_at_utc": checked_at,
+        }
+
+    statut = rows["statut"].astype(str).str.strip().str.upper()
+    is_np = pd.to_numeric(rows["is_np"], errors="coerce")
+
+    statut_missing_count = int(statut.isin(["", "NAN", "NONE", "ND"]).sum())
+    unknown_is_np_count = int(is_np.isna().sum())
+
+    np_by_flag = int((is_np.fillna(0) == 1).sum())
+    np_by_statut = int(statut.isin(["NP", "NON_PARTANT", "NON-PARTANT", "NON PARTANT"]).sum())
+    np_count = max(np_by_flag, np_by_statut)
+
+    valid_status = statut.isin(["PARTANT", "NP", "NON_PARTANT", "NON-PARTANT", "NON PARTANT"])
+
+    statut_ok = "OK"
+    if statut_missing_count > 0 or unknown_is_np_count > 0 or not bool(valid_status.all()):
+        statut_ok = "KO"
+
+    np_ok = "KO" if np_count > 0 else "OK"
+
+    return {
+        "np_ok": np_ok,
+        "statut_ok": statut_ok,
+        "np_source": source,
+        "statut_source": source,
+        "np_count": np_count,
+        "statut_missing_count": statut_missing_count,
+        "np_statut_rows_count": int(len(rows)),
+        "np_statut_source_level": "H5_EXACT_COURSE_UID",
+        "np_statut_checked_at_utc": checked_at,
+    }
+
+
+def _p11_compute_np_statut_gate_for_h5_brief(brief):
+    if not isinstance(brief, dict):
+        brief = {}
+
+    course_uid = brief.get("course_uid", "ND")
+    rows, source = _p11_find_h5_np_statut_rows_for_course(course_uid)
+    return _p11_compute_np_statut_gate_from_rows(rows, source)
 
