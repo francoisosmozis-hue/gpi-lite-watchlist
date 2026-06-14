@@ -6739,3 +6739,93 @@ def action_h5_decision_preview():
         **decision,
     }
 
+
+def _p9_2_normalize_route_payload(payload):
+    """Normalize dict / JSONResponse / FastAPI response into a dict."""
+    try:
+        if isinstance(payload, dict):
+            return payload
+        if hasattr(payload, "body"):
+            import json
+            body = payload.body
+            if isinstance(body, bytes):
+                body = body.decode("utf-8")
+            return json.loads(body)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"P9_2_PAYLOAD_NORMALIZE_ERROR:{type(exc).__name__}",
+        }
+
+    return {
+        "ok": False,
+        "error": "P9_2_UNSUPPORTED_PAYLOAD",
+    }
+
+
+def _p9_2_extract_brief_payload(payload):
+    """Extract the most likely H-5 brief object from a route payload."""
+    if not isinstance(payload, dict):
+        return {}
+
+    for key in [
+        "brief",
+        "latest_h5_brief",
+        "h5_brief",
+        "decision",
+        "decision_engine_outputs",
+        "course",
+        "data",
+    ]:
+        value = payload.get(key)
+        if isinstance(value, dict):
+            return value
+
+    return payload
+
+
+@app.get("/action/h5-decision-latest-brief")
+def action_h5_decision_latest_brief():
+    """P9.2 route. Wire latest H-5 brief into the security-first decision engine."""
+    try:
+        from engine.h5_decision import evaluate_h5_decision_from_brief, build_h5_decision_context_from_brief
+    except Exception as exc:
+        return {
+            "ok": False,
+            "source_route": "/action/h5-decision-latest-brief",
+            "error": f"H5_DECISION_IMPORT_ERROR:{type(exc).__name__}",
+            "verdict": "NO_BET",
+            "ticket_exact": "NO_BET",
+            "strict_allowed_oui_non": "non",
+        }
+
+    source_payload = {
+        "ok": False,
+        "error": "LATEST_H5_AUTO_BRIEF_ROUTE_NOT_FOUND",
+    }
+
+    try:
+        latest_func = globals().get("action_latest_h5_auto_brief")
+        if callable(latest_func):
+            source_payload = _p9_2_normalize_route_payload(latest_func())
+    except Exception as exc:
+        source_payload = {
+            "ok": False,
+            "error": f"LATEST_H5_AUTO_BRIEF_CALL_ERROR:{type(exc).__name__}",
+        }
+
+    brief = _p9_2_extract_brief_payload(source_payload)
+    decision_context = build_h5_decision_context_from_brief(brief)
+    decision = evaluate_h5_decision_from_brief(brief)
+
+    return {
+        "ok": True,
+        "source_route": "/action/h5-decision-latest-brief",
+        "brief_source_route": "/action/latest-h5-auto-brief",
+        "brief_source_ok": source_payload.get("ok", "ND") if isinstance(source_payload, dict) else "ND",
+        "brief_source_error": source_payload.get("error", "") if isinstance(source_payload, dict) else "",
+        "strict_policy": "P9.2 brief wiring. Aucun ticket strict. Champs manquants conserves en ND.",
+        "decision_context": decision_context,
+        **decision,
+    }
+

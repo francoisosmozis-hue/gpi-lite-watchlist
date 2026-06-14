@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from engine.h5_decision import evaluate_h5_decision
+from engine.h5_decision import evaluate_h5_decision, build_h5_decision_context_from_brief
 
 
 def test_h5_missing_data_refuses():
@@ -65,6 +65,36 @@ def test_h5_complete_still_no_strict_in_p9_1_security_mode():
     assert out["sp_result"] == "REFUS"
     assert out["cp3_result"] == "REFUS_CP_SEC_PRIORITAIRE"
     assert out["cp_sec_domine"] == "oui"
+
+
+
+
+def test_h5_brief_mapping_keeps_strict_closed():
+    brief = {
+        "sg_h5_ok": "OK",
+        "np_ok": "OK",
+        "statut_ok": "OK",
+        "decision_before_race_oui_non": "oui",
+        "input_hash": "brief123",
+        "segment_roi": "CP_SEC",
+        "edge_status": "EDGE_NET",
+        "proxy_status": "VERT",
+        "volatilite_status": "OK",
+        "kill_switch_codes": "aucun",
+    }
+
+    ctx = build_h5_decision_context_from_brief(brief)
+    out = evaluate_h5_decision(ctx)
+
+    assert ctx["sg_h5_ok"] == "OK"
+    assert ctx["np_ok"] == "OK"
+    assert ctx["statut_ok"] == "OK"
+    assert ctx["input_hash"] == "brief123"
+
+    assert out["verdict"] == "NO_BET"
+    assert out["ticket_exact"] == "NO_BET"
+    assert out["strict_allowed_oui_non"] == "non"
+    assert out["structure_max"] == "CP_SEC_AUDIT_SEULEMENT"
 
 
 if __name__ == "__main__":

@@ -191,5 +191,148 @@ def evaluate_h5_decision(ctx: Dict[str, Any]) -> Dict[str, str]:
     return {k: str(v) for k, v in asdict(result).items()}
 
 
+def _first_non_nd(ctx: Dict[str, Any], keys: List[str], default: str = "ND") -> str:
+    for key in keys:
+        value = _s(ctx, key, "ND")
+        if value != "ND":
+            return value
+    return default
+
+
+def _ok_from_status(value: str) -> str:
+    v = str(value).strip().upper()
+    if v in ("OK", "OUI", "YES", "TRUE", "1", "PROPRE", "VALIDÉ", "VALIDE"):
+        return "OK"
+    if v in ("KO", "NON", "NO", "FALSE", "0", "ROUGE", "KILL"):
+        return "KO"
+    return "ND"
+
+
+def build_h5_decision_context_from_brief(brief: Dict[str, Any]) -> Dict[str, str]:
+    """Convert a latest H-5 brief payload into the normalized decision context.
+
+    Missing fields stay ND on purpose. P9.2 wires data, but does not relax
+    the security-first NO_BET policy.
+    """
+    if not isinstance(brief, dict):
+        brief = {}
+
+    ctx: Dict[str, str] = {}
+
+    ctx["sg_h5_ok"] = _ok_from_status(
+        _first_non_nd(
+            brief,
+            [
+                "sg_h5_ok",
+                "h5_sg_ok",
+                "sg_ok",
+                "sg_status",
+                "sg_fiables",
+                "sg_fiable",
+            ],
+        )
+    )
+
+    ctx["np_ok"] = _ok_from_status(
+        _first_non_nd(
+            brief,
+            [
+                "np_ok",
+                "np_status_ok",
+                "np_clean",
+                "non_partants_ok",
+                "non_partants_status",
+            ],
+        )
+    )
+
+    ctx["statut_ok"] = _ok_from_status(
+        _first_non_nd(
+            brief,
+            [
+                "statut_ok",
+                "status_ok",
+                "statut_partants_ok",
+                "statut_course_ok",
+                "course_status",
+            ],
+        )
+    )
+
+    ctx["decision_before_race_oui_non"] = _first_non_nd(
+        brief,
+        [
+            "decision_before_race_oui_non",
+            "decision_before_race",
+            "pre_race_decision",
+            "before_race",
+        ],
+    )
+
+    ctx["input_hash"] = _first_non_nd(
+        brief,
+        [
+            "input_hash",
+            "snapshot_hash",
+            "brief_hash",
+            "source_hash",
+        ],
+    )
+
+    ctx["segment_roi"] = _first_non_nd(
+        brief,
+        [
+            "segment_roi",
+            "roi_segment",
+            "segment",
+        ],
+    )
+
+    ctx["edge_status"] = _first_non_nd(
+        brief,
+        [
+            "edge_status",
+            "edge",
+            "edge_net",
+        ],
+        default="EDGE_ABSENT",
+    )
+
+    ctx["proxy_status"] = _first_non_nd(
+        brief,
+        [
+            "proxy_status",
+            "statut_proxy",
+            "proxy_segment_status",
+            "cp_proxy_status",
+        ],
+    )
+
+    ctx["volatilite_status"] = _first_non_nd(
+        brief,
+        [
+            "volatilite_status",
+            "volatilite_sg",
+            "volatilite_sg_status",
+            "odds_volatility_status",
+            "volatility_status",
+        ],
+    )
+
+    ctx["kill_switch_codes"] = _first_non_nd(
+        brief,
+        [
+            "kill_switch_codes",
+            "kill_switch",
+            "kill_switchs",
+            "kill_switches",
+        ],
+        default="aucun",
+    )
+
+    return ctx
+
+
 def evaluate_h5_decision_from_brief(brief: Dict[str, Any]) -> Dict[str, str]:
-    return evaluate_h5_decision(brief)
+    ctx = build_h5_decision_context_from_brief(brief)
+    return evaluate_h5_decision(ctx)
