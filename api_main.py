@@ -6862,3 +6862,115 @@ def action_h5_decision_latest_brief():
         **decision,
     }
 
+
+def _p9_4b_h5_brief_hash_material(brief):
+    """Build stable hash material from a H-5 auto brief without mutating GCS."""
+    if not isinstance(brief, dict):
+        brief = {}
+
+    return {
+        "course_uid": brief.get("course_uid", "ND"),
+        "current_snapshot_label": brief.get("current_snapshot_label", "H5"),
+        "runners_count": brief.get("runners_count", 0),
+        "top_n_numbers": brief.get("top_n_numbers", ""),
+        "top_n_instable_numbers": brief.get("top_n_instable_numbers", ""),
+        "top_n_kill_switch_numbers": brief.get("top_n_kill_switch_numbers", ""),
+        "global_kill_switch_count": brief.get("global_kill_switch_count", 0),
+        "global_instable_count": brief.get("global_instable_count", 0),
+        "top_n_kill_switch_count": brief.get("top_n_kill_switch_count", 0),
+        "top_n_instable_count": brief.get("top_n_instable_count", 0),
+        "kill_switch_topn_oui_non": brief.get("kill_switch_topn_oui_non", "non"),
+        "course_statut_marche": brief.get("course_statut_marche", "ND"),
+        "strict_allowed_by_odds_context": brief.get("strict_allowed_by_odds_context", "non"),
+        "edge_status_by_odds_context": brief.get("edge_status_by_odds_context", "EDGE_FRAGILE"),
+        "reason_codes": brief.get("reason_codes", ""),
+    }
+
+
+def _p9_4b_compute_h5_brief_input_hash(brief):
+    import hashlib
+    import json
+
+    material = _p9_4b_h5_brief_hash_material(brief)
+
+    return hashlib.sha256(
+        json.dumps(
+            material,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest(), material
+
+
+@app.get("/action/h5-brief-safety-preview")
+def action_h5_brief_safety_preview():
+    """P9.4b read-only preview. Never writes GCS and never opens a strict ticket."""
+    try:
+        from engine.h5_decision import (
+            build_h5_decision_context_from_brief,
+            evaluate_h5_decision_from_brief,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "source_route": "/action/h5-brief-safety-preview",
+            "error": f"H5_DECISION_IMPORT_ERROR:{type(exc).__name__}",
+            "VERDICT": "NO_BET",
+            "ticket_exact": "NO_BET",
+            "strict_allowed_oui_non": "non",
+        }
+
+    source_payload = {
+        "ok": False,
+        "reason": "LATEST_H5_AUTO_BRIEF_NOT_READ",
+    }
+
+    try:
+        latest_func = globals().get("action_latest_h5_auto_brief")
+        if callable(latest_func):
+            source_payload = latest_func()
+    except Exception as exc:
+        source_payload = {
+            "ok": False,
+            "reason": f"LATEST_H5_AUTO_BRIEF_CALL_ERROR:{type(exc).__name__}:{exc}",
+        }
+
+    if not isinstance(source_payload, dict):
+        source_payload = {
+            "ok": False,
+            "reason": "LATEST_H5_AUTO_BRIEF_INVALID_PAYLOAD",
+        }
+
+    brief = dict(source_payload)
+    input_hash, input_hash_material = _p9_4b_compute_h5_brief_input_hash(brief)
+
+    preview_brief = dict(brief)
+    preview_brief["decision_before_race_oui_non"] = "oui"
+    preview_brief["input_hash"] = input_hash
+    preview_brief["input_hash_source"] = "H5_AUTO_BRIEF_PAYLOAD_PREVIEW"
+    preview_brief["input_hash_material_keys"] = sorted(input_hash_material.keys())
+
+    decision_context = build_h5_decision_context_from_brief(preview_brief)
+    decision = evaluate_h5_decision_from_brief(preview_brief)
+
+    return {
+        "ok": True,
+        "source_route": "/action/h5-brief-safety-preview",
+        "brief_source_route": "/action/latest-h5-auto-brief",
+        "brief_source_ok": source_payload.get("ok", "ND"),
+        "brief_generated_at_utc": source_payload.get("generated_at_utc", "ND"),
+        "preview_only": "oui",
+        "writes_gcs": "non",
+        "strict_policy": "P9.4b preview read-only. Aucun ticket strict.",
+        "preview_fields": {
+            "decision_before_race_oui_non": preview_brief.get("decision_before_race_oui_non"),
+            "input_hash": preview_brief.get("input_hash"),
+            "input_hash_len": len(str(preview_brief.get("input_hash") or "")),
+            "input_hash_source": preview_brief.get("input_hash_source"),
+            "input_hash_material_keys": preview_brief.get("input_hash_material_keys"),
+        },
+        "decision_context": decision_context,
+        **decision,
+    }
+
