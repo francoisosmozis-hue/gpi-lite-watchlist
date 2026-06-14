@@ -5698,6 +5698,45 @@ def _action_pick(row, *names, default="ND"):
     return default
 
 
+
+def _p7_p8_enrich_courses_list(courses):
+    try:
+        from engine.h5_readiness import enrich_h5_readiness as _p7_p8_enrich
+    except Exception:
+        _p7_p8_enrich = None
+
+    if _p7_p8_enrich is None:
+        for row in courses:
+            row.setdefault("h5_shortlist_rank", "ND")
+            row.setdefault("h5_shortlist_group", "ND")
+            row.setdefault("h5_shortlist_reason", "ND")
+            row.setdefault("h5_shortlist_action", "ND")
+            row.setdefault("h5_shortlist_blocker", "P7_P8_IMPORT_ERROR")
+            row.setdefault("h5_shortlist_cp_sec", "ND")
+            row.setdefault("h5_shortlist_priority_score", "ND")
+            row.setdefault("ticket_readiness_score", "ND")
+            row.setdefault("ticket_readiness_bucket", "ND")
+            row.setdefault("ticket_readiness_blocker", "P7_P8_IMPORT_ERROR")
+        return courses
+
+    for row in courses:
+        try:
+            row.update(_p7_p8_enrich(row))
+        except Exception as exc:
+            row.setdefault("h5_shortlist_rank", "ND")
+            row.setdefault("h5_shortlist_group", "ND")
+            row.setdefault("h5_shortlist_reason", "ND")
+            row.setdefault("h5_shortlist_action", "ND")
+            row.setdefault("h5_shortlist_blocker", f"P7_P8_ERROR:{type(exc).__name__}")
+            row.setdefault("h5_shortlist_cp_sec", "ND")
+            row.setdefault("h5_shortlist_priority_score", "ND")
+            row.setdefault("ticket_readiness_score", "ND")
+            row.setdefault("ticket_readiness_bucket", "ND")
+            row.setdefault("ticket_readiness_blocker", f"P7_P8_ERROR:{type(exc).__name__}")
+
+    return courses
+
+
 def _action_compact_watchlist_row(row):
     base = {
         "course_uid": _action_pick(row, "course_uid", "uid", "course_id", "nom_course"),
@@ -5765,7 +5804,23 @@ def _action_compact_watchlist_row(row):
         base["top_refusal_reason_2"] = f"{type(exc).__name__}"
         base["top_refusal_reason_3"] = "ND"
         base["action_gpt"] = "Erreur enrichissement Watchlist. Aucun ticket strict."
-        return base
+        # P7/P8 h5 shortlist + ticket readiness enrichment
+    try:
+        from engine.h5_readiness import enrich_h5_readiness as _p7_p8_enrich_h5_readiness
+        base.update(_p7_p8_enrich_h5_readiness(base))
+    except Exception as exc:
+        base.setdefault("h5_shortlist_rank", "ND")
+        base.setdefault("h5_shortlist_group", "ND")
+        base.setdefault("h5_shortlist_reason", "ND")
+        base.setdefault("h5_shortlist_action", "ND")
+        base.setdefault("h5_shortlist_blocker", f"P7_P8_ERROR:{type(exc).__name__}")
+        base.setdefault("h5_shortlist_cp_sec", "ND")
+        base.setdefault("h5_shortlist_priority_score", "ND")
+        base.setdefault("ticket_readiness_score", "ND")
+        base.setdefault("ticket_readiness_bucket", "ND")
+        base.setdefault("ticket_readiness_blocker", f"P7_P8_ERROR:{type(exc).__name__}")
+
+    return base
 
 
 
@@ -5863,6 +5918,7 @@ def action_watchlist(limit: int = 50):
     rows_sorted = sorted(rows, key=sort_key)
     safe_limit = max(1, min(int(limit or 50), 100))
     compact = [_action_compact_watchlist_row(row) for row in rows_sorted[:safe_limit]]
+    compact = _p7_p8_enrich_courses_list(compact)
 
     return {
         "ok": True,
