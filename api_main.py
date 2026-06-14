@@ -6701,3 +6701,41 @@ def action_h5_report(limit: int = 8):
         "report": report,
     }
 
+
+@app.get("/action/h5-decision-preview")
+def action_h5_decision_preview():
+    """P9.1 preview route. Security-first H-5 decision engine."""
+    try:
+        from engine.h5_decision import evaluate_h5_decision
+    except Exception as exc:
+        return {
+            "ok": False,
+            "source_route": "/action/h5-decision-preview",
+            "error": f"H5_DECISION_IMPORT_ERROR:{type(exc).__name__}",
+            "verdict": "NO_BET",
+            "ticket_exact": "NO_BET",
+            "strict_allowed_oui_non": "non",
+        }
+
+    ctx = {
+        "sg_h5_ok": "ND",
+        "np_ok": "ND",
+        "statut_ok": "ND",
+        "decision_before_race_oui_non": "ND",
+        "input_hash": "ND",
+        "segment_roi": "ND",
+        "edge_status": "ND",
+        "proxy_status": "ND",
+        "volatilite_status": "ND",
+        "kill_switch_codes": "aucun",
+    }
+
+    decision = evaluate_h5_decision(ctx)
+
+    return {
+        "ok": True,
+        "source_route": "/action/h5-decision-preview",
+        "strict_policy": "P9.1 security-first. Aucun ticket strict. Donnees H-5 incompletes = NO_BET.",
+        **decision,
+    }
+
