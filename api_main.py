@@ -2697,6 +2697,39 @@ def drive_run_h5_auto_brief():
             elif course_statut_marche in {"STABLE", "SURVEILLABLE"}:
                 qualite = "B"
 
+            import hashlib
+
+            input_hash_material = {
+                "course_uid": course_uid,
+                "decision_before_race_oui_non": "oui",
+                "input_hash": input_hash,
+                "input_hash_source": "H5_AUTO_BRIEF_PAYLOAD",
+                "input_hash_material_keys": sorted(input_hash_material.keys()),
+                "current_snapshot_label": "H5",
+                "runners_count": context_payload.get("runners_count", 0),
+                "top_n_numbers": context_payload.get("top_n_numbers", ""),
+                "top_n_instable_numbers": context_payload.get("top_n_instable_numbers", ""),
+                "top_n_kill_switch_numbers": context_payload.get("top_n_kill_switch_numbers", ""),
+                "global_kill_switch_count": context_payload.get("global_kill_switch_count", 0),
+                "global_instable_count": context_payload.get("global_instable_count", 0),
+                "top_n_kill_switch_count": context_payload.get("top_n_kill_switch_count", 0),
+                "top_n_instable_count": context_payload.get("top_n_instable_count", 0),
+                "kill_switch_topn_oui_non": context_payload.get("kill_switch_topn_oui_non", "non"),
+                "course_statut_marche": course_statut_marche,
+                "strict_allowed_by_odds_context": strict_allowed_by_odds_context,
+                "edge_status_by_odds_context": edge_status_by_odds_context,
+                "reason_codes": reason_codes,
+            }
+
+            input_hash = hashlib.sha256(
+                json.dumps(
+                    input_hash_material,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+
             brief_payload = {
                 "ok": True,
                 "phase": "h5_auto_brief",
