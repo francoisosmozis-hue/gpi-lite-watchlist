@@ -2933,6 +2933,24 @@ def action_latest_h5_auto_brief():
     payload["strict_usable_oui_non"] = "non"
     payload["ticket_strict"] = "NO_BET"
 
+    # P11b : compat lecture anciens briefs H-5 générés avant injection NP/statut.
+    # Ne modifie pas GCS. Ne crée jamais de ticket strict.
+    np_statut_defaults = {
+        "np_ok": "ND",
+        "statut_ok": "ND",
+        "np_source": "NP_STATUT_NOT_IN_LEGACY_BRIEF",
+        "statut_source": "NP_STATUT_NOT_IN_LEGACY_BRIEF",
+        "np_count": "ND",
+        "statut_missing_count": "ND",
+        "np_statut_rows_count": 0,
+        "np_statut_source_level": "LEGACY_BRIEF_NO_P11_FIELDS",
+        "np_statut_checked_at_utc": "ND",
+    }
+
+    for key, default_value in np_statut_defaults.items():
+        if payload.get(key) in {None, ""}:
+            payload[key] = default_value
+
     if not payload.get("VERDICT"):
         payload["VERDICT"] = "NO_BET"
     if not payload.get("Ticket_exact_ou_NO_BET"):
