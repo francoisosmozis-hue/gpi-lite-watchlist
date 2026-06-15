@@ -1416,6 +1416,23 @@ def drive_run_results():
             "stderr": str(exc),
         }
 
+    results_pdf_parse_upload_targets = [
+        Path("data/results/result_input.csv"),
+        OUTPUT_DIR / "results_pdf_parse_audit.csv",
+    ]
+    results_pdf_parse_uploads = []
+
+    if results_pdf_parse_result.get("returncode") == 0:
+        for local_path in results_pdf_parse_upload_targets:
+            results_pdf_parse_uploads.append(upload_file_to_gcs(local_path, "outputs"))
+
+    results_pdf_parse_cloud_result = {
+        "ok": all(item.get("ok") for item in results_pdf_parse_uploads) if results_pdf_parse_uploads else False,
+        "bucket": GPI_BUCKET_NAME,
+        "files_count": len(results_pdf_parse_uploads),
+        "uploads": results_pdf_parse_uploads,
+    }
+
     try:
         results_path, latest_path, audit_csv_path, audit_json_path, audit = write_paper_results()
 
@@ -1555,6 +1572,7 @@ def drive_run_results():
         "phase": "paper_results",
         "sync": sync_result,
         "results_pdf_parse": results_pdf_parse_result,
+        "results_pdf_parse_cloud_sync": results_pdf_parse_cloud_result,
         "paper_results": paper_results_result,
         "paper_kpi": paper_kpi_result,
         "no_bet_audit": no_bet_audit_result,
