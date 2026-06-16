@@ -2717,9 +2717,30 @@ def drive_run_h5_auto_brief():
 
             import hashlib
 
+            # GPI_LITE_V0_9_17_BACKFILL_FLAG
+            # Une décision H5 auto générée après la date de course reste
+            # utile pour tester le pipeline, mais elle ne doit pas entrer
+            # comme preuve TEST_LIVE stricte.
+            h5_auto_generated_at_utc_dt = datetime.now(timezone.utc)
+            h5_auto_generated_at_utc = h5_auto_generated_at_utc_dt.replace(microsecond=0).isoformat()
+            backfill_technical_oui_non = "non"
+            strict_kpi_excluded_oui_non = "non"
+            strict_kpi_exclusion_reason = ""
+            decision_before_race_oui_non_effective = "oui"
+
+            try:
+                course_date_for_backfill = datetime.strptime(str(course_uid)[:10], "%d_%m_%Y").date()
+                if h5_auto_generated_at_utc_dt.date() > course_date_for_backfill:
+                    backfill_technical_oui_non = "oui"
+                    strict_kpi_excluded_oui_non = "oui"
+                    strict_kpi_exclusion_reason = "H5_AUTO_BRIEF_GENERATED_AFTER_COURSE_DATE"
+                    decision_before_race_oui_non_effective = "non"
+            except Exception:
+                pass
+
             input_hash_material = {
                 "course_uid": course_uid,
-                "decision_before_race_oui_non": "oui",
+                "decision_before_race_oui_non": decision_before_race_oui_non_effective,
                 "input_hash_source": "H5_AUTO_BRIEF_PAYLOAD",
                 "current_snapshot_label": "H5",
                 "runners_count": context_payload.get("runners_count", 0),
@@ -2768,9 +2789,12 @@ def drive_run_h5_auto_brief():
                 "ok": True,
                 "phase": "h5_auto_brief",
                 "brief_version": "h5_auto_brief_v0_1",
-                "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                "generated_at_utc": h5_auto_generated_at_utc,
                 "course_uid": course_uid,
-                "decision_before_race_oui_non": "oui",
+                "decision_before_race_oui_non": decision_before_race_oui_non_effective,
+                "backfill_technical_oui_non": backfill_technical_oui_non,
+                "strict_kpi_excluded_oui_non": strict_kpi_excluded_oui_non,
+                "strict_kpi_exclusion_reason": strict_kpi_exclusion_reason,
                 "input_hash": input_hash,
                 "input_hash_source": "H5_AUTO_BRIEF_PAYLOAD",
                 "input_hash_material_keys": sorted(input_hash_material.keys()),
@@ -2842,7 +2866,7 @@ def drive_run_h5_auto_brief():
                     "discipline_bucket_detected": "ND",
                     "partants_reels": str(context_payload.get("runners_count", 0)),
                     "snapshot_time": "H5",
-                    "engine_version": "GPI_LITE_V0_9_16_H5_AUTO_BRIEF",
+                    "engine_version": "GPI_LITE_V0_9_17_H5_AUTO_BRIEF",
                     "ruleset_version": "GPI_ZEturf_V19_1_4",
                     "input_hash": input_hash,
                     "qualite": qualite,
@@ -2886,7 +2910,11 @@ def drive_run_h5_auto_brief():
                     "split": "TEST_LIVE",
                     "calibration_version": "GPI_CALIBRATION_V0_9_2",
                     "leakage_check_ok": "true",
-                    "decision_before_race_oui_non": "oui",
+                    "decision_before_race_oui_non": decision_before_race_oui_non_effective,
+                    "backfill_technical_oui_non": backfill_technical_oui_non,
+                    "strict_kpi_excluded_oui_non": strict_kpi_excluded_oui_non,
+                    "strict_kpi_exclusion_reason": strict_kpi_exclusion_reason,
+                    "created_at": h5_auto_generated_at_utc,
                     "replay_match_oui_non": "oui",
                     "strict_allowed_oui_non": "non",
                     "strict_usable_oui_non": "non",
@@ -2958,6 +2986,9 @@ def drive_run_h5_auto_brief():
                     "upload_paper_ok": upload_paper.get("ok"),
                     "upload_latest_paper_ok": upload_latest_paper.get("ok"),
                     "ticket_strict": "NO_BET",
+                    "backfill_technical_oui_non": backfill_technical_oui_non,
+                    "strict_kpi_excluded_oui_non": strict_kpi_excluded_oui_non,
+                    "strict_kpi_exclusion_reason": strict_kpi_exclusion_reason,
                 }
 
             except Exception as exc:
@@ -2967,6 +2998,9 @@ def drive_run_h5_auto_brief():
                     "course_uid": course_uid,
                     "reason": f"H5_AUTO_PAPER_SYNC_ERROR:{type(exc).__name__}:{exc}",
                     "ticket_strict": "NO_BET",
+                    "backfill_technical_oui_non": backfill_technical_oui_non,
+                    "strict_kpi_excluded_oui_non": strict_kpi_excluded_oui_non,
+                    "strict_kpi_exclusion_reason": strict_kpi_exclusion_reason,
                 }
 
             upload_movement_csv = _h5auto_upload_file_to_gcs(
@@ -3037,6 +3071,9 @@ def drive_run_h5_auto_brief():
                 "upload_latest_brief_ok": upload_latest_brief.get("ok"),
                 "h5_auto_paper_sync_ok": paper_sync.get("ok"),
                 "h5_auto_paper_sync": paper_sync,
+                "backfill_technical_oui_non": backfill_technical_oui_non,
+                "strict_kpi_excluded_oui_non": strict_kpi_excluded_oui_non,
+                "strict_kpi_exclusion_reason": strict_kpi_exclusion_reason,
                 "ticket_strict": "NO_BET",
             })
 
