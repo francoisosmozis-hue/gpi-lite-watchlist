@@ -2820,6 +2820,155 @@ def drive_run_h5_auto_brief():
                 encoding="utf-8",
             )
 
+            # V0.9.16 : produire un decision_engine_outputs minimal depuis le H-5 auto brief
+            # puis alimenter le registre paper. Aucun ticket strict n'est ouvert ici.
+            paper_sync = {
+                "ok": False,
+                "phase": "h5_auto_paper_sync",
+                "course_uid": course_uid,
+                "reason": "NOT_RUN",
+                "ticket_strict": "NO_BET",
+            }
+
+            try:
+                import csv as _csv
+                from engine.paper_trading_registry import append_paper_trading_decision
+
+                decision_id = "DEO_" + str(input_hash)[:20]
+
+                deo_row = {
+                    "decision_id": decision_id,
+                    "course_uid": course_uid,
+                    "discipline_bucket_detected": "ND",
+                    "partants_reels": str(context_payload.get("runners_count", 0)),
+                    "snapshot_time": "H5",
+                    "engine_version": "GPI_LITE_V0_9_16_H5_AUTO_BRIEF",
+                    "ruleset_version": "GPI_ZEturf_V19_1_4",
+                    "input_hash": input_hash,
+                    "qualite": qualite,
+                    "score_jouabilite": "ND",
+                    "proxy_status": "ND",
+                    "segment_id": "ND",
+                    "sample_n": "ND",
+                    "confidence": "ND",
+                    "fallback_level": "ND",
+                    "C_prudent": "ND",
+                    "R_prudent": "ND",
+                    "erreur_proxy": "ND",
+                    "taux_surestimation": "ND",
+                    "segment_degrade_oui_non": "ND",
+                    "selection_CP_SEC": "",
+                    "CP_SEC_domine_oui_non": "ND",
+                    "selection_CP3": "",
+                    "selection_SP": "",
+                    "cp_sec_candidate": str(context_payload.get("cp_sec_candidate", "")),
+                    "cp_sg_pair_sum": str(context_payload.get("cp_sg_pair_sum", "ND")),
+                    "cp_sg_filter_status": str(context_payload.get("cp_sg_filter_status", "ND")),
+                    "cp3_candidate": str(context_payload.get("cp3_candidate", "")),
+                    "cp3_sg_min_pair_sum": str(context_payload.get("cp3_sg_min_pair_sum", "ND")),
+                    "cp3_sg_filter_status": str(context_payload.get("cp3_sg_filter_status", "ND")),
+                    "paper_candidate_allowed": "non",
+                    "paper_candidate_type": "NO_BET",
+                    "paper_candidate_ticket": "NO_BET",
+                    "paper_candidate_segment": "NO_BET",
+                    "paper_candidate_mise": "0",
+                    "paper_candidate_reason": "H5_AUTO_BRIEF_NO_BET_STRICT",
+                    "structure_retenue": "NO_BET",
+                    "structure_max": "SIMULATION",
+                    "verdict": "NO_BET",
+                    "ticket_exact": "NO_BET",
+                    "mise_theorique": "0",
+                    "segment_ROI": "NO_BET",
+                    "segment_roi": "NO_BET",
+                    "edge_status": edge_status_by_odds_context,
+                    "reason_codes": reason_codes,
+                    "kill_switch_codes": str(context_payload.get("kill_switch_codes", reason_codes)),
+                    "split": "TEST_LIVE",
+                    "calibration_version": "GPI_CALIBRATION_V0_9_2",
+                    "leakage_check_ok": "true",
+                    "decision_before_race_oui_non": "oui",
+                    "replay_match_oui_non": "oui",
+                    "strict_allowed_oui_non": "non",
+                    "strict_usable_oui_non": "non",
+                    "decision_block_reason": (
+                        "H5_AUTO_BRIEF_NO_STRICT|"
+                        + str(context_payload.get("decision_block_reason", reason_codes))
+                    ),
+                }
+
+                deo_columns = list(deo_row.keys())
+
+                decision_engine_csv = Path("data/output") / f"{course_uid}_decision_engine_outputs.csv"
+                latest_decision_engine_csv = Path("data/output/latest_decision_engine_outputs.csv")
+                generic_decision_engine_csv = Path("data/output/decision_engine_outputs.csv")
+
+                for deo_path in [
+                    decision_engine_csv,
+                    latest_decision_engine_csv,
+                    generic_decision_engine_csv,
+                ]:
+                    deo_path.parent.mkdir(parents=True, exist_ok=True)
+                    with deo_path.open("w", encoding="utf-8", newline="") as file:
+                        writer = _csv.DictWriter(file, fieldnames=deo_columns)
+                        writer.writeheader()
+                        writer.writerow(deo_row)
+
+                paper_output_path, latest_paper_path, paper_count = append_paper_trading_decision(course_uid)
+
+                upload_decision_engine = _h5auto_upload_file_to_gcs(
+                    decision_engine_csv,
+                    f"gpi-lite/outputs/{course_uid}_decision_engine_outputs.csv",
+                )
+                upload_latest_decision_engine = _h5auto_upload_file_to_gcs(
+                    latest_decision_engine_csv,
+                    "gpi-lite/outputs/latest_decision_engine_outputs.csv",
+                )
+                upload_generic_decision_engine = _h5auto_upload_file_to_gcs(
+                    generic_decision_engine_csv,
+                    "gpi-lite/outputs/decision_engine_outputs.csv",
+                )
+                upload_paper = _h5auto_upload_file_to_gcs(
+                    paper_output_path,
+                    "gpi-lite/outputs/paper_trading_50_decisions.csv",
+                )
+                upload_latest_paper = _h5auto_upload_file_to_gcs(
+                    latest_paper_path,
+                    "gpi-lite/outputs/latest_paper_trading_decision.csv",
+                )
+
+                paper_sync = {
+                    "ok": all([
+                        upload_decision_engine.get("ok"),
+                        upload_latest_decision_engine.get("ok"),
+                        upload_generic_decision_engine.get("ok"),
+                        upload_paper.get("ok"),
+                        upload_latest_paper.get("ok"),
+                    ]),
+                    "phase": "h5_auto_paper_sync",
+                    "course_uid": course_uid,
+                    "decision_id": decision_id,
+                    "paper_count": paper_count,
+                    "decision_engine_outputs": str(decision_engine_csv),
+                    "latest_decision_engine_outputs": str(latest_decision_engine_csv),
+                    "paper_output_path": str(paper_output_path),
+                    "latest_paper_path": str(latest_paper_path),
+                    "upload_decision_engine_ok": upload_decision_engine.get("ok"),
+                    "upload_latest_decision_engine_ok": upload_latest_decision_engine.get("ok"),
+                    "upload_generic_decision_engine_ok": upload_generic_decision_engine.get("ok"),
+                    "upload_paper_ok": upload_paper.get("ok"),
+                    "upload_latest_paper_ok": upload_latest_paper.get("ok"),
+                    "ticket_strict": "NO_BET",
+                }
+
+            except Exception as exc:
+                paper_sync = {
+                    "ok": False,
+                    "phase": "h5_auto_paper_sync",
+                    "course_uid": course_uid,
+                    "reason": f"H5_AUTO_PAPER_SYNC_ERROR:{type(exc).__name__}:{exc}",
+                    "ticket_strict": "NO_BET",
+                }
+
             upload_movement_csv = _h5auto_upload_file_to_gcs(
                 movement_csv,
                 f"gpi-lite/outputs/odds/{course_slug}_h10_to_h5_movements.csv",
@@ -2886,6 +3035,8 @@ def drive_run_h5_auto_brief():
                 "upload_latest_context_ok": upload_latest_context.get("ok"),
                 "upload_brief_ok": upload_brief.get("ok"),
                 "upload_latest_brief_ok": upload_latest_brief.get("ok"),
+                "h5_auto_paper_sync_ok": paper_sync.get("ok"),
+                "h5_auto_paper_sync": paper_sync,
                 "ticket_strict": "NO_BET",
             })
 
