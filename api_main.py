@@ -2717,24 +2717,79 @@ def drive_run_h5_auto_brief():
 
             import hashlib
 
-            # GPI_LITE_V0_9_17_BACKFILL_FLAG
-            # Une décision H5 auto générée après la date de course reste
-            # utile pour tester le pipeline, mais elle ne doit pas entrer
-            # comme preuve TEST_LIVE stricte.
+            # GPI_LITE_V0_9_18_SAME_DAY_START_BACKFILL
+            # Sécurité ROI : une décision générée après la date de course,
+            # ou le même jour après l'heure de départ, reste utile techniquement
+            # mais ne doit jamais compter comme décision pré-course stricte.
             h5_auto_generated_at_utc_dt = datetime.now(timezone.utc)
             h5_auto_generated_at_utc = h5_auto_generated_at_utc_dt.replace(microsecond=0).isoformat()
+
+            try:
+                from zoneinfo import ZoneInfo
+                h5_auto_generated_local_dt = h5_auto_generated_at_utc_dt.astimezone(ZoneInfo("Europe/Paris"))
+            except Exception:
+                h5_auto_generated_local_dt = h5_auto_generated_at_utc_dt
+
             backfill_technical_oui_non = "non"
             strict_kpi_excluded_oui_non = "non"
             strict_kpi_exclusion_reason = ""
             decision_before_race_oui_non_effective = "oui"
 
+            def _gpi_parse_depart_time(value):
+                import re
+                from datetime import time as _time
+
+                raw = str(value or "").strip()
+                if not raw:
+                    return None
+
+                match = re.search(r"(\d{1,2})\D+(\d{2})", raw)
+                if not match:
+                    match = re.search(r"^(\d{1,2})(\d{2})$", raw)
+
+                if not match:
+                    return None
+
+                hour = int(match.group(1))
+                minute = int(match.group(2))
+
+                if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                    return None
+
+                return _time(hour=hour, minute=minute)
+
             try:
                 course_date_for_backfill = datetime.strptime(str(course_uid)[:10], "%d_%m_%Y").date()
-                if h5_auto_generated_at_utc_dt.date() > course_date_for_backfill:
+
+                heure_depart_raw = (
+                    row.get("heure_depart")
+                    or row.get("heure")
+                    or row.get("depart")
+                    or row.get("heure_course")
+                    or ""
+                )
+
+                course_depart_time = _gpi_parse_depart_time(heure_depart_raw)
+
+                if h5_auto_generated_local_dt.date() > course_date_for_backfill:
                     backfill_technical_oui_non = "oui"
                     strict_kpi_excluded_oui_non = "oui"
                     strict_kpi_exclusion_reason = "H5_AUTO_BRIEF_GENERATED_AFTER_COURSE_DATE"
                     decision_before_race_oui_non_effective = "non"
+
+                elif (
+                    h5_auto_generated_local_dt.date() == course_date_for_backfill
+                    and course_depart_time is not None
+                ):
+                    generated_local_naive = h5_auto_generated_local_dt.replace(tzinfo=None)
+                    course_depart_local_dt = datetime.combine(course_date_for_backfill, course_depart_time)
+
+                    if generated_local_naive > course_depart_local_dt:
+                        backfill_technical_oui_non = "oui"
+                        strict_kpi_excluded_oui_non = "oui"
+                        strict_kpi_exclusion_reason = "H5_AUTO_BRIEF_GENERATED_AFTER_START_TIME"
+                        decision_before_race_oui_non_effective = "non"
+
             except Exception:
                 pass
 
@@ -2866,7 +2921,7 @@ def drive_run_h5_auto_brief():
                     "discipline_bucket_detected": "ND",
                     "partants_reels": str(context_payload.get("runners_count", 0)),
                     "snapshot_time": "H5",
-                    "engine_version": "GPI_LITE_V0_9_17_H5_AUTO_BRIEF",
+                    "engine_version": "GPI_LITE_V0_9_18_H5_AUTO_BRIEF",
                     "ruleset_version": "GPI_ZEturf_V19_1_4",
                     "input_hash": input_hash,
                     "qualite": qualite,
