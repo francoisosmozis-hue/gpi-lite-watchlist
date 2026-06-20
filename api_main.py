@@ -1594,6 +1594,40 @@ def drive_run_results():
         "uploads": candidate_roi_robustness_uploads,
     }
 
+    continuation_stop_dashboard_result = {
+        "ok": False,
+        "skipped": True,
+        "reason": "candidate_roi_robustness non valide",
+    }
+
+    continuation_stop_dashboard_uploads = []
+
+    if candidate_roi_robustness_result.get("returncode") == 0:
+        try:
+            continuation_stop_dashboard_result = run_script("tools/build_continuation_stop_dashboard_v0922.py")
+
+            if continuation_stop_dashboard_result.get("returncode") == 0:
+                continuation_stop_dashboard_uploads = [
+                    upload_file_to_gcs(OUTPUT_DIR / "continuation_stop_dashboard.csv", "outputs"),
+                    upload_file_to_gcs(OUTPUT_DIR / "latest_continuation_stop_dashboard.json", "outputs"),
+                ]
+
+        except Exception as exc:
+            continuation_stop_dashboard_result = {
+                "ok": False,
+                "skipped": False,
+                "returncode": 1,
+                "stdout": "",
+                "stderr": str(exc),
+            }
+
+    continuation_stop_dashboard_cloud_result = {
+        "ok": all(item.get("ok") for item in continuation_stop_dashboard_uploads) if continuation_stop_dashboard_uploads else False,
+        "bucket": GPI_BUCKET_NAME,
+        "files_count": len(continuation_stop_dashboard_uploads),
+        "uploads": continuation_stop_dashboard_uploads,
+    }
+
     no_bet_audit_result = {
         "ok": False,
         "skipped": True,
@@ -1638,6 +1672,8 @@ def drive_run_results():
             and candidate_roi_cloud_result.get("ok") is True
             and candidate_roi_robustness_result.get("returncode") == 0
             and candidate_roi_robustness_cloud_result.get("ok") is True
+            and continuation_stop_dashboard_result.get("returncode") == 0
+            and continuation_stop_dashboard_cloud_result.get("ok") is True
             and no_bet_audit_result.get("returncode") == 0
             and no_bet_audit_cloud_result.get("ok") is True
         ),
@@ -1651,6 +1687,8 @@ def drive_run_results():
         "candidate_roi_cloud_sync": candidate_roi_cloud_result,
         "candidate_roi_robustness": candidate_roi_robustness_result,
         "candidate_roi_robustness_cloud_sync": candidate_roi_robustness_cloud_result,
+        "continuation_stop_dashboard": continuation_stop_dashboard_result,
+        "continuation_stop_dashboard_cloud_sync": continuation_stop_dashboard_cloud_result,
         "no_bet_audit": no_bet_audit_result,
         "no_bet_audit_cloud_sync": no_bet_audit_cloud_result,
         "cloud_sync": cloud_result,
@@ -1694,12 +1732,15 @@ def drive_run_results_compact():
     candidate_roi_cloud_sync = payload.get("candidate_roi_cloud_sync", {}) if isinstance(payload.get("candidate_roi_cloud_sync"), dict) else {}
     candidate_roi_robustness = payload.get("candidate_roi_robustness", {}) if isinstance(payload.get("candidate_roi_robustness"), dict) else {}
     candidate_roi_robustness_cloud_sync = payload.get("candidate_roi_robustness_cloud_sync", {}) if isinstance(payload.get("candidate_roi_robustness_cloud_sync"), dict) else {}
+    continuation_stop_dashboard = payload.get("continuation_stop_dashboard", {}) if isinstance(payload.get("continuation_stop_dashboard"), dict) else {}
+    continuation_stop_dashboard_cloud_sync = payload.get("continuation_stop_dashboard_cloud_sync", {}) if isinstance(payload.get("continuation_stop_dashboard_cloud_sync"), dict) else {}
     no_bet_audit = payload.get("no_bet_audit", {}) if isinstance(payload.get("no_bet_audit"), dict) else {}
     guardrails = payload.get("guardrails", {}) if isinstance(payload.get("guardrails"), dict) else {}
 
     parse_stdout = str(results_pdf_parse.get("stdout", ""))
     candidate_roi_stdout = str(candidate_roi.get("stdout", ""))
     candidate_roi_robustness_stdout = str(candidate_roi_robustness.get("stdout", ""))
+    continuation_stop_dashboard_stdout = str(continuation_stop_dashboard.get("stdout", ""))
     no_bet_stdout = str(no_bet_audit.get("stdout", ""))
 
     paper_results_audit = paper_results.get("audit", {})
@@ -1771,6 +1812,17 @@ def drive_run_results_compact():
             "ok": candidate_roi_robustness_cloud_sync.get("ok", "ND"),
             "files_count": candidate_roi_robustness_cloud_sync.get("files_count", "ND"),
             "uploads": candidate_roi_robustness_cloud_sync.get("uploads", []),
+        },
+        "continuation_stop_dashboard": {
+            "ok": continuation_stop_dashboard.get("ok", "ND"),
+            "returncode": continuation_stop_dashboard.get("returncode", "ND"),
+            "stdout_summary": continuation_stop_dashboard_stdout[:1500],
+            "stderr": str(continuation_stop_dashboard.get("stderr", ""))[:1000],
+        },
+        "continuation_stop_dashboard_cloud_sync": {
+            "ok": continuation_stop_dashboard_cloud_sync.get("ok", "ND"),
+            "files_count": continuation_stop_dashboard_cloud_sync.get("files_count", "ND"),
+            "uploads": continuation_stop_dashboard_cloud_sync.get("uploads", []),
         },
         "no_bet_audit": {
             "ok": no_bet_audit.get("ok", "ND"),
