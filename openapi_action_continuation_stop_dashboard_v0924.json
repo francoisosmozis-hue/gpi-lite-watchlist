@@ -1,0 +1,120 @@
+﻿{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GPI-Lite Watchlist Actions",
+    "version": "0.9.24",
+    "description": "Action ChatGPT lecture seule pour le dashboard continuation / stop GPI-Lite."
+  },
+  "servers": [
+    {
+      "url": "https://gpi-lite-watchlist-h3tdqmb7jq-ew.a.run.app"
+    }
+  ],
+  "paths": {
+    "/action/continuation-stop-dashboard": {
+      "get": {
+        "operationId": "actionContinuationStopDashboard",
+        "summary": "Lire le dashboard continuation / stop GPI",
+        "description": "Lecture seule du dernier dashboard continuation / stop depuis GCS. Ne relance pas les résultats, ne reconstruit pas le ROI, ne modifie pas GCS et ne valide aucun ticket réel.",
+        "responses": {
+          "200": {
+            "description": "Dernier dashboard continuation / stop GPI",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "route_version": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": ["gcs", "local", "none"]
+                    },
+                    "bucket": {
+                      "type": "string"
+                    },
+                    "object_name": {
+                      "type": "string"
+                    },
+                    "gcs_uri": {
+                      "type": "string"
+                    },
+                    "read_only": {
+                      "type": "string"
+                    },
+                    "runs_results": {
+                      "type": "string"
+                    },
+                    "writes_gcs": {
+                      "type": "string"
+                    },
+                    "strict_real_ticket_allowed": {
+                      "type": "boolean"
+                    },
+                    "ticket_reel": {
+                      "type": "string"
+                    },
+                    "dashboard": {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "properties": {
+                        "ok": {
+                          "type": "boolean"
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "created_at": {
+                          "type": "string"
+                        },
+                        "decision": {
+                          "type": "string",
+                          "enum": [
+                            "CONTINUE_PAPER_ROBUST",
+                            "CONTINUE_PAPER_ONLY_FRAGILE",
+                            "CONTINUE_UNTIL_CORE_100",
+                            "WAIT_SAMPLE_LT_50",
+                            "STOP_CLOUD_NEGATIVE_OR_FLAT",
+                            "STOP_CLOUD_ROI_ND",
+                            "STOP_CLOUD_NO_SEGMENT",
+                            "STOP_CLOUD_UNCLASSIFIED_RISK"
+                          ]
+                        },
+                        "continue_cloud_oui_non": {
+                          "type": "string"
+                        },
+                        "stop_cloud_recommended": {
+                          "type": "boolean"
+                        },
+                        "strict_real_ticket_allowed": {
+                          "type": "boolean"
+                        },
+                        "reason_codes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "next_action": {
+                          "type": "string"
+                        },
+                        "policy": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
