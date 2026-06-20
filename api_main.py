@@ -1560,6 +1560,40 @@ def drive_run_results():
         "uploads": candidate_roi_uploads,
     }
 
+    candidate_roi_robustness_result = {
+        "ok": False,
+        "skipped": True,
+        "reason": "candidate_roi non valide",
+    }
+
+    candidate_roi_robustness_uploads = []
+
+    if candidate_roi_result.get("returncode") == 0:
+        try:
+            candidate_roi_robustness_result = run_script("tools/audit_candidate_roi_robustness_v0921.py")
+
+            if candidate_roi_robustness_result.get("returncode") == 0:
+                candidate_roi_robustness_uploads = [
+                    upload_file_to_gcs(OUTPUT_DIR / "candidate_roi_robustness.csv", "outputs"),
+                    upload_file_to_gcs(OUTPUT_DIR / "latest_candidate_roi_robustness.json", "outputs"),
+                ]
+
+        except Exception as exc:
+            candidate_roi_robustness_result = {
+                "ok": False,
+                "skipped": False,
+                "returncode": 1,
+                "stdout": "",
+                "stderr": str(exc),
+            }
+
+    candidate_roi_robustness_cloud_result = {
+        "ok": all(item.get("ok") for item in candidate_roi_robustness_uploads) if candidate_roi_robustness_uploads else False,
+        "bucket": GPI_BUCKET_NAME,
+        "files_count": len(candidate_roi_robustness_uploads),
+        "uploads": candidate_roi_robustness_uploads,
+    }
+
     no_bet_audit_result = {
         "ok": False,
         "skipped": True,
@@ -1602,6 +1636,8 @@ def drive_run_results():
             and kpi_cloud_result.get("ok") is True
             and candidate_roi_result.get("returncode") == 0
             and candidate_roi_cloud_result.get("ok") is True
+            and candidate_roi_robustness_result.get("returncode") == 0
+            and candidate_roi_robustness_cloud_result.get("ok") is True
             and no_bet_audit_result.get("returncode") == 0
             and no_bet_audit_cloud_result.get("ok") is True
         ),
@@ -1613,6 +1649,8 @@ def drive_run_results():
         "paper_kpi": paper_kpi_result,
         "candidate_roi": candidate_roi_result,
         "candidate_roi_cloud_sync": candidate_roi_cloud_result,
+        "candidate_roi_robustness": candidate_roi_robustness_result,
+        "candidate_roi_robustness_cloud_sync": candidate_roi_robustness_cloud_result,
         "no_bet_audit": no_bet_audit_result,
         "no_bet_audit_cloud_sync": no_bet_audit_cloud_result,
         "cloud_sync": cloud_result,
@@ -1654,11 +1692,14 @@ def drive_run_results_compact():
     paper_kpi = payload.get("paper_kpi", {}) if isinstance(payload.get("paper_kpi"), dict) else {}
     candidate_roi = payload.get("candidate_roi", {}) if isinstance(payload.get("candidate_roi"), dict) else {}
     candidate_roi_cloud_sync = payload.get("candidate_roi_cloud_sync", {}) if isinstance(payload.get("candidate_roi_cloud_sync"), dict) else {}
+    candidate_roi_robustness = payload.get("candidate_roi_robustness", {}) if isinstance(payload.get("candidate_roi_robustness"), dict) else {}
+    candidate_roi_robustness_cloud_sync = payload.get("candidate_roi_robustness_cloud_sync", {}) if isinstance(payload.get("candidate_roi_robustness_cloud_sync"), dict) else {}
     no_bet_audit = payload.get("no_bet_audit", {}) if isinstance(payload.get("no_bet_audit"), dict) else {}
     guardrails = payload.get("guardrails", {}) if isinstance(payload.get("guardrails"), dict) else {}
 
     parse_stdout = str(results_pdf_parse.get("stdout", ""))
     candidate_roi_stdout = str(candidate_roi.get("stdout", ""))
+    candidate_roi_robustness_stdout = str(candidate_roi_robustness.get("stdout", ""))
     no_bet_stdout = str(no_bet_audit.get("stdout", ""))
 
     paper_results_audit = paper_results.get("audit", {})
@@ -1719,6 +1760,17 @@ def drive_run_results_compact():
             "ok": candidate_roi_cloud_sync.get("ok", "ND"),
             "files_count": candidate_roi_cloud_sync.get("files_count", "ND"),
             "uploads": candidate_roi_cloud_sync.get("uploads", []),
+        },
+        "candidate_roi_robustness": {
+            "ok": candidate_roi_robustness.get("ok", "ND"),
+            "returncode": candidate_roi_robustness.get("returncode", "ND"),
+            "stdout_summary": candidate_roi_robustness_stdout[:1500],
+            "stderr": str(candidate_roi_robustness.get("stderr", ""))[:1000],
+        },
+        "candidate_roi_robustness_cloud_sync": {
+            "ok": candidate_roi_robustness_cloud_sync.get("ok", "ND"),
+            "files_count": candidate_roi_robustness_cloud_sync.get("files_count", "ND"),
+            "uploads": candidate_roi_robustness_cloud_sync.get("uploads", []),
         },
         "no_bet_audit": {
             "ok": no_bet_audit.get("ok", "ND"),
