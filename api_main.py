@@ -1526,6 +1526,40 @@ def drive_run_results():
         "uploads": kpi_uploads,
     }
 
+    candidate_roi_result = {
+        "ok": False,
+        "skipped": True,
+        "reason": "paper_results non valide",
+    }
+
+    candidate_roi_uploads = []
+
+    if paper_results_result.get("returncode") == 0:
+        try:
+            candidate_roi_result = run_script("tools/calc_candidate_roi_v0921.py")
+
+            if candidate_roi_result.get("returncode") == 0:
+                candidate_roi_uploads = [
+                    upload_file_to_gcs(OUTPUT_DIR / "paper_roi_by_candidate_segment.csv", "outputs"),
+                    upload_file_to_gcs(OUTPUT_DIR / "latest_candidate_roi_audit.json", "outputs"),
+                ]
+
+        except Exception as exc:
+            candidate_roi_result = {
+                "ok": False,
+                "skipped": False,
+                "returncode": 1,
+                "stdout": "",
+                "stderr": str(exc),
+            }
+
+    candidate_roi_cloud_result = {
+        "ok": all(item.get("ok") for item in candidate_roi_uploads) if candidate_roi_uploads else False,
+        "bucket": GPI_BUCKET_NAME,
+        "files_count": len(candidate_roi_uploads),
+        "uploads": candidate_roi_uploads,
+    }
+
     no_bet_audit_result = {
         "ok": False,
         "skipped": True,
@@ -1566,6 +1600,8 @@ def drive_run_results():
             and cloud_result.get("ok") is True
             and paper_kpi_result.get("ok") is True
             and kpi_cloud_result.get("ok") is True
+            and candidate_roi_result.get("returncode") == 0
+            and candidate_roi_cloud_result.get("ok") is True
             and no_bet_audit_result.get("returncode") == 0
             and no_bet_audit_cloud_result.get("ok") is True
         ),
@@ -1575,6 +1611,8 @@ def drive_run_results():
         "results_pdf_parse_cloud_sync": results_pdf_parse_cloud_result,
         "paper_results": paper_results_result,
         "paper_kpi": paper_kpi_result,
+        "candidate_roi": candidate_roi_result,
+        "candidate_roi_cloud_sync": candidate_roi_cloud_result,
         "no_bet_audit": no_bet_audit_result,
         "no_bet_audit_cloud_sync": no_bet_audit_cloud_result,
         "cloud_sync": cloud_result,
