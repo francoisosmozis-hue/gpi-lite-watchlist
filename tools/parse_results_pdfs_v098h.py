@@ -211,6 +211,38 @@ def extract_reports_text_snippet(text: str) -> str:
 
 
 
+
+
+def extract_official_reports_zone(text: str) -> str:
+    raw = text or ""
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    norm = [strip_accents(line).upper() for line in lines]
+
+    report_idx = None
+    for i, line in enumerate(norm):
+        window = " ".join(norm[i:i + 20])
+        if "RAPPORTS" in line and "SIMPLE GAGNANT" in window and "JUMELE" in window:
+            report_idx = i
+            break
+
+    if report_idx is None:
+        return ""
+
+    start = max(0, report_idx - 45)
+    for j in range(report_idx - 1, max(-1, report_idx - 120), -1):
+        if "PRESENCE DE CHEVAUX FAVORIS" in norm[j]:
+            start = j + 1
+            break
+
+    end = len(lines)
+    for j in range(report_idx + 1, len(lines)):
+        if "NOTRE PRONOSTIC" in norm[j] or "NOTRE CHOIX" in norm[j] or "JEU RESPONSABLE" in norm[j]:
+            end = j
+            break
+
+    zone = " | ".join(lines[start:end])
+    zone = re.sub(r"\s+", " ", zone).strip()
+    return zone[:6000]
 def ensure_paper_file() -> None:
     if PAPER_FILE.exists():
         return
@@ -288,6 +320,7 @@ def main() -> None:
         reports_preview = extract_reports_preview(text)
         numeric_reports = extract_numeric_reports(text)
         reports_text_snippet = extract_reports_text_snippet(text)
+        official_reports_zone = extract_official_reports_zone(text)
 
         if not text.strip() and status == "OK":
             status = "RESULTS_PDF_PARSE_EMPTY"
@@ -314,6 +347,7 @@ def main() -> None:
             "arrivee": arrivee,
             "reports_preview": reports_preview[:500],
             "reports_text_snippet": reports_text_snippet,
+            "official_reports_zone": official_reports_zone,
             "reports_numeric_found_oui_non": numeric_reports.get("reports_numeric_found_oui_non", "non"),
             "reports_numeric_blob": numeric_reports.get("reports_numeric_blob", "")[:1000],
             "reports_parse_quality": numeric_reports.get("reports_parse_quality", "NUMERIC_NOT_FOUND"),
@@ -345,6 +379,7 @@ def main() -> None:
             "arrivee",
             "reports_preview",
             "reports_text_snippet",
+            "official_reports_zone",
             "reports_numeric_found_oui_non",
             "reports_numeric_blob",
             "reports_parse_quality",
@@ -357,7 +392,7 @@ def main() -> None:
 
     audit = {
         "ok": True,
-        "version": "GPI_LITE_V0_9_19C_REPORTS_TEXT_SNIPPET_A",
+        "version": "GPI_LITE_V0_9_19D_OFFICIAL_REPORTS_ZONE_A",
         "pdf_count": len(pdfs),
         "result_input_created": str(RESULT_INPUT),
         "audit_csv": str(AUDIT_CSV),
