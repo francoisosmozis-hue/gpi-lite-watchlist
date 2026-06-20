@@ -8033,3 +8033,140 @@ def action_continuation_stop_dashboard():
     }
 # <<< GPI ACTION CONTINUATION STOP DASHBOARD V0_9_23 <<<
 
+
+# >>> GPI ACTION DECISION DASHBOARD V0_9_25 >>>
+@app.get("/action/decision-dashboard")
+def action_decision_dashboard():
+    """Synthèse courte lecture seule du dashboard continuation / stop."""
+    ensure_dirs()
+
+    import json
+    import os
+    from pathlib import Path
+
+    version = "GPI_LITE_V0_9_25_ACTION_DECISION_DASHBOARD_A"
+    object_name = "gpi-lite/outputs/latest_continuation_stop_dashboard.json"
+
+    bucket_name = (
+        os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+        or globals().get("GPI_BUCKET_NAME")
+        or "gpi-lite-watchlist-data"
+    )
+
+    def short(payload, source, extra=None):
+        extra = extra or {}
+
+        if not isinstance(payload, dict):
+            payload = {"raw": payload}
+
+        detail = payload.get("dashboard")
+        if not isinstance(detail, dict):
+            detail = payload
+
+        decision = payload.get("decision") or detail.get("decision") or "ND"
+        reasons = payload.get("reason_codes") or detail.get("reason_codes") or []
+        if isinstance(reasons, str):
+            reasons = [x.strip() for x in reasons.replace(",", "|").split("|") if x.strip()]
+
+        reason_main = reasons[0] if reasons else "ND"
+        robustness = detail.get("robustness_status") or payload.get("robustness_status") or "ND"
+
+        roi = detail.get("roi", payload.get("roi"))
+        try:
+            roi_pct = round(float(roi) * 100, 2)
+        except Exception:
+            roi_pct = None
+
+        stop = bool(payload.get("stop_cloud_recommended", detail.get("stop_cloud_recommended", False)))
+
+        if stop or str(decision).startswith("STOP"):
+            mode = "STOP_OR_REVIEW"
+            action_gpt = "Stop ou revue Cloud. Aucun réel."
+        elif "FRAGILE" in str(decision) or "FRAGILE" in str(robustness):
+            mode = "PAPER_CANDIDATE_ONLY_FRAGILE"
+            action_gpt = "Continuer Cloud uniquement en paper candidat. Aucun réel. Aucun CP3/exotique."
+        elif str(decision).startswith("CONTINUE"):
+            mode = "PAPER_CANDIDATE_ONLY"
+            action_gpt = "Continuer paper uniquement. Aucun réel sans validation course."
+        else:
+            mode = "NO_BET_DEFAULT"
+            action_gpt = "Etat ND. NO_BET par défaut."
+
+        return {
+            "ok": True,
+            "route_version": version,
+            "source": source,
+            "read_only": "oui",
+            "runs_results": "non",
+            "writes_gcs": "non",
+            "verdict_cloud": decision,
+            "mode": mode,
+            "continue_cloud_oui_non": payload.get("continue_cloud_oui_non", detail.get("continue_cloud_oui_non", "ND")),
+            "stop_cloud_recommended": stop,
+            "strict_real_ticket_allowed": False,
+            "ticket_reel": "NO_BET",
+            "reason_main": reason_main,
+            "reason_codes": reasons,
+            "kpi": {
+                "candidate_segment": detail.get("candidate_segment", payload.get("candidate_segment", "ND")),
+                "core": detail.get("core", payload.get("core")),
+                "wins": detail.get("wins", payload.get("wins")),
+                "losses": detail.get("losses", payload.get("losses")),
+                "nd": detail.get("nd", payload.get("nd")),
+                "roi_candidat_pct": roi_pct,
+                "ratio_retour": detail.get("ratio_retour", payload.get("ratio_retour")),
+                "median_gain": detail.get("median_gain", payload.get("median_gain")),
+                "max_drawdown": detail.get("max_drawdown", payload.get("max_drawdown")),
+                "robustness_status": robustness,
+            },
+            "action_gpt": action_gpt,
+            "policy": "Synthèse décisionnelle courte. Ne valide aucun ticket réel.",
+            **extra,
+        }
+
+    gcs_error = ""
+
+    try:
+        from google.cloud import storage
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+
+        if blob.exists(client):
+            payload = json.loads(blob.download_as_text(encoding="utf-8"))
+            return short(payload, "gcs", {
+                "bucket": bucket_name,
+                "object_name": object_name,
+                "gcs_uri": f"gs://{bucket_name}/{object_name}",
+            })
+
+        gcs_error = "GCS_OBJECT_ABSENT"
+
+    except Exception as exc:
+        gcs_error = f"GCS_READ_ERROR:{type(exc).__name__}:{exc}"
+
+    local_path = Path("data/output/latest_continuation_stop_dashboard.json")
+
+    if local_path.exists():
+        payload = json.loads(local_path.read_text(encoding="utf-8-sig"))
+        return short(payload, "local", {
+            "local_path": str(local_path),
+            "gcs_error": gcs_error,
+        })
+
+    return {
+        "ok": False,
+        "route_version": version,
+        "source": "none",
+        "error": "DECISION_DASHBOARD_SOURCE_ABSENT",
+        "gcs_error": gcs_error,
+        "strict_real_ticket_allowed": False,
+        "ticket_reel": "NO_BET",
+        "verdict_cloud": "ND",
+        "mode": "NO_BET_DEFAULT",
+        "action_gpt": "Etat ND. NO_BET par défaut.",
+    }
+# <<< GPI ACTION DECISION DASHBOARD V0_9_25 <<<
+

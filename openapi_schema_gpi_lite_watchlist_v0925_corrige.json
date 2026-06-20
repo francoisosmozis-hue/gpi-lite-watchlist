@@ -1,0 +1,207 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GPI Lite Watchlist Public Action Facade",
+    "version": "1.4.0-v0.9.25",
+    "description": "Façade GPT publique lecture seule pour GPI Lite Watchlist. Routes /action/* uniquement. Aucun endpoint /gpi/* ou /drive/*. Aucun ticket strict."
+  },
+  "servers": [
+    {
+      "url": "https://gpi-lite-watchlist-1084663881709.europe-west1.run.app"
+    }
+  ],
+  "paths": {
+    "/action/health": {
+      "get": {
+        "operationId": "actionHealth",
+        "summary": "Tester la façade GPI Lite",
+        "description": "Lecture seule. Aucun traitement lancé. Aucun ticket strict. Ticket réel = NO_BET.",
+        "responses": {
+          "200": {
+            "description": "Réponse JSON GPI Lite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/action/latest-h5-auto-brief": {
+      "get": {
+        "operationId": "actionLatestH5AutoBrief",
+        "summary": "Lire le dernier brief H-5 automatique GPI",
+        "description": "Lecture seule. Aucun traitement lancé. Aucun ticket strict. Ticket réel = NO_BET.",
+        "responses": {
+          "200": {
+            "description": "Réponse JSON GPI Lite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/action/status": {
+      "get": {
+        "operationId": "actionStatus",
+        "summary": "Lire le statut public GPI Lite",
+        "description": "Lecture seule. Aucun traitement lancé. Aucun ticket strict. Ticket réel = NO_BET.",
+        "responses": {
+          "200": {
+            "description": "Réponse JSON GPI Lite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/action/watchlist": {
+      "get": {
+        "operationId": "actionWatchlist",
+        "summary": "Lire la watchlist GPI du jour",
+        "description": "Lecture seule. Aucun traitement lancé. Aucun ticket strict. Ticket réel = NO_BET.",
+        "responses": {
+          "200": {
+            "description": "Réponse JSON GPI Lite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Nombre maximal de lignes à retourner.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ]
+      }
+    },
+    "/action/h5-report": {
+      "get": {
+        "operationId": "actionH5Report",
+        "summary": "Lire le rapport H-5 GPI",
+        "description": "Lecture seule. Aucun traitement lancé. Aucun ticket strict. Ticket réel = NO_BET.",
+        "responses": {
+          "200": {
+            "description": "Réponse JSON GPI Lite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Nombre maximal de lignes à retourner.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ]
+      }
+    },
+    "/action/continuation-stop-dashboard": {
+      "get": {
+        "operationId": "actionContinuationStopDashboard",
+        "summary": "Lire le dashboard continuation / stop GPI",
+        "description": "Lecture seule. Aucun traitement lancé. Aucun ticket strict. Ticket réel = NO_BET.",
+        "responses": {
+          "200": {
+            "description": "Réponse JSON GPI Lite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/action/decision-dashboard": {
+      "get": {
+        "operationId": "actionDecisionDashboard",
+        "summary": "Lire la synthèse décisionnelle courte GPI",
+        "description": "Lecture seule. Aucun traitement lancé. Aucun ticket strict. Ticket réel = NO_BET.",
+        "responses": {
+          "200": {
+            "description": "Réponse JSON GPI Lite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {}
+  }
+}
