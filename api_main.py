@@ -7909,3 +7909,127 @@ def _p11_compute_np_statut_gate_for_h5_brief(brief):
     rows, source = _p11_find_h5_np_statut_rows_for_course(course_uid)
     return _p11_compute_np_statut_gate_from_rows(rows, source)
 
+
+
+# >>> GPI ACTION CONTINUATION STOP DASHBOARD V0_9_23 >>>
+@app.get("/action/continuation-stop-dashboard")
+def action_continuation_stop_dashboard():
+    """Read-only route for the latest continuation/stop dashboard.
+
+    Does not run results.
+    Does not rebuild ROI.
+    Does not write GCS.
+    Never opens a strict ticket.
+    """
+    ensure_dirs()
+
+    import json
+    import os
+    from pathlib import Path
+
+    version = "GPI_LITE_V0_9_23_ACTION_CONTINUATION_STOP_DASHBOARD_A"
+    object_name = "gpi-lite/outputs/latest_continuation_stop_dashboard.json"
+
+    bucket_name = (
+        os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+        or globals().get("GPI_BUCKET_NAME")
+        or "gpi-lite-watchlist-data"
+    )
+
+    gcs_error = ""
+
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+
+        if blob.exists(client):
+            raw = blob.download_as_text(encoding="utf-8")
+            payload = json.loads(raw)
+
+            if not isinstance(payload, dict):
+                payload = {"raw": payload}
+
+            return {
+                "ok": True,
+                "route_version": version,
+                "source": "gcs",
+                "bucket": bucket_name,
+                "object_name": object_name,
+                "gcs_uri": f"gs://{bucket_name}/{object_name}",
+                "read_only": "oui",
+                "runs_results": "non",
+                "writes_gcs": "non",
+                "strict_real_ticket_allowed": False,
+                "ticket_reel": "NO_BET",
+                "dashboard": payload,
+            }
+
+        gcs_error = "GCS_OBJECT_ABSENT"
+
+    except Exception as exc:
+        gcs_error = f"GCS_READ_ERROR:{type(exc).__name__}:{exc}"
+
+    local_candidates = [
+        Path("data/output/latest_continuation_stop_dashboard.json"),
+        Path("data\\output\\latest_continuation_stop_dashboard.json"),
+    ]
+
+    for local_path in local_candidates:
+        if not local_path.exists():
+            continue
+
+        try:
+            payload = json.loads(local_path.read_text(encoding="utf-8-sig"))
+
+            if not isinstance(payload, dict):
+                payload = {"raw": payload}
+
+            return {
+                "ok": True,
+                "route_version": version,
+                "source": "local",
+                "local_path": str(local_path),
+                "gcs_error": gcs_error,
+                "read_only": "oui",
+                "runs_results": "non",
+                "writes_gcs": "non",
+                "strict_real_ticket_allowed": False,
+                "ticket_reel": "NO_BET",
+                "dashboard": payload,
+            }
+
+        except Exception as exc:
+            return {
+                "ok": False,
+                "route_version": version,
+                "source": "local",
+                "local_path": str(local_path),
+                "gcs_error": gcs_error,
+                "error": f"LOCAL_READ_ERROR:{type(exc).__name__}:{exc}",
+                "strict_real_ticket_allowed": False,
+                "ticket_reel": "NO_BET",
+            }
+
+    return {
+        "ok": False,
+        "route_version": version,
+        "source": "none",
+        "bucket": bucket_name,
+        "object_name": object_name,
+        "gcs_uri": f"gs://{bucket_name}/{object_name}",
+        "gcs_error": gcs_error,
+        "searched_local": [str(p) for p in local_candidates],
+        "error": "CONTINUATION_STOP_DASHBOARD_ABSENT",
+        "read_only": "oui",
+        "runs_results": "non",
+        "writes_gcs": "non",
+        "strict_real_ticket_allowed": False,
+        "ticket_reel": "NO_BET",
+    }
+# <<< GPI ACTION CONTINUATION STOP DASHBOARD V0_9_23 <<<
+
