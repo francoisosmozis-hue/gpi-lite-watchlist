@@ -1652,10 +1652,13 @@ def drive_run_results_compact():
     results_pdf_parse = payload.get("results_pdf_parse", {}) if isinstance(payload.get("results_pdf_parse"), dict) else {}
     paper_results = payload.get("paper_results", {}) if isinstance(payload.get("paper_results"), dict) else {}
     paper_kpi = payload.get("paper_kpi", {}) if isinstance(payload.get("paper_kpi"), dict) else {}
+    candidate_roi = payload.get("candidate_roi", {}) if isinstance(payload.get("candidate_roi"), dict) else {}
+    candidate_roi_cloud_sync = payload.get("candidate_roi_cloud_sync", {}) if isinstance(payload.get("candidate_roi_cloud_sync"), dict) else {}
     no_bet_audit = payload.get("no_bet_audit", {}) if isinstance(payload.get("no_bet_audit"), dict) else {}
     guardrails = payload.get("guardrails", {}) if isinstance(payload.get("guardrails"), dict) else {}
 
     parse_stdout = str(results_pdf_parse.get("stdout", ""))
+    candidate_roi_stdout = str(candidate_roi.get("stdout", ""))
     no_bet_stdout = str(no_bet_audit.get("stdout", ""))
 
     paper_results_audit = paper_results.get("audit", {})
@@ -1705,6 +1708,17 @@ def drive_run_results_compact():
             "global_result_pending_count": paper_kpi_audit.get("global_result_pending_count", "ND"),
             "global_strict_allowed_count": paper_kpi_audit.get("global_strict_allowed_count", "ND"),
             "global_replay_ko_count": paper_kpi_audit.get("global_replay_ko_count", "ND"),
+        },
+        "candidate_roi": {
+            "ok": candidate_roi.get("ok", "ND"),
+            "returncode": candidate_roi.get("returncode", "ND"),
+            "stdout_summary": candidate_roi_stdout[:1500],
+            "stderr": str(candidate_roi.get("stderr", ""))[:1000],
+        },
+        "candidate_roi_cloud_sync": {
+            "ok": candidate_roi_cloud_sync.get("ok", "ND"),
+            "files_count": candidate_roi_cloud_sync.get("files_count", "ND"),
+            "uploads": candidate_roi_cloud_sync.get("uploads", []),
         },
         "no_bet_audit": {
             "ok": no_bet_audit.get("ok", "ND"),
