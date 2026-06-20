@@ -243,6 +243,153 @@ def extract_official_reports_zone(text: str) -> str:
     zone = " | ".join(lines[start:end])
     zone = re.sub(r"\s+", " ", zone).strip()
     return zone[:6000]
+
+
+def _parse_money_value(token: str):
+    raw = str(token or "").replace("€", "").replace("\xa0", " ").strip()
+    raw = raw.replace(" ", "").replace(",", ".")
+    if not re.fullmatch(r"\d{1,6}(?:\.\d{1,2})?", raw):
+        return None
+    try:
+        return float(raw)
+    except Exception:
+        return None
+
+
+def _is_combo_token(token: str) -> bool:
+    return bool(re.fullmatch(r"\d+(?:-\d+)+", str(token or "").strip()))
+
+
+def _money_values_after(tokens, idx: int, max_count: int = 3):
+    values = []
+    j = idx + 1
+    while j < len(tokens) and len(values) < max_count:
+        value = _parse_money_value(tokens[j])
+        if value is None:
+            break
+        values.append(value)
+        j += 1
+    return values, j
+
+
+def _arrival_list(arrivee: str):
+    return [x.strip() for x in str(arrivee or "").split("-") if x.strip().isdigit()]
+
+
+def parse_official_reports_zone(zone: str, arrivee: str) -> dict:
+    out = {
+        "official_simple_gagnant": {},
+        "official_simple_place": {},
+        "official_jumele_gagnant": {},
+        "official_jumele_place": {},
+        "official_trio": {},
+        "official_2sur4": {},
+        "official_ze4": {},
+        "official_ze234": {},
+        "official_reports_parse_status": "EMPTY_ZONE",
+    }
+
+    tokens = [t.strip() for t in str(zone or "").split("|") if t.strip()]
+    arrival = _arrival_list(arrivee)
+
+    if not tokens or len(arrival) < 3:
+        return out
+
+    report_pos = None
+    for i, token in enumerate(tokens):
+        if strip_accents(token).upper() == "RAPPORTS":
+            report_pos = i
+            break
+
+    data = tokens[:report_pos] if report_pos is not None else tokens
+
+    if not data:
+        out["official_reports_parse_status"] = "NO_REPORT_DATA"
+        return out
+
+    search_pos = 0
+    simple_rows = []
+
+    for horse in arrival[:4]:
+        found_idx = None
+
+        for i in range(search_pos, len(data) - 1):
+            if data[i] == horse and _parse_money_value(data[i + 1]) is not None:
+                found_idx = i
+                break
+
+        if found_idx is None:
+            continue
+
+        values, next_pos = _money_values_after(data, found_idx, 2)
+        simple_rows.append((horse, values))
+        search_pos = next_pos
+
+    if simple_rows:
+        horse, values = simple_rows[0]
+        if values:
+            out["official_simple_gagnant"][horse] = values[0]
+            if len(values) > 1:
+                out["official_simple_place"][horse] = values[1]
+
+    if len(simple_rows) > 1:
+        horse, values = simple_rows[1]
+        if values:
+            if len(values) > 1:
+                out["official_simple_place"][horse] = values[1]
+            else:
+                out["official_simple_place"][horse] = values[0]
+
+    if len(simple_rows) > 2:
+        horse, values = simple_rows[2]
+        if values:
+            out["official_simple_place"][horse] = values[0]
+
+    combo_entries = []
+    i = 0
+
+    while i < len(data):
+        token = data[i]
+
+        if _is_combo_token(token):
+            values, next_pos = _money_values_after(data, i, 3)
+            if values:
+                combo_entries.append((token, values))
+            i = max(next_pos, i + 1)
+        else:
+            i += 1
+
+    a1, a2, a3 = arrival[0], arrival[1], arrival[2]
+
+    pair12 = f"{a1}-{a2}"
+    pair13 = f"{a1}-{a3}"
+    pair23 = f"{a2}-{a3}"
+    trio123 = f"{a1}-{a2}-{a3}"
+
+    trio_entry_idx = len(combo_entries)
+
+    for idx, (combo, values) in enumerate(combo_entries):
+        if combo == trio123:
+            trio_entry_idx = idx
+            if values:
+                out["official_trio"][combo] = values[0]
+            break
+
+    for combo, values in combo_entries[:trio_entry_idx]:
+        if combo == pair12 and len(values) >= 2:
+            out["official_jumele_gagnant"][combo] = values[0]
+            out["official_jumele_place"][combo] = values[1]
+        elif combo in {pair12, pair13, pair23} and values:
+            out["official_jumele_place"][combo] = values[-1]
+
+    if out["official_simple_place"] or out["official_jumele_place"]:
+        out["official_reports_parse_status"] = "OK_CORE_REPORTS"
+    else:
+        out["official_reports_parse_status"] = "NO_NUMERIC_REPORTS"
+
+    return out
+
+
 def ensure_paper_file() -> None:
     if PAPER_FILE.exists():
         return
@@ -321,6 +468,7 @@ def main() -> None:
         numeric_reports = extract_numeric_reports(text)
         reports_text_snippet = extract_reports_text_snippet(text)
         official_reports_zone = extract_official_reports_zone(text)
+        official_reports = parse_official_reports_zone(official_reports_zone, arrivee)
 
         if not text.strip() and status == "OK":
             status = "RESULTS_PDF_PARSE_EMPTY"
@@ -337,6 +485,12 @@ def main() -> None:
             "reports_numeric_found_oui_non": numeric_reports.get("reports_numeric_found_oui_non", "non"),
             "reports_numeric_blob": numeric_reports.get("reports_numeric_blob", ""),
             "reports_parse_quality": numeric_reports.get("reports_parse_quality", "NUMERIC_NOT_FOUND"),
+            "official_reports_parse_status": official_reports.get("official_reports_parse_status", "ND"),
+            "official_simple_gagnant_json": json.dumps(official_reports.get("official_simple_gagnant", {}), ensure_ascii=False, sort_keys=True),
+            "official_simple_place_json": json.dumps(official_reports.get("official_simple_place", {}), ensure_ascii=False, sort_keys=True),
+            "official_jumele_gagnant_json": json.dumps(official_reports.get("official_jumele_gagnant", {}), ensure_ascii=False, sort_keys=True),
+            "official_jumele_place_json": json.dumps(official_reports.get("official_jumele_place", {}), ensure_ascii=False, sort_keys=True),
+            "official_trio_json": json.dumps(official_reports.get("official_trio", {}), ensure_ascii=False, sort_keys=True),
         })
 
         audit_rows.append({
@@ -348,6 +502,12 @@ def main() -> None:
             "reports_preview": reports_preview[:500],
             "reports_text_snippet": reports_text_snippet,
             "official_reports_zone": official_reports_zone,
+            "official_reports_parse_status": official_reports.get("official_reports_parse_status", "ND"),
+            "official_simple_gagnant_json": json.dumps(official_reports.get("official_simple_gagnant", {}), ensure_ascii=False, sort_keys=True),
+            "official_simple_place_json": json.dumps(official_reports.get("official_simple_place", {}), ensure_ascii=False, sort_keys=True),
+            "official_jumele_gagnant_json": json.dumps(official_reports.get("official_jumele_gagnant", {}), ensure_ascii=False, sort_keys=True),
+            "official_jumele_place_json": json.dumps(official_reports.get("official_jumele_place", {}), ensure_ascii=False, sort_keys=True),
+            "official_trio_json": json.dumps(official_reports.get("official_trio", {}), ensure_ascii=False, sort_keys=True),
             "reports_numeric_found_oui_non": numeric_reports.get("reports_numeric_found_oui_non", "non"),
             "reports_numeric_blob": numeric_reports.get("reports_numeric_blob", "")[:1000],
             "reports_parse_quality": numeric_reports.get("reports_parse_quality", "NUMERIC_NOT_FOUND"),
@@ -365,6 +525,12 @@ def main() -> None:
             "reports_numeric_found_oui_non",
             "reports_numeric_blob",
             "reports_parse_quality",
+            "official_reports_parse_status",
+            "official_simple_gagnant_json",
+            "official_simple_place_json",
+            "official_jumele_gagnant_json",
+            "official_jumele_place_json",
+            "official_trio_json",
         ]
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
@@ -380,6 +546,12 @@ def main() -> None:
             "reports_preview",
             "reports_text_snippet",
             "official_reports_zone",
+            "official_reports_parse_status",
+            "official_simple_gagnant_json",
+            "official_simple_place_json",
+            "official_jumele_gagnant_json",
+            "official_jumele_place_json",
+            "official_trio_json",
             "reports_numeric_found_oui_non",
             "reports_numeric_blob",
             "reports_parse_quality",
@@ -392,7 +564,7 @@ def main() -> None:
 
     audit = {
         "ok": True,
-        "version": "GPI_LITE_V0_9_19D_OFFICIAL_REPORTS_ZONE_A",
+        "version": "GPI_LITE_V0_9_20_STRUCTURED_REPORTS_A",
         "pdf_count": len(pdfs),
         "result_input_created": str(RESULT_INPUT),
         "audit_csv": str(AUDIT_CSV),
@@ -403,6 +575,12 @@ def main() -> None:
         "parse_error_count": sum(1 for row in audit_rows if row["status"] == "RESULTS_PDF_PARSE_ERROR"),
         "numeric_report_found_count": sum(1 for row in audit_rows if row.get("reports_numeric_found_oui_non") == "oui"),
         "numeric_report_missing_count": sum(1 for row in audit_rows if row.get("reports_numeric_found_oui_non") != "oui"),
+        "official_core_report_count": sum(1 for row in audit_rows if row.get("official_reports_parse_status") == "OK_CORE_REPORTS"),
+        "official_no_numeric_report_count": sum(1 for row in audit_rows if row.get("official_reports_parse_status") == "NO_NUMERIC_REPORTS"),
+        "official_empty_zone_count": sum(1 for row in audit_rows if row.get("official_reports_parse_status") == "EMPTY_ZONE"),
+        "official_simple_place_count": sum(1 for row in audit_rows if row.get("official_simple_place_json") not in ("", "{}")),
+        "official_jumele_place_count": sum(1 for row in audit_rows if row.get("official_jumele_place_json") not in ("", "{}")),
+        "official_trio_count": sum(1 for row in audit_rows if row.get("official_trio_json") not in ("", "{}")),
     }
 
     AUDIT_JSON.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
