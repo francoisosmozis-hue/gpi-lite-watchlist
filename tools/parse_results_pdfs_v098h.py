@@ -123,6 +123,58 @@ def extract_reports_preview(text: str) -> str:
     return " | ".join(report_lines[:25])
 
 
+def extract_numeric_reports(text: str) -> dict:
+    raw = text or ""
+    compact = re.sub(r"\s+", " ", raw)
+    normalized = strip_accents(compact).upper()
+
+    labels = [
+        "SIMPLE GAGNANT",
+        "SIMPLE PLACE",
+        "SIMPLE PLACÉ",
+        "JUMELE GAGNANT",
+        "JUMELÉ GAGNANT",
+        "JUMELE PLACE",
+        "JUMELÉ PLACÉ",
+        "ZE 2 SUR 4",
+        "2 SUR 4",
+    ]
+
+    found = []
+
+    for label in labels:
+        key = strip_accents(label).upper()
+        pos = normalized.find(key)
+        if pos < 0:
+            continue
+
+        window = compact[pos:pos + 1200]
+        nums = re.findall(r"\b\d{1,3}[,.]\d{1,2}\b", window)
+
+        for n in nums:
+            v = n.replace(",", ".")
+            try:
+                f = float(v)
+            except Exception:
+                continue
+
+            if 1.01 <= f <= 999.99:
+                found.append(v)
+
+    out = []
+    seen = set()
+    for v in found:
+        if v not in seen:
+            out.append(v)
+            seen.add(v)
+
+    return {
+        "reports_numeric_found_oui_non": "oui" if out else "non",
+        "reports_numeric_blob": "|".join(out[:50]),
+        "reports_parse_quality": "NUMERIC_FOUND" if out else "NUMERIC_NOT_FOUND",
+    }
+
+
 def ensure_paper_file() -> None:
     if PAPER_FILE.exists():
         return
@@ -198,6 +250,7 @@ def main() -> None:
 
         arrivee = extract_arrivee(text)
         reports_preview = extract_reports_preview(text)
+        numeric_reports = extract_numeric_reports(text)
 
         if not text.strip() and status == "OK":
             status = "RESULTS_PDF_PARSE_EMPTY"
@@ -211,6 +264,9 @@ def main() -> None:
             "rapport_officiel": reports_preview,
             "result_status": "OK" if status == "OK" else status,
             "cause_resultat": "PDF_RESULTS_AUTO_PARSE" if status == "OK" else status,
+            "reports_numeric_found_oui_non": numeric_reports.get("reports_numeric_found_oui_non", "non"),
+            "reports_numeric_blob": numeric_reports.get("reports_numeric_blob", ""),
+            "reports_parse_quality": numeric_reports.get("reports_parse_quality", "NUMERIC_NOT_FOUND"),
         })
 
         audit_rows.append({
@@ -220,6 +276,9 @@ def main() -> None:
             "status": status,
             "arrivee": arrivee,
             "reports_preview": reports_preview[:500],
+            "reports_numeric_found_oui_non": numeric_reports.get("reports_numeric_found_oui_non", "non"),
+            "reports_numeric_blob": numeric_reports.get("reports_numeric_blob", "")[:1000],
+            "reports_parse_quality": numeric_reports.get("reports_parse_quality", "NUMERIC_NOT_FOUND"),
             "parse_error": parse_error,
             "text_chars": len(text),
         })
@@ -231,6 +290,9 @@ def main() -> None:
             "rapport_officiel",
             "result_status",
             "cause_resultat",
+            "reports_numeric_found_oui_non",
+            "reports_numeric_blob",
+            "reports_parse_quality",
         ]
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
@@ -244,6 +306,9 @@ def main() -> None:
             "status",
             "arrivee",
             "reports_preview",
+            "reports_numeric_found_oui_non",
+            "reports_numeric_blob",
+            "reports_parse_quality",
             "parse_error",
             "text_chars",
         ]
@@ -253,7 +318,7 @@ def main() -> None:
 
     audit = {
         "ok": True,
-        "version": "GPI_LITE_V0_9_8H_A",
+        "version": "GPI_LITE_V0_9_19B_REPORTS_NUMERIC_A",
         "pdf_count": len(pdfs),
         "result_input_created": str(RESULT_INPUT),
         "audit_csv": str(AUDIT_CSV),
@@ -262,6 +327,8 @@ def main() -> None:
         "missing_arrivee_count": sum(1 for row in audit_rows if row["status"] == "RESULTS_ARRIVEE_MISSING"),
         "empty_count": sum(1 for row in audit_rows if row["status"] == "RESULTS_PDF_PARSE_EMPTY"),
         "parse_error_count": sum(1 for row in audit_rows if row["status"] == "RESULTS_PDF_PARSE_ERROR"),
+        "numeric_report_found_count": sum(1 for row in audit_rows if row.get("reports_numeric_found_oui_non") == "oui"),
+        "numeric_report_missing_count": sum(1 for row in audit_rows if row.get("reports_numeric_found_oui_non") != "oui"),
     }
 
     AUDIT_JSON.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
