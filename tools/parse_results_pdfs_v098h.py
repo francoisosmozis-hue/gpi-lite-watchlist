@@ -175,6 +175,42 @@ def extract_numeric_reports(text: str) -> dict:
     }
 
 
+def extract_reports_text_snippet(text: str) -> str:
+    raw = text or ""
+    normalized = strip_accents(raw).upper()
+
+    labels = [
+        "SIMPLE GAGNANT",
+        "SIMPLE PLACE",
+        "SIMPLE PLACÉ",
+        "JUMELE GAGNANT",
+        "JUMELÉ GAGNANT",
+        "JUMELE PLACE",
+        "JUMELÉ PLACÉ",
+        "ZE 2 SUR 4",
+        "2 SUR 4",
+        "TRIO",
+    ]
+
+    positions = []
+    for label in labels:
+        pos = normalized.find(strip_accents(label).upper())
+        if pos >= 0:
+            positions.append(pos)
+
+    if not positions:
+        return ""
+
+    start = max(0, min(positions) - 600)
+    end = min(len(raw), min(positions) + 3500)
+
+    snippet = raw[start:end]
+    snippet = re.sub(r"\s+", " ", snippet).strip()
+
+    return snippet[:3500]
+
+
+
 def ensure_paper_file() -> None:
     if PAPER_FILE.exists():
         return
@@ -251,6 +287,7 @@ def main() -> None:
         arrivee = extract_arrivee(text)
         reports_preview = extract_reports_preview(text)
         numeric_reports = extract_numeric_reports(text)
+        reports_text_snippet = extract_reports_text_snippet(text)
 
         if not text.strip() and status == "OK":
             status = "RESULTS_PDF_PARSE_EMPTY"
@@ -276,6 +313,7 @@ def main() -> None:
             "status": status,
             "arrivee": arrivee,
             "reports_preview": reports_preview[:500],
+            "reports_text_snippet": reports_text_snippet,
             "reports_numeric_found_oui_non": numeric_reports.get("reports_numeric_found_oui_non", "non"),
             "reports_numeric_blob": numeric_reports.get("reports_numeric_blob", "")[:1000],
             "reports_parse_quality": numeric_reports.get("reports_parse_quality", "NUMERIC_NOT_FOUND"),
@@ -306,6 +344,7 @@ def main() -> None:
             "status",
             "arrivee",
             "reports_preview",
+            "reports_text_snippet",
             "reports_numeric_found_oui_non",
             "reports_numeric_blob",
             "reports_parse_quality",
@@ -318,7 +357,7 @@ def main() -> None:
 
     audit = {
         "ok": True,
-        "version": "GPI_LITE_V0_9_19B_REPORTS_NUMERIC_A",
+        "version": "GPI_LITE_V0_9_19C_REPORTS_TEXT_SNIPPET_A",
         "pdf_count": len(pdfs),
         "result_input_created": str(RESULT_INPUT),
         "audit_csv": str(AUDIT_CSV),
