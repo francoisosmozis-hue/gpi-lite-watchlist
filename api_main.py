@@ -2705,6 +2705,125 @@ def drive_run_h5_auto_capture():
 
 
 
+
+# >>> GPI STUDY/PAPER/STRICT SPLIT PATCH V0_9_26 >>>
+def _gpi_build_paper_candidate_from_h5_context(context_payload: dict) -> dict:
+    """
+    Ouvre un ticket papier CP_SEC quand le H-5 fournit une paire exploitable.
+    Ne valide jamais le réel strict.
+    """
+    invalid = {"", "ND", "ABSENT", "NO_BET", "NONE", "NULL"}
+
+    def _txt(*keys, default=""):
+        for key in keys:
+            value = context_payload.get(key)
+            if value is None:
+                continue
+            value = str(value).strip()
+            if value.upper() not in invalid:
+                return value
+        return default
+
+    def _float(value):
+        try:
+            return float(str(value).replace(",", "."))
+        except Exception:
+            return None
+
+    cp_sec = _txt("cp_sec_candidate", "CP_SEC_selection", "selection_CP_SEC")
+    cp_sec_sg_status = _txt(
+        "cp_sec_sg_filter_status",
+        "cp_sec_sg_status",
+        "CP_SEC_SG_STATUS",
+        default="ND",
+    )
+    cp_sec_sg_sum = _float(
+        _txt("cp_sec_sg_sum", "cp_sg_pair_sum", "CP_SEC_SG_SUM", default="")
+    )
+
+    kill_switch_codes = _txt("kill_switch_codes", default="")
+    volatilite_status = _txt("volatilite_status", default="ND").upper()
+
+    reasons = []
+
+    if not cp_sec:
+        reasons.append("CP_SEC_SELECTION_ABSENTE")
+
+    if cp_sec_sg_status.upper() not in {"OK", "VALID", "OUI"}:
+        reasons.append(f"CP_SEC_SG_STATUS_{cp_sec_sg_status.upper()}")
+
+    if cp_sec_sg_sum is None:
+        reasons.append("CP_SEC_SG_SUM_ND")
+    elif cp_sec_sg_sum < 7.5:
+        reasons.append("CP_SEC_SG_SUM_LT_7_5")
+
+    if volatilite_status in {"KILL", "KILL_SWITCH"}:
+        reasons.append("STRICT_BLOCK_VOLATILITE_KILL")
+
+    if kill_switch_codes and kill_switch_codes.upper() not in {"AUCUN", "NONE", "ND"}:
+        reasons.append("STRICT_BLOCK_KILL_SWITCH_CODES_PRESENT")
+
+    paper_allowed = (
+        bool(cp_sec)
+        and cp_sec_sg_status.upper() in {"OK", "VALID", "OUI"}
+        and cp_sec_sg_sum is not None
+        and cp_sec_sg_sum >= 7.5
+    )
+
+    if paper_allowed:
+        return {
+            "paper_candidate_allowed": "oui",
+            "paper_candidate_type": "CP_SEC",
+            "paper_candidate_ticket": f"CP_SEC {cp_sec}",
+            "paper_candidate_segment": "PAPER_TRADING",
+            "paper_candidate_mise": "1",
+            "paper_candidate_reason": (
+                f"CP_SEC_ETUDE_H5; cp_sec_sg_sum={cp_sec_sg_sum}; "
+                f"strict_reel_bloque"
+            ),
+            "paper_selection": cp_sec,
+            "study_allowed": "oui",
+            "paper_allowed": "oui",
+            "strict_allowed": "non",
+            "pronostic_papier_oui_non": "OUI",
+            "paper_structure": "CP_SEC",
+            "paper_stake": "1",
+            "strict_block_reasons": (
+                "H5_AUTO_BRIEF_READ_ONLY|STRICT_GATES_NOT_VALIDATED|REAL_STRICT_FORBIDDEN"
+            ),
+            "structure_retenue": "CP_SEC_PAPER",
+            "verdict": "PAPER",
+            "ticket_exact": "NO_BET",
+            "mise_theorique": "0",
+            "segment_ROI": "PAPER_TRADING",
+            "segment_roi": "PAPER_TRADING",
+        }
+
+    return {
+        "paper_candidate_allowed": "non",
+        "paper_candidate_type": "NO_BET",
+        "paper_candidate_ticket": "NO_BET",
+        "paper_candidate_segment": "NO_BET",
+        "paper_candidate_mise": "0",
+        "paper_candidate_reason": " | ".join(reasons) if reasons else "PAPER_GATE_CLOSED",
+        "paper_selection": "",
+        "study_allowed": "non",
+        "paper_allowed": "non",
+        "strict_allowed": "non",
+        "pronostic_papier_oui_non": "NON",
+        "paper_structure": "NO_BET",
+        "paper_stake": "0",
+        "strict_block_reasons": "PAPER_GATE_CLOSED|REAL_STRICT_FORBIDDEN",
+        "structure_retenue": "NO_BET",
+        "verdict": "NO_BET",
+        "ticket_exact": "NO_BET",
+        "mise_theorique": "0",
+        "segment_ROI": "NO_BET",
+        "segment_roi": "NO_BET",
+    }
+# <<< GPI STUDY/PAPER/STRICT SPLIT PATCH V0_9_26 >>>
+
+
 @app.post("/drive/run/h5-auto-brief", dependencies=[Depends(require_api_key)])
 def drive_run_h5_auto_brief():
     """
@@ -3070,6 +3189,7 @@ def drive_run_h5_auto_brief():
                 from engine.paper_trading_registry import append_paper_trading_decision
 
                 decision_id = "DEO_" + str(input_hash)[:20]
+                paper_candidate = _gpi_build_paper_candidate_from_h5_context(context_payload)
 
                 deo_row = {
                     "decision_id": decision_id,
@@ -3092,7 +3212,8 @@ def drive_run_h5_auto_brief():
                     "erreur_proxy": "ND",
                     "taux_surestimation": "ND",
                     "segment_degrade_oui_non": "ND",
-                    "selection_CP_SEC": "",
+                    "selection_CP_SEC": paper_candidate.get("paper_selection", ""),
+                    "CP_SEC_selection": paper_candidate.get("paper_selection", ""),
                     "CP_SEC_domine_oui_non": "ND",
                     "selection_CP3": "",
                     "selection_SP": "",
@@ -3102,19 +3223,28 @@ def drive_run_h5_auto_brief():
                     "cp3_candidate": str(context_payload.get("cp3_candidate", "")),
                     "cp3_sg_min_pair_sum": str(context_payload.get("cp3_sg_min_pair_sum", "ND")),
                     "cp3_sg_filter_status": str(context_payload.get("cp3_sg_filter_status", "ND")),
-                    "paper_candidate_allowed": "non",
-                    "paper_candidate_type": "NO_BET",
-                    "paper_candidate_ticket": "NO_BET",
-                    "paper_candidate_segment": "NO_BET",
-                    "paper_candidate_mise": "0",
-                    "paper_candidate_reason": "H5_AUTO_BRIEF_NO_BET_STRICT",
-                    "structure_retenue": "NO_BET",
-                    "structure_max": "SIMULATION",
-                    "verdict": "NO_BET",
+                    "paper_candidate_allowed": paper_candidate["paper_candidate_allowed"],
+                    "paper_candidate_type": paper_candidate["paper_candidate_type"],
+                    "paper_candidate_ticket": paper_candidate["paper_candidate_ticket"],
+                    "paper_candidate_segment": paper_candidate["paper_candidate_segment"],
+                    "paper_candidate_mise": paper_candidate["paper_candidate_mise"],
+                    "paper_candidate_reason": paper_candidate["paper_candidate_reason"],
+                    "study_allowed": paper_candidate["study_allowed"],
+                    "paper_allowed": paper_candidate["paper_allowed"],
+                    "strict_allowed": paper_candidate["strict_allowed"],
+                    "ticket_reel": "NO_BET",
+                    "pronostic_papier_oui_non": paper_candidate["pronostic_papier_oui_non"],
+                    "paper_structure": paper_candidate["paper_structure"],
+                    "paper_selection": paper_candidate["paper_selection"],
+                    "paper_stake": paper_candidate["paper_stake"],
+                    "strict_block_reasons": paper_candidate["strict_block_reasons"],
+                    "structure_retenue": paper_candidate["structure_retenue"],
+                    "structure_max": "CP_SEC_ETUDE" if paper_candidate["paper_candidate_allowed"] == "oui" else "SIMULATION",
+                    "verdict": paper_candidate["verdict"],
                     "ticket_exact": "NO_BET",
-                    "mise_theorique": "0",
-                    "segment_ROI": "NO_BET",
-                    "segment_roi": "NO_BET",
+                    "mise_theorique": paper_candidate["mise_theorique"],
+                    "segment_ROI": paper_candidate["segment_ROI"],
+                    "segment_roi": paper_candidate["segment_roi"],
                     "edge_status": edge_status_by_odds_context,
                     "reason_codes": reason_codes,
                     "kill_switch_codes": str(context_payload.get("kill_switch_codes", reason_codes)),

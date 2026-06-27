@@ -46,6 +46,12 @@ PAPER_COLUMNS = [
     "verdict_pre_course",
     "ticket_exact",
     "mise_paper",
+    "paper_candidate_allowed",
+    "paper_candidate_type",
+    "paper_candidate_ticket",
+    "paper_candidate_segment",
+    "paper_candidate_mise",
+    "paper_candidate_reason",
     "segment_ROI",
     "edge_status",
     "reason_codes",
@@ -266,6 +272,15 @@ def _paper_id(decision_id, course_uid):
 
 
 def _mise_paper(row):
+    paper_allowed = _as_text(row.get("paper_candidate_allowed"), "non").strip().lower()
+    if paper_allowed == "oui":
+        paper_mise = _as_text(row.get("paper_candidate_mise"), "1").strip()
+        try:
+            if float(str(paper_mise).replace(",", ".")) > 0:
+                return paper_mise
+        except Exception:
+            return "1"
+
     verdict = _as_text(row.get("verdict")).upper()
     ticket = _as_text(row.get("ticket_exact")).upper()
     structure = _as_text(row.get("structure_max")).upper()
@@ -337,9 +352,17 @@ def _build_paper_row(decision_row):
         "structure_retenue": _as_text(decision_row.get("structure_retenue"), "NO_BET"),
         "structure_max": _as_text(decision_row.get("structure_max"), "NO_BET"),
         "verdict_pre_course": _as_text(decision_row.get("verdict"), "NO_BET"),
-        "ticket_exact": _as_text(decision_row.get("ticket_exact"), "NO_BET"),
+        "ticket_exact": (
+            _as_text(decision_row.get("paper_candidate_ticket"), "NO_BET")
+            if _as_text(decision_row.get("paper_candidate_allowed"), "non").strip().lower() == "oui"
+            else _as_text(decision_row.get("ticket_exact"), "NO_BET")
+        ),
         "mise_paper": _mise_paper(decision_row),
-        "segment_ROI": _as_text(decision_row.get("segment_ROI"), "NO_BET"),
+        "segment_ROI": (
+            _as_text(decision_row.get("paper_candidate_segment"), "PAPER_TRADING")
+            if _as_text(decision_row.get("paper_candidate_allowed"), "non").strip().lower() == "oui"
+            else _as_text(decision_row.get("segment_ROI"), "NO_BET")
+        ),
         "edge_status": _as_text(decision_row.get("edge_status"), "EDGE_ABSENT"),
         "reason_codes": _as_text(decision_row.get("reason_codes"), "NO_BET_DEFAULT"),
         "kill_switch_codes": _as_text(decision_row.get("kill_switch_codes"), "ND"),
