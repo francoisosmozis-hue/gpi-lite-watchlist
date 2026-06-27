@@ -8575,6 +8575,64 @@ def action_continuation_stop_dashboard():
 # <<< GPI ACTION CONTINUATION STOP DASHBOARD V0_9_23 <<<
 
 
+
+def _cp3_top3_h5_live_dashboard_summary():
+    """Read-only compact CP3 TOP3 H5 paper live status for dashboards.
+    Never opens a real ticket.
+    Never changes strict_allowed.
+    """
+    try:
+        func = globals().get("action_cp3_top3_h5_live_status")
+        if not callable(func):
+            return {
+                "ok": False,
+                "status": "ND",
+                "ready_for_h5_paper": "NON",
+                "real_allowed": "NON",
+                "ticket_real": "NO_BET",
+                "strict_allowed": "NON",
+                "error": "CP3_TOP3_H5_LIVE_STATUS_ROUTE_NOT_FOUND",
+            }
+        payload = func()
+        if not isinstance(payload, dict):
+            payload = {"raw": payload}
+        live = payload.get("live", {})
+        if not isinstance(live, dict):
+            live = {}
+        retro = payload.get("retro", {})
+        if not isinstance(retro, dict):
+            retro = {}
+        return {
+            "ok": bool(payload.get("ok") is True),
+            "status": payload.get("status", "ND"),
+            "source": payload.get("source", "ND"),
+            "segment_roi": payload.get("segment_roi", "CP3_TOP3_ETUDE_H5_PAPER"),
+            "ready_for_h5_paper": payload.get("ready_for_h5_paper", "NON"),
+            "real_allowed": "NON",
+            "ticket_real": "NO_BET",
+            "strict_allowed": "NON",
+            "live_total_decisions": live.get("total_decisions", "0"),
+            "live_pending": live.get("pending", "0"),
+            "live_resolved": live.get("resolved", "0"),
+            "live_roi": live.get("roi", "0.000000"),
+            "live_audit_status": live.get("audit_status", "ND"),
+            "retro_candidate_count": retro.get("candidate_count", "ND"),
+            "retro_roi_label": retro.get("roi_label", "ND"),
+            "policy": "Paper live uniquement. Aucun ticket reel. Aucun strict.",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": "KO",
+            "ready_for_h5_paper": "NON",
+            "real_allowed": "NON",
+            "ticket_real": "NO_BET",
+            "strict_allowed": "NON",
+            "error": f"CP3_TOP3_H5_LIVE_SUMMARY_ERROR:{type(exc).__name__}:{exc}",
+            "policy": "Erreur lecture module CP3 H5. NO_BET par defaut.",
+        }
+
+
 # >>> GPI ACTION DECISION DASHBOARD V0_9_25 >>>
 @app.get("/action/decision-dashboard")
 def action_decision_dashboard():
@@ -8663,6 +8721,7 @@ def action_decision_dashboard():
                 "robustness_status": robustness,
             },
             "action_gpt": action_gpt,
+            "cp3_top3_h5_live_status": _cp3_top3_h5_live_dashboard_summary(),
             "policy": "Synthèse décisionnelle courte. Ne valide aucun ticket réel.",
             **extra,
         }
