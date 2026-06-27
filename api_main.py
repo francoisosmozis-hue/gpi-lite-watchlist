@@ -6264,6 +6264,113 @@ def action_run_results():
 
 
 # ============================================================
+# SCHEDULER_RUN_DUE_H5_V0_9_27
+# Wrapper Cloud Scheduler : lance les traitements H10/H5 dus.
+# Protégé par API key. Non exposé GPT Builder.
+# Ne crée jamais de ticket strict.
+# ============================================================
+
+@app.post("/scheduler/run-due-h5", dependencies=[Depends(require_api_key)])
+def scheduler_run_due_h5():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now_paris = datetime.now(ZoneInfo("Europe/Paris")).replace(microsecond=0)
+
+    capture_payload = {}
+    brief_payload = {}
+    status_payload = {}
+
+    capture_ok = False
+    brief_ok = False
+
+    try:
+        capture_payload = drive_run_h5_auto_capture()
+        capture_ok = isinstance(capture_payload, dict) and capture_payload.get("ok") is True
+    except Exception as exc:
+        capture_payload = {
+            "ok": False,
+            "phase": "h5_auto_capture",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    try:
+        brief_payload = drive_run_h5_auto_brief()
+        brief_ok = isinstance(brief_payload, dict) and brief_payload.get("ok") is True
+    except Exception as exc:
+        brief_payload = {
+            "ok": False,
+            "phase": "h5_auto_brief",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    try:
+        status_payload = gpi_status()
+    except Exception as exc:
+        status_payload = {
+            "ok": False,
+            "phase": "status_after_h5",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    def pick(payload, key, default="ND"):
+        if isinstance(payload, dict):
+            value = payload.get(key, default)
+            if value not in (None, ""):
+                return value
+        return default
+
+    return {
+        "ok": True,
+        "h5_run_ok": bool(capture_ok or brief_ok),
+        "run_status": "H5_RUN_OK" if (capture_ok or brief_ok) else "NO_H5_RUN_OR_SOURCE_MISSING",
+        "route": "/scheduler/run-due-h5",
+        "scheduler_version": "SCHEDULER_RUN_DUE_H5_V0_9_27",
+        "now_paris": now_paris.isoformat(),
+        "runs_h5": "oui",
+        "writes_gcs": "oui",
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "strict_policy": "Scheduler H5 automation only. Ne crée jamais de ticket strict.",
+        "capture": {
+            "ok": capture_ok,
+            "phase": pick(capture_payload, "phase"),
+            "reason": pick(capture_payload, "reason", ""),
+            "capture_count": pick(capture_payload, "capture_count", 0),
+            "odds_rows_total": pick(capture_payload, "odds_rows_total", 0),
+            "error": pick(capture_payload, "error", ""),
+        },
+        "brief": {
+            "ok": brief_ok,
+            "phase": pick(brief_payload, "phase"),
+            "reason": pick(brief_payload, "reason", ""),
+            "matched_courses": pick(brief_payload, "matched_courses", 0),
+            "movement_rows_total": pick(brief_payload, "movement_rows_total", 0),
+            "briefs_created": pick(brief_payload, "briefs_created", 0),
+            "error": pick(brief_payload, "error", ""),
+        },
+        "status_after": {
+            "ok": pick(status_payload, "ok", False),
+            "mvp_gate_status": pick(status_payload, "mvp_gate_status"),
+            "strict_allowed_global": pick(status_payload, "strict_allowed_global", False),
+            "latest_course_uid": pick(status_payload, "latest_course_uid"),
+            "latest_verdict": pick(status_payload, "latest_verdict"),
+            "latest_structure": pick(status_payload, "latest_structure"),
+            "latest_ticket": pick(status_payload, "latest_ticket"),
+            "latest_paper_candidate_allowed": pick(status_payload, "latest_paper_candidate_allowed"),
+            "latest_paper_candidate_ticket": pick(status_payload, "latest_paper_candidate_ticket"),
+        },
+        "next_read_routes": [
+            "/action/status",
+            "/action/watchlist",
+            "/action/brief",
+            "/action/h5-report",
+        ],
+    }
+
+
+# ============================================================
 # ACTION_WATCHLIST_FACADE_V0_1
 # Lecture compacte watchlist dédiée GPT Actions.
 # Classement par priorite_h5 si la colonne existe.
