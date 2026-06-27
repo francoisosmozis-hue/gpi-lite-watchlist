@@ -6084,10 +6084,13 @@ def _action_compact_brief(payload):
     brief_text = payload.get("brief", "")
     odds = _action_extract_odds_context(brief_text)
 
+    optimizer_fields = _gpi_bet_optimizer_fields(payload)
+
     return {
         "ok": _action_bool(payload.get("ok"), False),
         "facade_version": _ACTION_FACADE_VERSION,
         "source_route": "/gpi/chatgpt-brief",
+        **optimizer_fields,
         "source": _action_str(payload.get("source")),
         "updated": _action_str(payload.get("updated")),
         "decision_id": _action_str(payload.get("decision_id")),
@@ -6472,6 +6475,160 @@ def _p7_p8_enrich_courses_list(courses):
 
 
 
+
+# >>> BET_SELECTION_OPTIMIZER_ACTION_FIELDS V0_1_1 >>>
+def _gpi_bet_optimizer_error_fields(reason: str) -> dict:
+    return {
+        "bet_optimizer_version": "ND",
+        "bet_optimizer_scope": "ND",
+        "best_structure": "NO_BET",
+        "ticket_paper_optimizer": "NO_BET",
+        "stake_paper_optimizer": "0",
+        "ticket_real_optimizer": "NO_BET",
+        "segment_roi_optimizer": "NO_BET",
+        "edge_status_optimizer": "EDGE_ABSENT",
+        "economic_confidence": "NULLE",
+        "variance_status": "BLOQUEE",
+        "cp_sec_optimizer_status": "REJECTED_ERROR",
+        "sp_optimizer_status": "REJECTED_ERROR",
+        "cp3_optimizer_status": "REJECTED_ERROR",
+        "cp3_audit_allowed": "non",
+        "cp3_audit_ticket": "NO_BET",
+        "cp3_audit_stake": "0",
+        "cp3_audit_segment_roi": "NO_BET",
+        "cp3_audit_reason": reason,
+        "cp3_audit_scope": "PAPER_ONLY_100_DECISIONS",
+        "optimizer_rejected_structures": reason,
+        "optimizer_reason_codes": reason,
+        "optimizer_hard_blocks": reason,
+    }
+
+
+def _gpi_bet_optimizer_context(source: dict) -> dict:
+    """
+    Construit un contexte plat pour engine.bet_selection_optimizer.
+    Compatible :
+    - ligne /action/watchlist
+    - payload /action/brief
+    - report /action/h5-report
+    """
+    if not isinstance(source, dict):
+        return {}
+
+    ctx = dict(source)
+
+    # Aplatit les blocs du h5-report.
+    for nested_key in [
+        "moteur",
+        "strict_gate",
+        "kill_switch",
+        "paper",
+        "odds_context",
+    ]:
+        nested = source.get(nested_key)
+        if isinstance(nested, dict):
+            ctx.update(nested)
+
+    snapshots = source.get("snapshots")
+    if isinstance(snapshots, dict):
+        course_key = snapshots.get("course_key")
+        if course_key not in [None, "", "ND"]:
+            ctx["course_key"] = course_key
+
+    cp_sec = source.get("cp_sec")
+    if isinstance(cp_sec, dict):
+        ctx["cp_sec_candidate"] = cp_sec.get("candidate", ctx.get("cp_sec_candidate", "ND"))
+        ctx["cp_sg_pair_sum"] = cp_sec.get("cp_sg_pair_sum", ctx.get("cp_sg_pair_sum", "ND"))
+        ctx["cp_sg_filter_status"] = cp_sec.get("cp_sg_filter_status", ctx.get("cp_sg_filter_status", "ND"))
+
+    cp3 = source.get("cp3")
+    if isinstance(cp3, dict):
+        ctx["cp3_candidate"] = cp3.get("candidate", ctx.get("cp3_candidate", "ND"))
+        ctx["cp3_sg_filter_status"] = cp3.get("cp3_sg_filter_status", ctx.get("cp3_sg_filter_status", "ND"))
+
+    # Harmonisation noms fréquents watchlist/brief.
+    if "qualite" not in ctx and "quality" in ctx:
+        ctx["qualite"] = ctx.get("quality")
+
+    if "cp_sec_candidate" not in ctx:
+        for key in ["latest_cp_sec_candidate", "selection_cp_sec", "selection_CP_SEC", "paper_selection"]:
+            if ctx.get(key) not in [None, "", "ND"]:
+                ctx["cp_sec_candidate"] = ctx.get(key)
+                break
+
+    if "cp_sg_pair_sum" not in ctx:
+        for key in ["latest_cp_sg_pair_sum", "cp_sec_sg_sum", "cp_sec_pair_sum", "cp_sg_sum"]:
+            if ctx.get(key) not in [None, "", "ND"]:
+                ctx["cp_sg_pair_sum"] = ctx.get(key)
+                break
+
+    if "cp_sg_filter_status" not in ctx:
+        for key in ["latest_cp_sg_filter_status", "cp_sec_sg_status", "cp_sec_status"]:
+            if ctx.get(key) not in [None, "", "ND"]:
+                ctx["cp_sg_filter_status"] = ctx.get(key)
+                break
+
+    if "cp3_candidate" not in ctx:
+        for key in ["latest_cp3_candidate", "selection_cp3", "selection_CP3"]:
+            if ctx.get(key) not in [None, "", "ND"]:
+                ctx["cp3_candidate"] = ctx.get(key)
+                break
+
+    if "cp3_sg_filter_status" not in ctx:
+        for key in ["latest_cp3_sg_filter_status", "cp3_status"]:
+            if ctx.get(key) not in [None, "", "ND"]:
+                ctx["cp3_sg_filter_status"] = ctx.get(key)
+                break
+
+    return ctx
+
+
+def _gpi_bet_optimizer_fields(source: dict) -> dict:
+    """
+    Enrichissement lecture seule.
+    Ne crée jamais de ticket réel.
+    """
+    try:
+        from engine.bet_selection_optimizer import optimize_bet_selection
+
+        out = optimize_bet_selection(_gpi_bet_optimizer_context(source))
+
+        def join_list(value):
+            if isinstance(value, list):
+                return "|".join(str(v) for v in value)
+            if value in [None, ""]:
+                return "ND"
+            return str(value)
+
+        return {
+            "bet_optimizer_version": str(out.get("optimizer_version", "ND")),
+            "bet_optimizer_scope": str(out.get("ruleset_scope", "ND")),
+            "best_structure": str(out.get("best_structure", "NO_BET")),
+            "ticket_paper_optimizer": str(out.get("ticket_paper", "NO_BET")),
+            "stake_paper_optimizer": str(out.get("stake_paper", "0")),
+            "ticket_real_optimizer": "NO_BET",
+            "segment_roi_optimizer": str(out.get("segment_roi", "NO_BET")),
+            "edge_status_optimizer": str(out.get("edge_status", "EDGE_ABSENT")),
+            "economic_confidence": str(out.get("economic_confidence", "NULLE")),
+            "variance_status": str(out.get("variance_status", "BLOQUEE")),
+            "cp_sec_optimizer_status": str(out.get("cp_sec_status", "ND")),
+            "sp_optimizer_status": str(out.get("sp_status", "ND")),
+            "cp3_optimizer_status": str(out.get("cp3_status", "ND")),
+            "cp3_audit_allowed": str(out.get("cp3_audit_allowed", "non")),
+            "cp3_audit_ticket": str(out.get("cp3_audit_ticket", "NO_BET")),
+            "cp3_audit_stake": str(out.get("cp3_audit_stake", "0")),
+            "cp3_audit_segment_roi": str(out.get("cp3_audit_segment_roi", "NO_BET")),
+            "cp3_audit_reason": str(out.get("cp3_audit_reason", "ND")),
+            "cp3_audit_scope": str(out.get("cp3_audit_scope", "PAPER_ONLY_100_DECISIONS")),
+            "optimizer_rejected_structures": join_list(out.get("rejected_structures", [])),
+            "optimizer_reason_codes": join_list(out.get("reason_codes", [])),
+            "optimizer_hard_blocks": join_list(out.get("hard_blocks", [])),
+        }
+    except Exception as exc:
+        return _gpi_bet_optimizer_error_fields(f"BET_OPTIMIZER_ERROR:{type(exc).__name__}")
+# <<< BET_SELECTION_OPTIMIZER_ACTION_FIELDS V0_1_1 <<<
+
+
 # >>> GPI ACTION WATCHLIST PAPER FIELDS PATCH V0_9_27 >>>
 def _gpi_watchlist_paper_fields(row: dict) -> dict:
     """
@@ -6649,6 +6806,7 @@ def _action_compact_watchlist_row(row):
 
     try:
         base.update(_gpi_watchlist_paper_fields(base))
+        base.update(_gpi_bet_optimizer_fields(base))
     except Exception as exc:
         base.update({
             "study_allowed": "non",
@@ -6773,6 +6931,7 @@ def action_watchlist(limit: int = 50):
     for _course in compact:
         try:
             _course.update(_gpi_watchlist_paper_fields(_course))
+            _course.update(_gpi_bet_optimizer_fields(_course))
         except Exception as exc:
             _course.update({
                 "study_allowed": "non",
@@ -7566,6 +7725,8 @@ def action_h5_report(limit: int = 8):
         "action_gpt": _h5r_pick(brief, "action_gpt", default="ND"),
         "strict_policy": "Rapport H-5 lecture seule. Aucun ticket strict n'est créé par /action/h5-report.",
     }
+
+    report.update(_gpi_bet_optimizer_fields(report))
 
     return {
         "ok": True,
