@@ -6364,6 +6364,99 @@ def _p7_p8_enrich_courses_list(courses):
     return courses
 
 
+
+# >>> GPI ACTION WATCHLIST PAPER FIELDS PATCH V0_9_27 >>>
+def _gpi_watchlist_paper_fields(row: dict) -> dict:
+    """
+    Enrichit /action/watchlist avec un pronostic étude/papier lisible.
+    Ne valide jamais le réel strict.
+    """
+    def pick(*keys, default=""):
+        for key in keys:
+            value = row.get(key)
+            if value not in [None, "", "ND"]:
+                return str(value).strip()
+        return default
+
+    def as_float(value):
+        try:
+            return float(str(value).replace(",", "."))
+        except Exception:
+            return None
+
+    qualite = pick("watchlist_quality", "qualite", "qualite_matin", default="ND").upper()
+    structure = pick("structure_max", default="ND").upper()
+    cp_sec = pick("cp_sec_candidate", "cp_sec_candidat", "CP_SEC_selection", default="")
+    cp_sum_raw = pick("cp_sg_pair_sum", "cp_sec_sg_sum_9h", default="")
+    cp_sum = as_float(cp_sum_raw)
+    cp_filter = pick("cp_sg_filter_status", "cp_sec_sg_filter_status_9h", default="ND").upper()
+    kill = pick("kill_switch_codes", "kill_switchs_matin", default="aucun").upper()
+
+    no_kill = kill in {"", "AUCUN", "NONE", "ND"}
+
+    if (
+        qualite in {"A", "B"}
+        and "CP_SEC_ETUDE" in structure
+        and cp_sec
+        and cp_filter == "OK"
+        and cp_sum is not None
+        and cp_sum >= 7.5
+        and no_kill
+    ):
+        return {
+            "study_allowed": "oui",
+            "paper_allowed": "oui",
+            "pronostic_papier_oui_non": "OUI",
+            "paper_structure": "CP_SEC",
+            "paper_selection": cp_sec,
+            "paper_stake": "1",
+            "ticket_reel": "NO_BET",
+            "strict_block_reasons": "WATCHLIST_PRE_H5_STRICT_FORBIDDEN|H5_DATA_REQUIRED",
+            "paper_candidate_allowed": "oui",
+            "paper_candidate_type": "CP_SEC",
+            "paper_candidate_ticket": f"CP_SEC {cp_sec}",
+            "paper_candidate_segment": "PAPER_TRADING",
+            "paper_candidate_mise": "1",
+            "paper_candidate_reason": f"WATCHLIST_CP_SEC_ETUDE; cp_sg_sum={cp_sum}; filter={cp_filter}",
+        }
+
+    if qualite in {"A", "B", "C"} and cp_sec and cp_filter == "OK" and no_kill:
+        return {
+            "study_allowed": "oui",
+            "paper_allowed": "non",
+            "pronostic_papier_oui_non": "SIMULATION",
+            "paper_structure": "CP_SEC_SIMULATION",
+            "paper_selection": cp_sec,
+            "paper_stake": "0",
+            "ticket_reel": "NO_BET",
+            "strict_block_reasons": "WATCHLIST_SIMULATION_ONLY|H5_DATA_REQUIRED",
+            "paper_candidate_allowed": "non",
+            "paper_candidate_type": "CP_SEC_SIMULATION",
+            "paper_candidate_ticket": f"CP_SEC_SIMULATION {cp_sec}",
+            "paper_candidate_segment": "SIMULATION",
+            "paper_candidate_mise": "0",
+            "paper_candidate_reason": "WATCHLIST_SIMULATION_ONLY",
+        }
+
+    return {
+        "study_allowed": "non",
+        "paper_allowed": "non",
+        "pronostic_papier_oui_non": "NON",
+        "paper_structure": "NO_BET",
+        "paper_selection": cp_sec,
+        "paper_stake": "0",
+        "ticket_reel": "NO_BET",
+        "strict_block_reasons": "WATCHLIST_NO_BET_OR_DATA_MISSING",
+        "paper_candidate_allowed": "non",
+        "paper_candidate_type": "NO_BET",
+        "paper_candidate_ticket": "NO_BET",
+        "paper_candidate_segment": "NO_BET",
+        "paper_candidate_mise": "0",
+        "paper_candidate_reason": "WATCHLIST_NO_BET_OR_DATA_MISSING",
+    }
+# <<< GPI ACTION WATCHLIST PAPER FIELDS PATCH V0_9_27 >>>
+
+
 def _action_compact_watchlist_row(row):
     base = {
         "course_uid": _action_pick(row, "course_uid", "uid", "course_id", "nom_course"),
@@ -6446,6 +6539,26 @@ def _action_compact_watchlist_row(row):
         base.setdefault("ticket_readiness_score", "ND")
         base.setdefault("ticket_readiness_bucket", "ND")
         base.setdefault("ticket_readiness_blocker", f"P7_P8_ERROR:{type(exc).__name__}")
+
+    try:
+        base.update(_gpi_watchlist_paper_fields(base))
+    except Exception as exc:
+        base.update({
+            "study_allowed": "non",
+            "paper_allowed": "non",
+            "pronostic_papier_oui_non": "NON",
+            "paper_structure": "NO_BET",
+            "paper_selection": "",
+            "paper_stake": "0",
+            "ticket_reel": "NO_BET",
+            "strict_block_reasons": f"WATCHLIST_PAPER_FIELDS_ERROR:{type(exc).__name__}",
+            "paper_candidate_allowed": "non",
+            "paper_candidate_type": "NO_BET",
+            "paper_candidate_ticket": "NO_BET",
+            "paper_candidate_segment": "NO_BET",
+            "paper_candidate_mise": "0",
+            "paper_candidate_reason": f"WATCHLIST_PAPER_FIELDS_ERROR:{type(exc).__name__}",
+        })
 
     return base
 
@@ -6546,6 +6659,33 @@ def action_watchlist(limit: int = 50):
     safe_limit = max(1, min(int(limit or 50), 100))
     compact = [_action_compact_watchlist_row(row) for row in rows_sorted[:safe_limit]]
     compact = _p7_p8_enrich_courses_list(compact)
+
+
+    # >>> WATCHLIST PAPER ROUTE ENRICHMENT V0_9_28 >>>
+    enriched_compact = []
+    for _course in compact:
+        try:
+            _course.update(_gpi_watchlist_paper_fields(_course))
+        except Exception as exc:
+            _course.update({
+                "study_allowed": "non",
+                "paper_allowed": "non",
+                "pronostic_papier_oui_non": "NON",
+                "paper_structure": "NO_BET",
+                "paper_selection": "",
+                "paper_stake": "0",
+                "ticket_reel": "NO_BET",
+                "strict_block_reasons": f"WATCHLIST_ROUTE_PAPER_FIELDS_ERROR:{type(exc).__name__}",
+                "paper_candidate_allowed": "non",
+                "paper_candidate_type": "NO_BET",
+                "paper_candidate_ticket": "NO_BET",
+                "paper_candidate_segment": "NO_BET",
+                "paper_candidate_mise": "0",
+                "paper_candidate_reason": f"WATCHLIST_ROUTE_PAPER_FIELDS_ERROR:{type(exc).__name__}",
+            })
+        enriched_compact.append(_course)
+    compact = enriched_compact
+    # <<< WATCHLIST PAPER ROUTE ENRICHMENT V0_9_28 >>>
 
     return {
         "ok": True,
