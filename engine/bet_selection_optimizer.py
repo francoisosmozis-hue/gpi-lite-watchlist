@@ -11,7 +11,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
 
-OPTIMIZER_VERSION = "BET_SELECTION_OPTIMIZER_V0_1_1"
+OPTIMIZER_VERSION = "BET_SELECTION_OPTIMIZER_V0_1_2"
 RULESET_SCOPE = "CP_SEC_SP_ACTIVE__CP3_AUDIT_ONLY"
 CP3_AUDIT_SCOPE = "PAPER_ONLY_100_DECISIONS"
 
@@ -368,9 +368,22 @@ def optimize_bet_selection(context: Dict[str, Any]) -> Dict[str, Any]:
     cp_sec = _cp_sec_candidate(context)
     sp = _sp_candidate(context)
 
-    if cp_sec is None:
+    # Discipline ROI :
+    # Qualité C = micro/simulation uniquement.
+    # On interdit CP_SEC_PAPER et SP_PAPER standard sur qualité C.
+    if qualite == "C":
+        if cp_sec is not None:
+            cp_sec = None
+            rejected.append("CP_SEC_REJECTED_QUALITY_C_SIMULATION_ONLY")
+
+        if sp is not None and sp.structure == "SP_PAPER":
+            sp = None
+            rejected.append("SP_REJECTED_QUALITY_C_STANDARD_FORBIDDEN")
+
+    if cp_sec is None and "CP_SEC_REJECTED_QUALITY_C_SIMULATION_ONLY" not in rejected:
         rejected.append("CP_SEC_REJECTED_NOT_ADMISSIBLE")
-    if sp is None:
+
+    if sp is None and "SP_REJECTED_QUALITY_C_STANDARD_FORBIDDEN" not in rejected:
         rejected.append("SP_REJECTED_NOT_ADMISSIBLE_OR_NOT_CALIBRATED")
 
     candidates = [c for c in [cp_sec, sp] if c is not None]
