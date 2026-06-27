@@ -8711,3 +8711,130 @@ def action_decision_dashboard():
     }
 # <<< GPI ACTION DECISION DASHBOARD V0_9_25 <<<
 
+# >>> GPI ACTION CP3 TOP3 H5 LIVE STATUS V0_1_4 >>>
+@app.get("/action/cp3-top3-h5-live-status")
+def action_cp3_top3_h5_live_status():
+    """Read-only CP3 TOP3 H5 paper live status.
+    Does not run H-5.
+    Does not write GCS.
+    Does not create a ticket.
+    Never opens a strict real bet.
+    """
+    try:
+        ensure_dirs()
+    except Exception:
+        pass
+    import json
+    import os
+    from pathlib import Path
+    version = "GPI_LITE_V0_1_4_CP3_TOP3_H5_LIVE_STATUS_A"
+    object_name = "gpi-lite/outputs/latest_cp3_top3_h5_live_status.json"
+    bucket_name = (
+        os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+    )
+    def safe_payload(payload, source, extra=None):
+        if not isinstance(payload, dict):
+            payload = {"raw": payload}
+        extra = extra or {}
+        return {
+            "ok": True,
+            "route_version": version,
+            "source_route": "/action/cp3-top3-h5-live-status",
+            "source": source,
+            "read_only": "oui",
+            "runs_h5": "non",
+            "runs_results": "non",
+            "writes_gcs": "non",
+            "strict_real_ticket_allowed": False,
+            "real_allowed": "NON",
+            "ticket_reel": "NO_BET",
+            "ticket_real": "NO_BET",
+            "strict_allowed": "NON",
+            "module": payload.get("module", "CP3_TOP3_H5_LIVE_V0_1_4"),
+            "segment_roi": payload.get("segment_roi", "CP3_TOP3_ETUDE_H5_PAPER"),
+            "status": payload.get("status", "ND"),
+            "ready_for_h5_paper": payload.get("ready_for_h5_paper", "NON"),
+            "live": payload.get("live", {}),
+            "retro": payload.get("retro", {}),
+            "guards": payload.get("guards", {}),
+            "reason_codes": payload.get("reason_codes", []),
+            "errors": payload.get("errors", []),
+            "warnings": payload.get("warnings", []),
+            "dashboard": payload,
+            "policy": "CP3_TOP3_H5 paper live uniquement. Aucun ticket reel. Aucun strict.",
+            **extra,
+        }
+    gcs_error = ""
+    if bucket_name:
+        try:
+            from google.cloud import storage
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(object_name)
+            if blob.exists():
+                raw = blob.download_as_text(encoding="utf-8")
+                payload = json.loads(raw)
+                return safe_payload(payload, "gcs", {
+                    "bucket": bucket_name,
+                    "object_name": object_name,
+                })
+            gcs_error = "GCS_OBJECT_ABSENT"
+        except Exception as exc:
+            gcs_error = f"GCS_READ_ERROR:{type(exc).__name__}:{exc}"
+    else:
+        gcs_error = "GCS_BUCKET_ENV_ABSENT"
+    local_candidates = [
+        Path("data/output/latest_cp3_top3_h5_live_status.json"),
+        Path("data\\output\\latest_cp3_top3_h5_live_status.json"),
+    ]
+    for local_path in local_candidates:
+        if not local_path.exists():
+            continue
+        try:
+            payload = json.loads(local_path.read_text(encoding="utf-8-sig"))
+            return safe_payload(payload, "local", {
+                "local_path": str(local_path),
+                "gcs_error": gcs_error,
+            })
+        except Exception as exc:
+            return {
+                "ok": False,
+                "route_version": version,
+                "source_route": "/action/cp3-top3-h5-live-status",
+                "source": "local",
+                "local_path": str(local_path),
+                "gcs_error": gcs_error,
+                "error": f"LOCAL_READ_ERROR:{type(exc).__name__}:{exc}",
+                "read_only": "oui",
+                "runs_h5": "non",
+                "runs_results": "non",
+                "writes_gcs": "non",
+                "strict_real_ticket_allowed": False,
+                "real_allowed": "NON",
+                "ticket_reel": "NO_BET",
+                "ticket_real": "NO_BET",
+                "strict_allowed": "NON",
+            }
+    return {
+        "ok": False,
+        "route_version": version,
+        "source_route": "/action/cp3-top3-h5-live-status",
+        "source": "none",
+        "error": "CP3_TOP3_H5_LIVE_STATUS_SOURCE_ABSENT",
+        "gcs_error": gcs_error,
+        "searched_local": [str(p) for p in local_candidates],
+        "read_only": "oui",
+        "runs_h5": "non",
+        "runs_results": "non",
+        "writes_gcs": "non",
+        "strict_real_ticket_allowed": False,
+        "real_allowed": "NON",
+        "ticket_reel": "NO_BET",
+        "ticket_real": "NO_BET",
+        "strict_allowed": "NON",
+        "ready_for_h5_paper": "NON",
+        "policy": "Source absente. NO_BET par defaut.",
+    }
+# <<< GPI ACTION CP3 TOP3 H5 LIVE STATUS V0_1_4 <<<
