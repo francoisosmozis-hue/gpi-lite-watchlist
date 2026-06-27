@@ -81,30 +81,38 @@ def parse_reports(text, arrival_top3):
     simple_place = {}
     cp_place = {}
     section = report_section_lines(text)
-    after_trio = False
+    # Phases attendues dans le bloc ZEturf :
+    # 1. lignes simples : "13 8,20 € 3,10 €"
+    # 2. lignes couplés/jumelés : "13-10 28,80 € 12,20 €"
+    # 3. ligne trio : "13-10-9 35,10 €"
+    # 4. lignes ZE 2 sur 4 : à ignorer pour SP/CP
+    phase = "SIMPLE"
     for line in section:
         vals = dec_values(line)
         if not vals:
             continue
-        # Trio line : after this, ZEturf often lists ZE 2 sur 4 pairs.
-        # We stop CP parsing after the first triple report to avoid confusing CP and 2sur4.
-        if re.match(r"^\s*\d{1,2}\s*[-–]\s*\d{1,2}\s*[-–]\s*\d{1,2}\b", line):
-            after_trio = True
+        is_triple = re.match(r"^\s*\d{1,2}\s*[-–]\s*\d{1,2}\s*[-–]\s*\d{1,2}\b", line)
+        if is_triple:
+            phase = "IGNORE_AFTER_TRIO"
+            continue
+        if phase == "IGNORE_AFTER_TRIO":
             continue
         pair = re.match(r"^\s*(\d{1,2})\s*[-–]\s*(\d{1,2})\b", line)
-        if pair and not after_trio:
+        if pair:
+            phase = "CP"
             a, b = pair.group(1), pair.group(2)
             key = pair_key(a, b)
-            # If two values: first often jumelé/couplé gagnant, last = placé.
-            # If one value: only placé line.
+            # Ligne couplé/jumelé :
+            # - 2 valeurs : gagnant + placé, on garde le placé
+            # - 1 valeur : placé seul
             cp_place[key] = vals[-1]
             continue
         single = re.match(r"^\s*(\d{1,2})\b", line)
-        if single:
+        if single and phase == "SIMPLE":
             num = single.group(1)
-            # Simple placé only matters if the horse is in the first 3.
-            # For the winner, line may contain gagnant + placé, so we take the last value.
-            if num in arrival_top3:
+            # Simple placé uniquement.
+            # Si la ligne contient gagnant + placé, le placé est la dernière valeur.
+            if num in arrival_top3 and num not in simple_place:
                 simple_place[num] = vals[-1]
     return simple_place, cp_place
 def eval_sp(selected, arrival_top3, simple_place):
