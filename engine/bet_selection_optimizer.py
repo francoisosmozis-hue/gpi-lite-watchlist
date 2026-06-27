@@ -11,7 +11,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
 
-OPTIMIZER_VERSION = "BET_SELECTION_OPTIMIZER_V0_1_2"
+OPTIMIZER_VERSION = "BET_SELECTION_OPTIMIZER_V0_1_3"
 RULESET_SCOPE = "CP_SEC_SP_ACTIVE__CP3_AUDIT_ONLY"
 CP3_AUDIT_SCOPE = "PAPER_ONLY_100_DECISIONS"
 
@@ -304,6 +304,103 @@ def _cp3_audit_candidate(context: Dict[str, Any], hard_blocked: bool) -> Cp3Audi
     )
 
 
+
+def _cp_sec_watchlist_simulation_block(context: Dict[str, Any]) -> bool:
+    reason = _upper(context.get("paper_candidate_reason", ""))
+    segment = _upper(context.get("paper_candidate_segment", ""))
+    candidate_type = _upper(context.get("paper_candidate_type", ""))
+    allowed = _upper(context.get("paper_candidate_allowed", "ND"))
+
+    if "WATCHLIST_SIMULATION_ONLY" in reason:
+        return True
+
+    if segment == "SIMULATION" and "CP_SEC" in candidate_type:
+        return True
+
+    if allowed == "NON" and "WATCHLIST" in reason and "CP_SEC_ETUDE" not in reason:
+        return True
+
+    return False
+
+
+def _cp_sec_priority_fields(context: Dict[str, Any], best_structure: str) -> Dict[str, Any]:
+    reasons: List[str] = []
+
+    if not str(best_structure).startswith("CP_SEC"):
+        return {
+            "cp_sec_priority_score": "0",
+            "cp_sec_priority_level": "ND",
+            "cp_sec_priority_reasons": "NOT_CP_SEC",
+        }
+
+    pair_sum = _f(
+        context.get("cp_sg_pair_sum")
+        or context.get("latest_cp_sg_pair_sum")
+        or context.get("cp_sec_pair_sum")
+        or context.get("cp_sg_sum")
+    )
+
+    qualite = _upper(context.get("qualite", context.get("quality", "ND")))
+
+    if pair_sum is None:
+        return {
+            "cp_sec_priority_score": "0",
+            "cp_sec_priority_level": "LOW",
+            "cp_sec_priority_reasons": "CP_SG_PAIR_SUM_ND",
+        }
+
+    score = 70.0
+    reasons.append("BASE_CP_SEC_70")
+
+    if pair_sum >= 12.0:
+        score += 15.0
+        reasons.append("SG_SUM_GE_12_PLUS_15")
+    elif pair_sum >= 10.5:
+        score += 10.0
+        reasons.append("SG_SUM_GE_10_5_PLUS_10")
+    elif pair_sum >= 9.5:
+        score += 7.0
+        reasons.append("SG_SUM_GE_9_5_PLUS_7")
+    elif pair_sum >= 8.5:
+        score += 3.0
+        reasons.append("SG_SUM_GE_8_5_PLUS_3")
+    else:
+        reasons.append("SG_SUM_LT_8_5_PLUS_0")
+
+    if qualite == "B":
+        score -= 5.0
+        reasons.append("QUALITY_B_MINUS_5")
+    elif qualite == "A":
+        reasons.append("QUALITY_A_NO_PENALTY")
+    else:
+        score -= 20.0
+        reasons.append(f"QUALITY_{qualite}_MINUS_20")
+
+    if _cp_sec_watchlist_simulation_block(context):
+        score -= 100.0
+        reasons.append("WATCHLIST_SIMULATION_ONLY_MINUS_100")
+
+    if score >= 85:
+        level = "HIGH"
+    elif score >= 75:
+        level = "MEDIUM"
+    else:
+        level = "LOW"
+
+    return {
+        "cp_sec_priority_score": str(round(score, 2)),
+        "cp_sec_priority_level": level,
+        "cp_sec_priority_reasons": "|".join(reasons),
+    }
+
+
+def _with_priority_fields(context: Dict[str, Any], out: BetSelectionOutput) -> Dict[str, Any]:
+    result = asdict(out)
+    result.update(_cp_sec_priority_fields(context, result.get("best_structure", "NO_BET")))
+    return result
+
+
+
 def optimize_bet_selection(context: Dict[str, Any]) -> Dict[str, Any]:
     """
     Entrée : dictionnaire issu d'un brief H-5, watchlist enrichie ou h5-report aplati.
@@ -363,7 +460,7 @@ def optimize_bet_selection(context: Dict[str, Any]) -> Dict[str, Any]:
             reason_codes=reason_codes,
             hard_blocks=hard_blocks,
         )
-        return asdict(out)
+        return _with_priority_fields(context, out)
 
     cp_sec = _cp_sec_candidate(context)
     sp = _sp_candidate(context)
@@ -379,6 +476,10 @@ def optimize_bet_selection(context: Dict[str, Any]) -> Dict[str, Any]:
         if sp is not None and sp.structure == "SP_PAPER":
             sp = None
             rejected.append("SP_REJECTED_QUALITY_C_STANDARD_FORBIDDEN")
+
+    if cp_sec is not None and _cp_sec_watchlist_simulation_block(context):
+        cp_sec = None
+        rejected.append("CP_SEC_REJECTED_WATCHLIST_SIMULATION_ONLY")
 
     if cp_sec is None and "CP_SEC_REJECTED_QUALITY_C_SIMULATION_ONLY" not in rejected:
         rejected.append("CP_SEC_REJECTED_NOT_ADMISSIBLE")
@@ -414,7 +515,7 @@ def optimize_bet_selection(context: Dict[str, Any]) -> Dict[str, Any]:
             reason_codes=reason_codes,
             hard_blocks=hard_blocks,
         )
-        return asdict(out)
+        return _with_priority_fields(context, out)
 
     candidates = sorted(candidates, key=lambda c: c.score, reverse=True)
     best = candidates[0]
@@ -427,7 +528,41 @@ def optimize_bet_selection(context: Dict[str, Any]) -> Dict[str, Any]:
             best = sp
             rejected.append("CP_SEC_REJECTED_SP_SCORE_ADVANTAGE")
 
+    cp_sec_priority = _cp_sec_priority_fields(context, best.structure)
+
+    if best.structure == "CP_SEC_PAPER" and cp_sec_priority.get("cp_sec_priority_level") == "LOW":
+        rejected.append("CP_SEC_REJECTED_PRIORITY_LOW_SIMULATION_ONLY")
+        reason_codes.append("CP_SEC_PRIORITY_LOW_SIMULATION_ONLY")
+
+        out = BetSelectionOutput(
+            optimizer_version=OPTIMIZER_VERSION,
+            ruleset_scope=RULESET_SCOPE,
+            best_structure="CP_SEC_SIMULATION_LOW",
+            ticket_paper="NO_BET",
+            ticket_real="NO_BET",
+            stake_paper=0.0,
+            segment_roi="SIMULATION",
+            edge_status="EDGE_FRAGILE",
+            economic_confidence="FAIBLE",
+            variance_status="A_AUDITER",
+            cp_sec_status="SIMULATION_LOW",
+            sp_status="AVAILABLE" if sp else "REJECTED",
+            cp3_status=cp3_audit.status,
+            cp3_audit_allowed=cp3_audit.allowed,
+            cp3_audit_ticket=cp3_audit.ticket,
+            cp3_audit_stake=cp3_audit.stake,
+            cp3_audit_segment_roi=cp3_audit.segment_roi,
+            cp3_audit_reason=cp3_audit.reason,
+            cp3_audit_scope=cp3_audit.scope,
+            rejected_structures=rejected,
+            reason_codes=reason_codes,
+            hard_blocks=hard_blocks,
+        )
+        return _with_priority_fields(context, out)
+
     reason_codes.append(f"BEST_{best.structure}")
+    if best.structure == "CP_SEC_PAPER":
+        reason_codes.append(f"CP_SEC_PRIORITY_{cp_sec_priority.get('cp_sec_priority_level', 'ND')}")
 
     out = BetSelectionOutput(
         optimizer_version=OPTIMIZER_VERSION,
@@ -453,4 +588,4 @@ def optimize_bet_selection(context: Dict[str, Any]) -> Dict[str, Any]:
         reason_codes=reason_codes,
         hard_blocks=hard_blocks,
     )
-    return asdict(out)
+    return _with_priority_fields(context, out)
