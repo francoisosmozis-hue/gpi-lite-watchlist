@@ -8068,6 +8068,54 @@ def _h5r_load_latest_h5_context():
     return data, src
 
 
+def _h5r_load_h5_auto_context_for_brief(brief):
+    """
+    Charge le contexte H5 auto exact reference par le brief.
+    Ne lit latest_h5_auto_context.json qu'en fallback diagnostique.
+    Ne valide jamais le strict.
+    """
+    if not isinstance(brief, dict):
+        brief = {}
+
+    sync = brief.get("h5_auto_context_sync")
+    if not isinstance(sync, dict):
+        sync = {}
+
+    context_uri = str(sync.get("context_gcs_uri", "") or "").strip()
+    gcs_name = ""
+
+    if context_uri.startswith("gs://"):
+        parts = context_uri.split("/", 3)
+        if len(parts) >= 4:
+            gcs_name = parts[3]
+    elif context_uri.startswith("gpi-lite/"):
+        gcs_name = context_uri
+
+    local_names = []
+    gcs_names = []
+
+    if gcs_name:
+        gcs_names.append(gcs_name)
+
+    # Fallback seulement pour diagnostic, jamais pour strict.
+    gcs_names.append("gpi-lite/outputs/latest_h5_auto_context.json")
+    local_names.append("latest_h5_auto_context.json")
+
+    data, src = _h5r_load_json_candidates(
+        local_names=local_names,
+        gcs_names=gcs_names,
+    )
+
+    if not isinstance(data, dict):
+        data = {}
+
+    src["requested_context_uri"] = context_uri
+    src["requested_gcs_name"] = gcs_name or "ND"
+    src["fallback_latest_allowed_for_diagnostic_only"] = "oui"
+
+    return data, src
+
+
 def _h5r_context_course_key(context, brief):
     key = "ND"
 
@@ -8337,9 +8385,9 @@ def action_h5_report(limit: int = 8):
     h5_context, h5_context_source = _h5r_load_latest_h5_context()
     snapshot = _h5r_load_snapshot_rows(h5_context, brief)
 
-    # GPI H5 REPORT CONTEXT GUARD V0_1
-    # Ne jamais afficher un snapshot 9h/H5 appartenant a une autre course
-    # que le brief courant. Sinon lecture marche trompeuse.
+    # GPI H5 REPORT CONTEXT GUARD V0_2
+    # Si le contexte legacy est obsolete, utiliser le contexte H5 auto exact
+    # reference par le brief courant, jamais latest_h5_auto_context seul.
     brief_course_uid = _h5r_pick(brief, "course_uid", "latest_course_uid", default="ND")
     snapshot_course_key_before_guard = str(snapshot.get("course_key", "ND") or "ND").strip()
 
@@ -8358,16 +8406,116 @@ def action_h5_report(limit: int = 8):
         and brief_course_norm != snapshot_course_norm
     )
 
+    auto_context = {}
+    auto_context_source = {"kind": "not_loaded"}
+    auto_context_used = False
+    auto_context_aligned = False
+
+    if h5_report_context_mismatch:
+        try:
+            sync = brief.get("h5_auto_context_sync")
+            if not isinstance(sync, dict):
+                sync = {}
+
+            context_uri = str(sync.get("context_gcs_uri", "") or "").strip()
+            context_blob = ""
+
+            if context_uri.startswith("gs://"):
+                parts = context_uri.split("/", 3)
+                if len(parts) >= 4:
+                    context_blob = parts[3]
+            elif context_uri.startswith("gpi-lite/"):
+                context_blob = context_uri
+
+            if context_blob:
+                auto_context, auto_context_source = _h5r_load_json_candidates(
+                    local_names=[],
+                    gcs_names=[context_blob],
+                )
+
+                if not isinstance(auto_context, dict):
+                    auto_context = {}
+
+                auto_course_uid = str(
+                    auto_context.get("course_uid")
+                    or auto_context.get("course_key")
+                    or "ND"
+                ).strip()
+
+                try:
+                    auto_course_norm = _h5auto_normalize_course_key(auto_course_uid)
+                except Exception:
+                    auto_course_norm = str(auto_course_uid or "").strip().lower()
+
+                auto_context_aligned = bool(
+                    auto_context.get("ok") is True
+                    and brief_course_norm
+                    and auto_course_norm
+                    and brief_course_norm != "nd"
+                    and auto_course_norm != "nd"
+                    and brief_course_norm == auto_course_norm
+                )
+
+                if auto_context_aligned:
+                    h5_context = auto_context
+                    h5_context_source = {
+                        "kind": "h5_auto_context_course_scoped",
+                        "context_uri": context_uri,
+                        "context_blob": context_blob,
+                        "source": auto_context_source,
+                        "legacy_snapshot_course_key": snapshot_course_key_before_guard,
+                    }
+
+                    snapshot = {
+                        "course_key": auto_course_uid,
+                        "rows_9h": [],
+                        "rows_h5": [],
+                        "context_mismatch": "non",
+                        "mismatch_reason": "",
+                        "legacy_context_mismatch_oui_non": "oui",
+                        "auto_context_used_oui_non": "oui",
+                        "auto_context_aligned_oui_non": "oui",
+                        "snapshot_kind": "H5_AUTO_ODDS_CAPTURE",
+                        "auto_context_course_uid": auto_course_uid,
+                        "auto_context_source": h5_context_source,
+                        "h10_rows_count": auto_context.get("h10_rows_count", "ND"),
+                        "h5_rows_count": auto_context.get("h5_rows_count", "ND"),
+                        "previous_snapshot_label": auto_context.get("previous_snapshot_label", "H10"),
+                        "current_snapshot_label": auto_context.get("current_snapshot_label", "H5"),
+                    }
+
+                    h5_report_context_mismatch = False
+                    auto_context_used = True
+                else:
+                    snapshot["auto_context_used_oui_non"] = "non"
+                    snapshot["auto_context_aligned_oui_non"] = "non"
+                    snapshot["auto_context_course_uid"] = auto_course_uid
+                    snapshot["auto_context_mismatch_reason"] = "H5_AUTO_CONTEXT_COURSE_MISMATCH_OR_NOT_OK"
+            else:
+                snapshot["auto_context_used_oui_non"] = "non"
+                snapshot["auto_context_aligned_oui_non"] = "non"
+                snapshot["auto_context_mismatch_reason"] = "H5_AUTO_CONTEXT_URI_MISSING"
+
+        except Exception as exc:
+            snapshot["auto_context_used_oui_non"] = "non"
+            snapshot["auto_context_aligned_oui_non"] = "non"
+            snapshot["auto_context_error"] = f"{type(exc).__name__}:{exc}"
+
     if h5_report_context_mismatch:
         snapshot["context_mismatch"] = "oui"
         snapshot["mismatch_reason"] = "H5_REPORT_CONTEXT_MISMATCH"
         snapshot["mismatch_brief_course_uid"] = brief_course_uid
         snapshot["mismatch_snapshot_course_key"] = snapshot_course_key_before_guard
+        snapshot["auto_context_source"] = auto_context_source
+        snapshot["auto_context_used_oui_non"] = "oui" if auto_context_used else "non"
+        snapshot["auto_context_aligned_oui_non"] = "oui" if auto_context_aligned else "non"
         snapshot["rows_9h"] = []
         snapshot["rows_h5"] = []
     else:
         snapshot["context_mismatch"] = "non"
-        snapshot["mismatch_reason"] = ""
+        snapshot["mismatch_reason"] = snapshot.get("mismatch_reason", "")
+        snapshot.setdefault("auto_context_used_oui_non", "oui" if auto_context_used else "non")
+        snapshot.setdefault("auto_context_aligned_oui_non", "oui" if auto_context_aligned else "non")
 
     safe_limit = max(1, min(int(limit or 8), 20))
 
