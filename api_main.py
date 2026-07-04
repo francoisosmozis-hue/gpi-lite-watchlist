@@ -5303,6 +5303,174 @@ def gpi_status():
     except Exception:
         latest_course_uid = "ND"
 
+    # GPI STATUS CLOUD READY SHADOW AUDIT COMPUTE V0_1
+    # Mini-audit persistant du shadow cloud_ready.
+    # N'ouvre jamais cloud_ready, strict_allowed_global ni les tickets.
+    cloud_ready_shadow_audit_version = "CLOUD_READY_SHADOW_AUDIT_V0_1"
+    cloud_ready_shadow_required_runs = 3
+    cloud_ready_shadow_green_runs = 0
+    cloud_ready_shadow_audit_ok_oui_non = "non"
+    cloud_ready_shadow_current_green_oui_non = "non"
+    cloud_ready_shadow_last_mismatch_reason = "INIT"
+    cloud_ready_shadow_audit_error = ""
+    cloud_ready_shadow_audit_path = "gpi-lite/outputs/cloud_ready_shadow_audit.json"
+    cloud_ready_shadow_latest_run_key = "ND"
+
+    try:
+        import json as _json
+        from datetime import datetime as _datetime
+
+        _latest_obj = locals().get("latest", {})
+        _latest_decision_obj = locals().get("latest_decision", {})
+        _paper_status_obj = locals().get("paper_status", {})
+        _h5_freshness_obj = locals().get("h5_context_freshness", {})
+
+        _run_key_candidates = [
+            locals().get("latest_input_hash"),
+            _latest_obj.get("input_hash") if isinstance(_latest_obj, dict) else None,
+            _latest_obj.get("latest_input_hash") if isinstance(_latest_obj, dict) else None,
+            _latest_obj.get("decision_id") if isinstance(_latest_obj, dict) else None,
+            _latest_obj.get("latest_decision_id") if isinstance(_latest_obj, dict) else None,
+            _latest_decision_obj.get("input_hash") if isinstance(_latest_decision_obj, dict) else None,
+            _latest_decision_obj.get("decision_id") if isinstance(_latest_decision_obj, dict) else None,
+            _paper_status_obj.get("latest_decision_id") if isinstance(_paper_status_obj, dict) else None,
+            latest_course_uid,
+        ]
+
+        for _run_key in _run_key_candidates:
+            _run_key = str(_run_key or "").strip()
+            if _run_key and _run_key != "ND":
+                cloud_ready_shadow_latest_run_key = _run_key
+                break
+
+        _legacy_stale = (
+            str(_h5_freshness_obj.get("latest_h5_context_fresh_oui_non", "non")).strip().lower() == "non"
+        )
+
+        _current_green = (
+            cloud_ready is not True
+            and h5_auto_context_ready_oui_non == "oui"
+            and str(h5_auto_context_course_uid).strip() != "ND"
+            and str(latest_course_uid).strip() != "ND"
+            and str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
+            and h5_auto_context_rows_ok_oui_non == "oui"
+            and h5_auto_context_top_cotes_ok_oui_non == "oui"
+            and h5_auto_context_mouvements_ok_oui_non == "oui"
+            and h5_auto_context_strict_closed_oui_non == "oui"
+            and h5_auto_context_ticket_real_no_bet_oui_non == "oui"
+            and _legacy_stale is True
+        )
+
+        cloud_ready_shadow_current_green_oui_non = "oui" if _current_green else "non"
+
+        if not _current_green:
+            if cloud_ready is True:
+                cloud_ready_shadow_last_mismatch_reason = "LEGACY_CLOUD_READY_ALREADY_TRUE"
+            elif h5_auto_context_ready_oui_non != "oui":
+                cloud_ready_shadow_last_mismatch_reason = "H5_AUTO_CONTEXT_NOT_READY"
+            elif str(h5_auto_context_course_uid).strip() != str(latest_course_uid).strip():
+                cloud_ready_shadow_last_mismatch_reason = "H5_AUTO_CONTEXT_NOT_ALIGNED_WITH_LATEST"
+            elif not _legacy_stale:
+                cloud_ready_shadow_last_mismatch_reason = "LEGACY_H5_CONTEXT_NOT_STALE"
+            else:
+                cloud_ready_shadow_last_mismatch_reason = "H5_AUTO_CONTEXT_SHADOW_GREEN_CONDITION_FAILED"
+        else:
+            cloud_ready_shadow_last_mismatch_reason = "CURRENT_RUN_GREEN_WAITING_AUDIT_HISTORY"
+
+        _audit_doc = {
+            "audit_version": cloud_ready_shadow_audit_version,
+            "required_runs": cloud_ready_shadow_required_runs,
+            "history": [],
+        }
+
+        _bucket, _bucket_error = get_gcs_bucket()
+        if _bucket is None:
+            cloud_ready_shadow_audit_error = f"GCS_BUCKET_ERROR:{_bucket_error}"
+            cloud_ready_shadow_last_mismatch_reason = "AUDIT_STORAGE_UNAVAILABLE"
+        else:
+            _blob = _bucket.blob(cloud_ready_shadow_audit_path)
+
+            try:
+                if _blob.exists():
+                    _raw = _blob.download_as_text(encoding="utf-8")
+                    _loaded = _json.loads(_raw or "{}")
+                    if isinstance(_loaded, dict):
+                        _audit_doc = _loaded
+            except Exception as _read_exc:
+                cloud_ready_shadow_audit_error = f"READ_AUDIT_ERROR:{type(_read_exc).__name__}:{_read_exc}"
+
+            _history = _audit_doc.get("history", [])
+            if not isinstance(_history, list):
+                _history = []
+
+            # Anti-inflation : un meme run_key ne doit pas compter plusieurs fois.
+            _history = [
+                _row for _row in _history
+                if isinstance(_row, dict)
+                and str(_row.get("run_key", "")).strip() != cloud_ready_shadow_latest_run_key
+            ]
+
+            _history.append({
+                "run_key": cloud_ready_shadow_latest_run_key,
+                "course_uid": str(latest_course_uid),
+                "h5_auto_context_course_uid": str(h5_auto_context_course_uid),
+                "green_oui_non": cloud_ready_shadow_current_green_oui_non,
+                "reason": cloud_ready_shadow_last_mismatch_reason,
+                "cloud_ready_legacy_oui_non": "oui" if cloud_ready is True else "non",
+                "h5_auto_context_ready_oui_non": h5_auto_context_ready_oui_non,
+                "h5_auto_context_ready_for_cloud_gate_oui_non": (
+                    "oui" if _current_green else "non"
+                ),
+                "legacy_h5_context_stale_oui_non": "oui" if _legacy_stale else "non",
+                "recorded_at_utc": _datetime.utcnow().isoformat() + "Z",
+            })
+
+            _history = _history[-20:]
+
+            _consecutive_green = 0
+            for _row in reversed(_history):
+                if isinstance(_row, dict) and _row.get("green_oui_non") == "oui":
+                    _consecutive_green += 1
+                else:
+                    break
+
+            cloud_ready_shadow_green_runs = _consecutive_green
+            cloud_ready_shadow_audit_ok_oui_non = (
+                "oui" if _consecutive_green >= cloud_ready_shadow_required_runs else "non"
+            )
+
+            if cloud_ready_shadow_audit_ok_oui_non != "oui" and _current_green:
+                cloud_ready_shadow_last_mismatch_reason = (
+                    f"NOT_ENOUGH_CONSECUTIVE_GREEN_RUNS_{_consecutive_green}_OF_{cloud_ready_shadow_required_runs}"
+                )
+                if _history:
+                    _history[-1]["reason"] = cloud_ready_shadow_last_mismatch_reason
+
+            _audit_doc = {
+                "audit_version": cloud_ready_shadow_audit_version,
+                "required_runs": cloud_ready_shadow_required_runs,
+                "green_runs": cloud_ready_shadow_green_runs,
+                "audit_ok_oui_non": cloud_ready_shadow_audit_ok_oui_non,
+                "latest_run_key": cloud_ready_shadow_latest_run_key,
+                "latest_reason": cloud_ready_shadow_last_mismatch_reason,
+                "history": _history,
+                "doctrine": "Audit shadow uniquement. Ne modifie jamais cloud_ready ni strict_allowed_global.",
+            }
+
+            try:
+                _blob.upload_from_string(
+                    _json.dumps(_audit_doc, ensure_ascii=False, indent=2),
+                    content_type="application/json",
+                )
+            except Exception as _write_exc:
+                cloud_ready_shadow_audit_error = f"WRITE_AUDIT_ERROR:{type(_write_exc).__name__}:{_write_exc}"
+
+    except Exception as _audit_exc:
+        cloud_ready_shadow_audit_ok_oui_non = "non"
+        cloud_ready_shadow_current_green_oui_non = "non"
+        cloud_ready_shadow_audit_error = f"{type(_audit_exc).__name__}:{_audit_exc}"
+        cloud_ready_shadow_last_mismatch_reason = "AUDIT_EXCEPTION"
+
     return {
         "ok": True,
         "source_pack_status": "OK" if source_pack.get("ok") else "KO",
@@ -5409,6 +5577,17 @@ def gpi_status():
             and str(h5_context_freshness.get("latest_h5_context_fresh_oui_non", "non")).strip().lower() == "non"
             else "non"
         ),
+
+        # GPI STATUS CLOUD READY SHADOW AUDIT V0_1
+        "cloud_ready_shadow_audit_version": cloud_ready_shadow_audit_version,
+        "cloud_ready_shadow_required_runs": cloud_ready_shadow_required_runs,
+        "cloud_ready_shadow_green_runs": cloud_ready_shadow_green_runs,
+        "cloud_ready_shadow_current_green_oui_non": cloud_ready_shadow_current_green_oui_non,
+        "cloud_ready_shadow_audit_ok_oui_non": cloud_ready_shadow_audit_ok_oui_non,
+        "cloud_ready_shadow_last_mismatch_reason": cloud_ready_shadow_last_mismatch_reason,
+        "cloud_ready_shadow_audit_error": cloud_ready_shadow_audit_error,
+        "cloud_ready_shadow_audit_path": cloud_ready_shadow_audit_path,
+        "cloud_ready_shadow_latest_run_key": cloud_ready_shadow_latest_run_key,
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
         "source_pack_manifest_sha256": source_pack.get("manifest_sha256", "ND"),
         "source_documents_count": source_pack.get("source_documents_count", 0),
@@ -6920,6 +7099,15 @@ def action_status():
         "cloud_ready_auto_context_shadow_oui_non",
         "cloud_ready_shadow_reason",
         "cloud_ready_migration_candidate_oui_non",
+        "cloud_ready_shadow_audit_version",
+        "cloud_ready_shadow_required_runs",
+        "cloud_ready_shadow_green_runs",
+        "cloud_ready_shadow_current_green_oui_non",
+        "cloud_ready_shadow_audit_ok_oui_non",
+        "cloud_ready_shadow_last_mismatch_reason",
+        "cloud_ready_shadow_audit_error",
+        "cloud_ready_shadow_audit_path",
+        "cloud_ready_shadow_latest_run_key",
         "legacy_h5_context_stale_oui_non",
     ]:
         compact[_h5_ready_key] = payload.get(_h5_ready_key, "ND")
