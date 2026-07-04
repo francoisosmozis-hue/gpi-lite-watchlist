@@ -5272,6 +5272,37 @@ def gpi_status():
         h5_auto_context_ready_oui_non = "non"
         h5_auto_context_health_error = f"{type(exc).__name__}:{exc}"
 
+    # GPI STATUS H5 AUTO CONTEXT LATEST UID SAFE V0_1
+    # Variable locale securisee pour le shadow gate.
+    # Informatif uniquement : ne modifie pas cloud_ready ni le strict.
+    latest_course_uid = "ND"
+    try:
+        _latest_obj = locals().get("latest", {})
+        _latest_decision_obj = locals().get("latest_decision", {})
+        _paper_status_obj = locals().get("paper_status", {})
+        _h5_freshness_obj = locals().get("h5_context_freshness", {})
+
+        _latest_uid_candidates = [
+            locals().get("latest_course_uid"),
+            _latest_obj.get("course_uid") if isinstance(_latest_obj, dict) else None,
+            _latest_obj.get("course_key") if isinstance(_latest_obj, dict) else None,
+            _latest_obj.get("latest_course_uid") if isinstance(_latest_obj, dict) else None,
+            _latest_decision_obj.get("course_uid") if isinstance(_latest_decision_obj, dict) else None,
+            _latest_decision_obj.get("course_key") if isinstance(_latest_decision_obj, dict) else None,
+            _latest_decision_obj.get("latest_course_uid") if isinstance(_latest_decision_obj, dict) else None,
+            _paper_status_obj.get("latest_course_uid") if isinstance(_paper_status_obj, dict) else None,
+            _h5_freshness_obj.get("latest_h5_auto_brief_course_uid") if isinstance(_h5_freshness_obj, dict) else None,
+        ]
+
+        for _candidate_uid in _latest_uid_candidates:
+            _candidate_uid = str(_candidate_uid or "").strip()
+            if _candidate_uid and _candidate_uid != "ND":
+                latest_course_uid = _candidate_uid
+                break
+
+    except Exception:
+        latest_course_uid = "ND"
+
     return {
         "ok": True,
         "source_pack_status": "OK" if source_pack.get("ok") else "KO",
