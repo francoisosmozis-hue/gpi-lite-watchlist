@@ -8382,6 +8382,63 @@ def action_h5_report(limit: int = 8):
             ],
         )
 
+    # GPI H5 REPORT AUTO BRIEF SYNC V0_1
+    # /gpi/brief peut provenir de latest_decision_engine_outputs.csv et ne pas
+    # transporter h5_auto_context_sync. Dans ce cas, tenter d'enrichir le brief
+    # depuis latest_h5_auto_brief.json uniquement si le course_uid est identique.
+    try:
+        brief_sync = brief.get("h5_auto_context_sync") if isinstance(brief, dict) else None
+
+        if not isinstance(brief_sync, dict) or not brief_sync.get("context_gcs_uri"):
+            auto_brief, auto_brief_source = _h5r_load_json_candidates(
+                local_names=["latest_h5_auto_brief.json"],
+                gcs_names=["gpi-lite/outputs/latest_h5_auto_brief.json"],
+            )
+
+            if not isinstance(auto_brief, dict):
+                auto_brief = {}
+
+            brief_course_uid_for_sync = _h5r_pick(
+                brief,
+                "course_uid",
+                "latest_course_uid",
+                default="ND",
+            )
+            auto_brief_course_uid = str(auto_brief.get("course_uid", "ND") or "ND").strip()
+
+            try:
+                brief_sync_norm = _h5auto_normalize_course_key(brief_course_uid_for_sync)
+                auto_brief_sync_norm = _h5auto_normalize_course_key(auto_brief_course_uid)
+            except Exception:
+                brief_sync_norm = str(brief_course_uid_for_sync or "").strip().lower()
+                auto_brief_sync_norm = str(auto_brief_course_uid or "").strip().lower()
+
+            auto_brief_aligned = bool(
+                brief_sync_norm
+                and auto_brief_sync_norm
+                and brief_sync_norm != "nd"
+                and auto_brief_sync_norm != "nd"
+                and brief_sync_norm == auto_brief_sync_norm
+            )
+
+            if auto_brief_aligned and isinstance(auto_brief.get("h5_auto_context_sync"), dict):
+                brief["h5_auto_context_sync"] = auto_brief.get("h5_auto_context_sync")
+                brief["h5_auto_context_sync_injected_oui_non"] = "oui"
+                brief["h5_auto_context_sync_source"] = auto_brief_source
+                brief["h5_auto_context_sync_auto_brief_course_uid"] = auto_brief_course_uid
+            else:
+                brief["h5_auto_context_sync_injected_oui_non"] = "non"
+                brief["h5_auto_context_sync_injection_reason"] = "LATEST_H5_AUTO_BRIEF_COURSE_MISMATCH_OR_SYNC_ABSENT"
+                brief["h5_auto_context_sync_auto_brief_course_uid"] = auto_brief_course_uid
+                brief["h5_auto_context_sync_auto_brief_source"] = auto_brief_source
+
+    except Exception as exc:
+        try:
+            brief["h5_auto_context_sync_injected_oui_non"] = "non"
+            brief["h5_auto_context_sync_injection_error"] = f"{type(exc).__name__}:{exc}"
+        except Exception:
+            pass
+
     h5_context, h5_context_source = _h5r_load_latest_h5_context()
     snapshot = _h5r_load_snapshot_rows(h5_context, brief)
 
@@ -8564,6 +8621,18 @@ def action_h5_report(limit: int = 8):
             "brief_course_uid": snapshot.get("mismatch_brief_course_uid", _h5r_pick(brief, "course_uid", "latest_course_uid", default="ND")),
             "snapshot_course_key_before_guard": snapshot.get("mismatch_snapshot_course_key", snapshot.get("course_key", "ND")),
             "note": "SG référence = snapshot 9h ; SG H-5 = snapshot H-5. Variation = (SG_H5 - SG_9H) / SG_9H.",
+            "h5_auto_context_sync_injected_oui_non": brief.get("h5_auto_context_sync_injected_oui_non", "ND"),
+            "h5_auto_context_sync_injection_reason": brief.get("h5_auto_context_sync_injection_reason", ""),
+            "h5_auto_context_sync_injection_error": brief.get("h5_auto_context_sync_injection_error", ""),
+            "h5_auto_context_sync_auto_brief_course_uid": brief.get("h5_auto_context_sync_auto_brief_course_uid", ""),
+            "auto_context_used_oui_non": snapshot.get("auto_context_used_oui_non", "ND"),
+            "auto_context_aligned_oui_non": snapshot.get("auto_context_aligned_oui_non", "ND"),
+            "legacy_context_mismatch_oui_non": snapshot.get("legacy_context_mismatch_oui_non", "ND"),
+            "snapshot_kind": snapshot.get("snapshot_kind", "LEGACY_H5_CONTEXT"),
+            "auto_context_course_uid": snapshot.get("auto_context_course_uid", "ND"),
+            "auto_context_mismatch_reason": snapshot.get("auto_context_mismatch_reason", ""),
+            "auto_context_error": snapshot.get("auto_context_error", ""),
+            "auto_context_source": snapshot.get("auto_context_source", {}),
         },
         "top_cotes": top_marche,
         "mouvements": mouvements,
