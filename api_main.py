@@ -567,6 +567,88 @@ def read_latest_h5_context() -> dict:
             "error": str(exc)
         }
 
+
+def _gpi_norm_h5_course_key_for_compare(value) -> str:
+    """
+    Normalisation robuste pour comparer course_key et course_uid.
+    Read-only. Ne modifie aucune donnee source.
+    """
+    try:
+        return _h5auto_normalize_course_key(value)
+    except Exception:
+        import re
+        import unicodedata
+
+        s = str(value or "").lower()
+        s = s.replace("_pronostics & cotes", "")
+        s = s.replace("pronostics & cotes", "")
+
+        # Supprime les accents pour eviter les problemes d'encodage console.
+        s = unicodedata.normalize("NFKD", s)
+        s = "".join(ch for ch in s if not unicodedata.combining(ch))
+
+        s = re.sub(r"[^a-z0-9]+", " ", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+def _gpi_latest_h5_context_freshness() -> dict:
+    """
+    Controle read-only.
+    Ne modifie pas GCS.
+    Ne cree jamais de contexte synthetique.
+    Sert uniquement a refuser un latest_h5_context obsolete.
+    """
+    context = read_latest_h5_context()
+
+    brief = {
+        "ok": False,
+        "reason": "LATEST_H5_AUTO_BRIEF_NOT_READ",
+    }
+
+    try:
+        latest_func = globals().get("gpi_latest_h5_auto_brief")
+        if callable(latest_func):
+            brief = latest_func()
+    except Exception as exc:
+        brief = {
+            "ok": False,
+            "reason": f"LATEST_H5_AUTO_BRIEF_READ_ERROR:{type(exc).__name__}:{exc}",
+        }
+
+    context_course_key = str(context.get("course_key", "") if isinstance(context, dict) else "").strip()
+    brief_course_uid = str(brief.get("course_uid", "") if isinstance(brief, dict) else "").strip()
+
+    context_norm = _gpi_norm_h5_course_key_for_compare(context_course_key)
+    brief_norm = _gpi_norm_h5_course_key_for_compare(brief_course_uid)
+
+    context_ok = isinstance(context, dict) and context.get("ok") is True and context_course_key not in {"", "ND"}
+    brief_ok = isinstance(brief, dict) and brief.get("ok") is True and brief_course_uid not in {"", "ND"}
+
+    mismatch = bool(
+        context_ok
+        and brief_ok
+        and context_norm
+        and brief_norm
+        and context_norm != brief_norm
+    )
+
+    fresh = bool(context_ok and brief_ok and not mismatch)
+
+    return {
+        "ok": True,
+        "latest_h5_context_exists_oui_non": "oui" if context_ok else "non",
+        "latest_h5_auto_brief_exists_oui_non": "oui" if brief_ok else "non",
+        "latest_h5_context_fresh": fresh,
+        "latest_h5_context_fresh_oui_non": "oui" if fresh else "non",
+        "latest_h5_context_mismatch": mismatch,
+        "latest_h5_context_mismatch_oui_non": "oui" if mismatch else "non",
+        "latest_h5_context_course_key": context_course_key or "ND",
+        "latest_h5_auto_brief_course_uid": brief_course_uid or "ND",
+        "latest_h5_context_norm": context_norm or "ND",
+        "latest_h5_auto_brief_norm": brief_norm or "ND",
+        "reason": "OK" if fresh else ("H5_CONTEXT_COURSE_MISMATCH" if mismatch else "H5_CONTEXT_NOT_FRESH_OR_MISSING"),
+    }
+
 def write_decision_lite_aliases(course_key: str) -> dict:
     ensure_dirs()
 
@@ -4793,7 +4875,7 @@ def gpi_status():
     cloud_brief = get_latest_brief_from_cloud_payload()
     cloud_ok = cloud_brief.get("ok") is True
 
-    cloud_ready = all(
+    cloud_ready_files = all(
         cloud_files[key].get("exists") is True
         for key in [
             "daily_watchlist",
@@ -4802,6 +4884,12 @@ def gpi_status():
             "decision_lite",
             "quality_check",
         ]
+    )
+
+    h5_context_freshness = _gpi_latest_h5_context_freshness()
+    cloud_ready = bool(
+        cloud_ready_files
+        and h5_context_freshness.get("latest_h5_context_fresh") is True
     )
 
     paper_kpi = get_paper_kpi_status()
@@ -4961,6 +5049,12 @@ def gpi_status():
         "local_files": local_files,
         "cloud_files": cloud_files,
         "cloud_ready": cloud_ready,
+        "cloud_ready_files": cloud_ready_files,
+        "latest_h5_context_fresh_oui_non": h5_context_freshness.get("latest_h5_context_fresh_oui_non", "non"),
+        "latest_h5_context_mismatch_oui_non": h5_context_freshness.get("latest_h5_context_mismatch_oui_non", "non"),
+        "latest_h5_context_course_key": h5_context_freshness.get("latest_h5_context_course_key", "ND"),
+        "latest_h5_auto_brief_course_uid": h5_context_freshness.get("latest_h5_auto_brief_course_uid", "ND"),
+        "latest_h5_context_freshness_reason": h5_context_freshness.get("reason", "ND"),
         "quality_status_local": quality.get("status", "ND"),
         "quality_details_local": quality.get("details", "ND"),
         "paper_trading_exists": paper_status.get("exists", False),
@@ -5541,13 +5635,18 @@ def gpi_brief(course_uid: Optional[str] = None):
         return get_brief_for_course_key_payload(course_uid)
 
     latest_context = read_latest_h5_context()
+    h5_context_freshness = _gpi_latest_h5_context_freshness()
 
-    if latest_context.get("ok"):
+    if (
+        latest_context.get("ok")
+        and h5_context_freshness.get("latest_h5_context_fresh") is True
+    ):
         course_key = str(latest_context.get("course_key", "")).strip()
         payload = get_brief_for_course_key_payload(course_key)
 
         if payload.get("ok"):
             payload["latest_h5_context"] = latest_context
+            payload["latest_h5_context_freshness"] = h5_context_freshness
             return payload
 
         return {
@@ -5555,6 +5654,7 @@ def gpi_brief(course_uid: Optional[str] = None):
             "source": "none",
             "course_key": course_key,
             "latest_h5_context": latest_context,
+            "latest_h5_context_freshness": h5_context_freshness,
             "error": "brief H-5 frais introuvable pour la course traitee",
             "detail": payload,
             "brief": "Aucun brief frais exploitable pour la derniere course H-5."
@@ -5563,7 +5663,12 @@ def gpi_brief(course_uid: Optional[str] = None):
     cloud_payload = get_latest_brief_from_cloud_payload()
 
     if cloud_payload.get("ok"):
-        cloud_payload["warning"] = "Aucun latest_h5_context.json. Brief global retourne par fallback."
+        cloud_payload["latest_h5_context"] = latest_context
+        cloud_payload["latest_h5_context_freshness"] = h5_context_freshness
+        cloud_payload["warning"] = (
+            "latest_h5_context.json absent ou obsolete. "
+            "Brief global retourne par fallback latest_h5_auto_brief."
+        )
         return cloud_payload
 
     local_payload = gpi_chatgpt_brief()
@@ -6215,6 +6320,12 @@ def _action_compact_status(payload):
         "paper_kpi_global_result_pending_count": payload.get("paper_kpi_global_result_pending_count", "ND"),
         "paper_kpi_global_replay_ko_count": payload.get("paper_kpi_global_replay_ko_count", "ND"),
         "cloud_ready": _action_bool(payload.get("cloud_ready"), False),
+        "cloud_ready_files": _action_bool(payload.get("cloud_ready_files"), False),
+        "latest_h5_context_fresh_oui_non": _action_str(payload.get("latest_h5_context_fresh_oui_non"), "non"),
+        "latest_h5_context_mismatch_oui_non": _action_str(payload.get("latest_h5_context_mismatch_oui_non"), "non"),
+        "latest_h5_context_course_key": _action_str(payload.get("latest_h5_context_course_key"), "ND"),
+        "latest_h5_auto_brief_course_uid": _action_str(payload.get("latest_h5_auto_brief_course_uid"), "ND"),
+        "latest_h5_context_freshness_reason": _action_str(payload.get("latest_h5_context_freshness_reason"), "ND"),
         "cloud_brief_ok": _action_bool(payload.get("cloud_brief_ok"), False),
         "source_pack_status": _action_str(payload.get("source_pack_status")),
         "source_pack_error": _action_str(payload.get("source_pack_error"), ""),
