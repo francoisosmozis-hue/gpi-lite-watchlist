@@ -6477,8 +6477,9 @@ def action_run_results():
 
 
 # ============================================================
-# ACTION_H5_HISTORY_STATUS_V0_1
-# Lecture seule archive H5.
+# ACTION_H5_HISTORY_STATUS_GCS_READER_V0_2
+# Lecture archive H5.
+# Priorité GCS, fallback disque local Cloud Run.
 # Ne relance aucun traitement.
 # Ne crée jamais de ticket strict.
 # ============================================================
@@ -6487,43 +6488,150 @@ def action_run_results():
 def action_h5_history_status():
     from pathlib import Path
     import csv
+    import io
 
     root = Path("data/output/history/h5")
+    gcs_prefix = "gpi-lite/history/h5/"
 
-    json_files = sorted(root.glob("**/*.json")) if root.exists() else []
-    index_files = sorted(root.glob("**/index_*.csv")) if root.exists() else []
-
-    latest_json = json_files[-1] if json_files else None
-    latest_index = index_files[-1] if index_files else None
-
-    latest_index_rows = []
-    if latest_index and latest_index.exists():
+    def _safe_csv_tail_from_text(text: str, limit: int = 10):
         try:
-            with latest_index.open("r", encoding="utf-8", newline="") as f:
-                latest_index_rows = list(csv.DictReader(f))[-10:]
+            rows = list(csv.DictReader(io.StringIO(text or "")))
+            return rows[-limit:]
         except Exception:
-            latest_index_rows = []
+            return []
+
+    def _safe_csv_tail_from_path(path: Path, limit: int = 10):
+        try:
+            with path.open("r", encoding="utf-8", newline="") as f:
+                rows = list(csv.DictReader(f))
+            return rows[-limit:]
+        except Exception:
+            return []
+
+    def _gcs_uri(blob_name: str) -> str:
+        return f"gs://{GPI_BUCKET_NAME}/{blob_name}"
+
+    # --------------------------------------------------------
+    # 1. Fallback local Cloud Run
+    # --------------------------------------------------------
+    local_json_files = sorted(root.glob("**/*.json")) if root.exists() else []
+    local_index_files = sorted(root.glob("**/index_*.csv")) if root.exists() else []
+
+    local_latest_json = local_json_files[-1] if local_json_files else None
+    local_latest_index = local_index_files[-1] if local_index_files else None
+
+    local_latest_index_rows = (
+        _safe_csv_tail_from_path(local_latest_index)
+        if local_latest_index else []
+    )
+
+    # --------------------------------------------------------
+    # 2. Lecture GCS prioritaire
+    # --------------------------------------------------------
+    gcs_error = ""
+    gcs_json_blobs = []
+    gcs_index_blobs = []
+    gcs_latest_json = None
+    gcs_latest_index = None
+    gcs_latest_index_rows = []
+    gcs_read_ok = False
+
+    try:
+        bucket, bucket_error = get_gcs_bucket()
+
+        if bucket is None:
+            gcs_error = bucket_error or "GCS_BUCKET_UNAVAILABLE"
+        else:
+            blobs = list(bucket.list_blobs(prefix=gcs_prefix))
+
+            gcs_json_blobs = sorted(
+                [b for b in blobs if str(b.name).endswith(".json")],
+                key=lambda b: b.name,
+            )
+
+            gcs_index_blobs = sorted(
+                [
+                    b for b in blobs
+                    if Path(str(b.name)).name.startswith("index_")
+                    and str(b.name).endswith(".csv")
+                ],
+                key=lambda b: b.name,
+            )
+
+            gcs_latest_json = gcs_json_blobs[-1] if gcs_json_blobs else None
+            gcs_latest_index = gcs_index_blobs[-1] if gcs_index_blobs else None
+
+            if gcs_latest_index is not None:
+                index_text = gcs_latest_index.download_as_text(encoding="utf-8")
+                gcs_latest_index_rows = _safe_csv_tail_from_text(index_text)
+
+            gcs_read_ok = True
+
+    except Exception as exc:
+        gcs_error = f"GCS_HISTORY_STATUS_READ_ERROR:{type(exc).__name__}:{exc}"
+        gcs_read_ok = False
+
+    # --------------------------------------------------------
+    # 3. Sélection source : GCS d'abord, local sinon
+    # --------------------------------------------------------
+    gcs_has_history = bool(gcs_json_blobs or gcs_index_blobs)
+
+    if gcs_has_history:
+        history_data_source = "gcs"
+        json_file_count = len(gcs_json_blobs)
+        index_file_count = len(gcs_index_blobs)
+        latest_json = _gcs_uri(gcs_latest_json.name) if gcs_latest_json else "ND"
+        latest_index = _gcs_uri(gcs_latest_index.name) if gcs_latest_index else "ND"
+        latest_index_rows_sample = gcs_latest_index_rows
+    else:
+        history_data_source = "local_fallback"
+        json_file_count = len(local_json_files)
+        index_file_count = len(local_index_files)
+        latest_json = str(local_latest_json) if local_latest_json else "ND"
+        latest_index = str(local_latest_index) if local_latest_index else "ND"
+        latest_index_rows_sample = local_latest_index_rows
 
     return {
         "ok": True,
         "route": "/action/h5-history-status",
         "history_archive_version": "ARCHIVE_H5_HISTORY_V0_1",
+        "history_status_reader_version": "H5_HISTORY_STATUS_GCS_READER_V0_2",
+        "history_data_source": history_data_source,
+
         "read_only": "oui",
         "runs_h5": "non",
         "writes_gcs": "non",
         "strict_allowed_oui_non": "non",
         "strict_usable_oui_non": "non",
         "ticket_strict": "NO_BET",
+
+        "gcs_read_ok": gcs_read_ok,
+        "gcs_error": gcs_error,
+        "gcs_bucket": GPI_BUCKET_NAME,
+        "gcs_prefix": gcs_prefix,
+        "gcs_json_file_count": len(gcs_json_blobs),
+        "gcs_index_file_count": len(gcs_index_blobs),
+        "gcs_latest_json": _gcs_uri(gcs_latest_json.name) if gcs_latest_json else "ND",
+        "gcs_latest_index": _gcs_uri(gcs_latest_index.name) if gcs_latest_index else "ND",
+
+        "local_history_root": str(root),
+        "local_history_root_exists": root.exists(),
+        "local_json_file_count": len(local_json_files),
+        "local_index_file_count": len(local_index_files),
+        "local_latest_json": str(local_latest_json) if local_latest_json else "ND",
+        "local_latest_index": str(local_latest_index) if local_latest_index else "ND",
+
+        # Compatibilité avec l'ancien contrat de réponse
         "history_root": str(root),
         "history_root_exists": root.exists(),
-        "json_file_count": len(json_files),
-        "index_file_count": len(index_files),
-        "latest_json": str(latest_json) if latest_json else "ND",
-        "latest_index": str(latest_index) if latest_index else "ND",
-        "latest_index_rows_sample": latest_index_rows,
-        "strict_policy": "Lecture seule archive H5. Aucun ticket strict.",
-    }
+        "json_file_count": json_file_count,
+        "index_file_count": index_file_count,
+        "latest_json": latest_json,
+        "latest_index": latest_index,
+        "latest_index_rows_sample": latest_index_rows_sample,
 
+        "strict_policy": "Lecture archive H5. GCS prioritaire, fallback local. Aucun ticket strict.",
+    }
 
 # ============================================================
 # SCHEDULER_RUN_DUE_H5_V0_9_27
