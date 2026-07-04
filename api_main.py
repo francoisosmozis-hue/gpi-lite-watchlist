@@ -9491,6 +9491,148 @@ def health_h5_report_auto_context():
         }
 
 
+
+# CLOUD READY SHADOW AUDIT READ V0_1
+@app.get("/health/cloud-ready-shadow-audit")
+def health_cloud_ready_shadow_audit():
+    """
+    Lecture seule de l'audit cloud_ready shadow.
+    Ne modifie jamais cloud_ready, strict_allowed_global ni les tickets.
+    """
+    audit_path = "gpi-lite/outputs/cloud_ready_shadow_audit.json"
+
+    try:
+        import json as _json
+
+        bucket, bucket_error = get_gcs_bucket()
+        if bucket is None:
+            return {
+                "ok": False,
+                "health_version": "CLOUD_READY_SHADOW_AUDIT_READ_V0_1",
+                "audit_exists": False,
+                "audit_path": audit_path,
+                "error": f"GCS_BUCKET_ERROR:{bucket_error}",
+                "doctrine": "Lecture seule. Aucun gate reel modifie.",
+            }
+
+        blob = bucket.blob(audit_path)
+        if not blob.exists():
+            return {
+                "ok": False,
+                "health_version": "CLOUD_READY_SHADOW_AUDIT_READ_V0_1",
+                "audit_exists": False,
+                "audit_path": audit_path,
+                "audit_ok_oui_non": "non",
+                "required_runs": 3,
+                "green_runs": 0,
+                "latest_reason": "AUDIT_FILE_NOT_FOUND",
+                "history_count": 0,
+                "history_tail": [],
+                "doctrine": "Lecture seule. Aucun gate reel modifie.",
+            }
+
+        raw = blob.download_as_text(encoding="utf-8")
+        audit = _json.loads(raw or "{}")
+        if not isinstance(audit, dict):
+            audit = {}
+
+        history = audit.get("history", [])
+        if not isinstance(history, list):
+            history = []
+
+        required_runs = audit.get("required_runs", 3)
+        green_runs = audit.get("green_runs", 0)
+        audit_ok_oui_non = str(audit.get("audit_ok_oui_non", "non") or "non")
+
+        try:
+            required_runs = int(required_runs)
+        except Exception:
+            required_runs = 3
+
+        try:
+            green_runs = int(green_runs)
+        except Exception:
+            green_runs = 0
+
+        latest = history[-1] if history and isinstance(history[-1], dict) else {}
+
+        return {
+            "ok": True,
+            "health_version": "CLOUD_READY_SHADOW_AUDIT_READ_V0_1",
+            "audit_exists": True,
+            "audit_path": audit_path,
+            "audit_version": audit.get("audit_version", "ND"),
+            "audit_ok_oui_non": audit_ok_oui_non,
+            "required_runs": required_runs,
+            "green_runs": green_runs,
+            "remaining_green_runs": max(required_runs - green_runs, 0),
+            "migration_allowed_oui_non": (
+                "oui" if audit_ok_oui_non == "oui" and green_runs >= required_runs else "non"
+            ),
+            "latest_run_key": audit.get("latest_run_key", "ND"),
+            "latest_reason": audit.get("latest_reason", "ND"),
+            "latest_course_uid": latest.get("course_uid", "ND") if isinstance(latest, dict) else "ND",
+            "latest_h5_auto_context_course_uid": latest.get("h5_auto_context_course_uid", "ND") if isinstance(latest, dict) else "ND",
+            "latest_green_oui_non": latest.get("green_oui_non", "ND") if isinstance(latest, dict) else "ND",
+            "history_count": len(history),
+            "history_tail": history[-10:],
+            "doctrine": "Lecture seule. Ne modifie jamais cloud_ready, strict_allowed_global ni les tickets.",
+        }
+
+    except Exception as exc:
+        return {
+            "ok": False,
+            "health_version": "CLOUD_READY_SHADOW_AUDIT_READ_V0_1",
+            "audit_exists": False,
+            "audit_path": audit_path,
+            "error": f"{type(exc).__name__}:{exc}",
+            "doctrine": "Erreur lecture audit = aucune migration. Aucun gate reel modifie.",
+        }
+
+
+@app.get("/action/cloud-ready-shadow-audit")
+def action_cloud_ready_shadow_audit():
+    """
+    Facade compacte lecture seule pour l'audit cloud_ready shadow.
+    """
+    payload = _action_call(health_cloud_ready_shadow_audit, "health_cloud_ready_shadow_audit")
+
+    if payload.get("ok") is not True:
+        return {
+            "ok": False,
+            "facade_version": _ACTION_FACADE_VERSION,
+            "source_route": "/health/cloud-ready-shadow-audit",
+            "audit_exists": payload.get("audit_exists", False),
+            "audit_path": payload.get("audit_path", "gpi-lite/outputs/cloud_ready_shadow_audit.json"),
+            "audit_ok_oui_non": payload.get("audit_ok_oui_non", "non"),
+            "migration_allowed_oui_non": "non",
+            "error": _action_str(payload.get("error")),
+            "doctrine": "Lecture seule. Aucun gate reel modifie.",
+        }
+
+    return {
+        "ok": True,
+        "facade_version": _ACTION_FACADE_VERSION,
+        "source_route": "/health/cloud-ready-shadow-audit",
+        "audit_exists": payload.get("audit_exists", False),
+        "audit_path": payload.get("audit_path", "ND"),
+        "audit_version": payload.get("audit_version", "ND"),
+        "audit_ok_oui_non": payload.get("audit_ok_oui_non", "non"),
+        "required_runs": payload.get("required_runs", 3),
+        "green_runs": payload.get("green_runs", 0),
+        "remaining_green_runs": payload.get("remaining_green_runs", 3),
+        "migration_allowed_oui_non": payload.get("migration_allowed_oui_non", "non"),
+        "latest_run_key": payload.get("latest_run_key", "ND"),
+        "latest_reason": payload.get("latest_reason", "ND"),
+        "latest_course_uid": payload.get("latest_course_uid", "ND"),
+        "latest_h5_auto_context_course_uid": payload.get("latest_h5_auto_context_course_uid", "ND"),
+        "latest_green_oui_non": payload.get("latest_green_oui_non", "ND"),
+        "history_count": payload.get("history_count", 0),
+        "history_tail": payload.get("history_tail", []),
+        "strict_note": "Migration autorisee seulement si audit_ok_oui_non=oui. Ce endpoint ne modifie pas cloud_ready.",
+        "doctrine": "Lecture seule. Aucun ticket strict cree.",
+    }
+
 @app.get("/action/h5-decision-preview")
 def action_h5_decision_preview():
     """P9.1 preview route. Security-first H-5 decision engine."""
