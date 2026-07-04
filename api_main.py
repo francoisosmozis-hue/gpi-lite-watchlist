@@ -6491,7 +6491,7 @@ def action_h5_history_status():
     root = Path("data/output/history/h5")
 
     json_files = sorted(root.glob("**/*.json")) if root.exists() else []
-    index_files = sorted(root.glob("**/index_h5_history.csv")) if root.exists() else []
+    index_files = sorted(root.glob("**/index_*.csv")) if root.exists() else []
 
     latest_json = json_files[-1] if json_files else None
     latest_index = index_files[-1] if index_files else None
