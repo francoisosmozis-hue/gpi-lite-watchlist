@@ -2545,7 +2545,7 @@ def drive_run_h5_auto_plan():
                 "skipped_count": len(skipped),
                 "plan_sample": plan_rows[:10],
                 "skipped_sample": skipped[:10],
-                "plan_csv": str(plan_path),
+                "plan_csv": str(out_path),
                 "skipped_csv": str(skipped_path),
             },
             course_uid=plan_rows[0].get("course_uid", "H5_AUTO_PLAN_GLOBAL") if plan_rows else "H5_AUTO_PLAN_GLOBAL",
