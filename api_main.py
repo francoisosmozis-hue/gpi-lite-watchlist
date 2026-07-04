@@ -8535,6 +8535,82 @@ def action_h5_report(limit: int = 8):
                         or "ND"
                     ).strip()
 
+                    # Fallback GCS fuzzy : le slug stocke peut contenir des artefacts
+                    # d'encodage. On liste h5_contexts sur la date puis on valide par
+                    # comparaison du course_uid interne, pas par nom de fichier.
+                    if not direct_context.get("ok"):
+                        try:
+                            bucket, bucket_error = get_gcs_bucket()
+                            fuzzy_errors = []
+                            fuzzy_candidates = []
+                            fuzzy_match_blob = ""
+
+                            date_prefix = str(brief_course_uid_for_sync or "")[:10]
+                            date_slug = date_prefix.replace("_", "_").strip()
+
+                            if bucket is None:
+                                fuzzy_errors.append(f"GCS_BUCKET_ERROR:{bucket_error}")
+                            else:
+                                fuzzy_prefix = "gpi-lite/outputs/h5_contexts/" + date_slug
+                                for blob_obj in bucket.list_blobs(prefix=fuzzy_prefix):
+                                    blob_name = getattr(blob_obj, "name", "")
+                                    if not blob_name.endswith("_h5_auto_context.json"):
+                                        continue
+
+                                    fuzzy_payload, fuzzy_source = _h5r_load_json_candidates(
+                                        local_names=[],
+                                        gcs_names=[blob_name],
+                                    )
+
+                                    if not isinstance(fuzzy_payload, dict):
+                                        continue
+
+                                    fuzzy_course_uid = str(
+                                        fuzzy_payload.get("course_uid")
+                                        or fuzzy_payload.get("course_key")
+                                        or "ND"
+                                    ).strip()
+
+                                    try:
+                                        fuzzy_norm = _h5auto_normalize_course_key(fuzzy_course_uid)
+                                    except Exception:
+                                        fuzzy_norm = str(fuzzy_course_uid or "").strip().lower()
+
+                                    fuzzy_candidates.append({
+                                        "blob": blob_name,
+                                        "course_uid": fuzzy_course_uid,
+                                        "norm": fuzzy_norm,
+                                    })
+
+                                    if (
+                                        fuzzy_payload.get("ok") is True
+                                        and fuzzy_norm
+                                        and brief_sync_norm
+                                        and fuzzy_norm != "nd"
+                                        and brief_sync_norm != "nd"
+                                        and fuzzy_norm == brief_sync_norm
+                                    ):
+                                        direct_context = fuzzy_payload
+                                        direct_context_source = {
+                                            "kind": "gcs_fuzzy_course_uid_match",
+                                            "file": "gs://" + GCS_BUCKET + "/" + blob_name,
+                                            "searched_prefix": fuzzy_prefix,
+                                            "matched_blob": blob_name,
+                                            "direct_blob_attempted": direct_blob,
+                                            "errors": fuzzy_errors,
+                                        }
+                                        direct_context_course_uid = fuzzy_course_uid
+                                        fuzzy_match_blob = blob_name
+                                        direct_blob = blob_name
+                                        break
+
+                            brief["h5_auto_context_sync_fuzzy_candidates_count"] = len(fuzzy_candidates)
+                            brief["h5_auto_context_sync_fuzzy_match_blob"] = fuzzy_match_blob
+                            brief["h5_auto_context_sync_fuzzy_errors"] = fuzzy_errors
+
+                        except Exception as fuzzy_exc:
+                            brief["h5_auto_context_sync_fuzzy_error"] = f"{type(fuzzy_exc).__name__}:{fuzzy_exc}"
+
                     try:
                         direct_context_norm = _h5auto_normalize_course_key(direct_context_course_uid)
                     except Exception:
@@ -8804,6 +8880,10 @@ def action_h5_report(limit: int = 8):
             "h5_auto_context_sync_direct_blob": brief.get("h5_auto_context_sync_direct_blob", ""),
             "h5_auto_context_sync_direct_course_uid": brief.get("h5_auto_context_sync_direct_course_uid", ""),
             "h5_auto_context_sync_direct_source": brief.get("h5_auto_context_sync_direct_source", {}),
+            "h5_auto_context_sync_fuzzy_match_blob": brief.get("h5_auto_context_sync_fuzzy_match_blob", ""),
+            "h5_auto_context_sync_fuzzy_candidates_count": brief.get("h5_auto_context_sync_fuzzy_candidates_count", "ND"),
+            "h5_auto_context_sync_fuzzy_error": brief.get("h5_auto_context_sync_fuzzy_error", ""),
+            "h5_auto_context_sync_fuzzy_errors": brief.get("h5_auto_context_sync_fuzzy_errors", []),
             "auto_context_used_oui_non": snapshot.get("auto_context_used_oui_non", "ND"),
             "auto_context_aligned_oui_non": snapshot.get("auto_context_aligned_oui_non", "ND"),
             "legacy_context_mismatch_oui_non": snapshot.get("legacy_context_mismatch_oui_non", "ND"),
