@@ -8058,6 +8058,38 @@ def action_h5_report(limit: int = 8):
     h5_context, h5_context_source = _h5r_load_latest_h5_context()
     snapshot = _h5r_load_snapshot_rows(h5_context, brief)
 
+    # GPI H5 REPORT CONTEXT GUARD V0_1
+    # Ne jamais afficher un snapshot 9h/H5 appartenant a une autre course
+    # que le brief courant. Sinon lecture marche trompeuse.
+    brief_course_uid = _h5r_pick(brief, "course_uid", "latest_course_uid", default="ND")
+    snapshot_course_key_before_guard = str(snapshot.get("course_key", "ND") or "ND").strip()
+
+    try:
+        brief_course_norm = _h5auto_normalize_course_key(brief_course_uid)
+        snapshot_course_norm = _h5auto_normalize_course_key(snapshot_course_key_before_guard)
+    except Exception:
+        brief_course_norm = str(brief_course_uid or "").strip().lower()
+        snapshot_course_norm = str(snapshot_course_key_before_guard or "").strip().lower()
+
+    h5_report_context_mismatch = bool(
+        brief_course_norm
+        and snapshot_course_norm
+        and brief_course_norm != "nd"
+        and snapshot_course_norm != "nd"
+        and brief_course_norm != snapshot_course_norm
+    )
+
+    if h5_report_context_mismatch:
+        snapshot["context_mismatch"] = "oui"
+        snapshot["mismatch_reason"] = "H5_REPORT_CONTEXT_MISMATCH"
+        snapshot["mismatch_brief_course_uid"] = brief_course_uid
+        snapshot["mismatch_snapshot_course_key"] = snapshot_course_key_before_guard
+        snapshot["rows_9h"] = []
+        snapshot["rows_h5"] = []
+    else:
+        snapshot["context_mismatch"] = "non"
+        snapshot["mismatch_reason"] = ""
+
     safe_limit = max(1, min(int(limit or 8), 20))
 
     kill = _h5r_kill_reason(brief, odds_context)
@@ -8100,6 +8132,10 @@ def action_h5_report(limit: int = 8):
             "snapshot_reference_rows": len(snapshot.get("rows_9h") or []),
             "snapshot_h5_rows": len(snapshot.get("rows_h5") or []),
             "course_key": snapshot.get("course_key", "ND"),
+            "context_mismatch": snapshot.get("context_mismatch", "non"),
+            "mismatch_reason": snapshot.get("mismatch_reason", ""),
+            "brief_course_uid": snapshot.get("mismatch_brief_course_uid", _h5r_pick(brief, "course_uid", "latest_course_uid", default="ND")),
+            "snapshot_course_key_before_guard": snapshot.get("mismatch_snapshot_course_key", snapshot.get("course_key", "ND")),
             "note": "SG référence = snapshot 9h ; SG H-5 = snapshot H-5. Variation = (SG_H5 - SG_9H) / SG_9H.",
         },
         "top_cotes": top_marche,
@@ -8124,6 +8160,29 @@ def action_h5_report(limit: int = 8):
     }
 
     report.update(_gpi_bet_optimizer_fields(report))
+
+    if h5_report_context_mismatch:
+        report["top_cotes"] = []
+        report["mouvements"] = []
+        report["action_gpt"] = "NO BET : contexte H-5 incoherent entre brief et snapshots. Corriger latest_h5_context / capture H-5."
+        report["best_structure"] = "NO_BET"
+        report["ticket_paper_optimizer"] = "NO_BET"
+        report["stake_paper_optimizer"] = "0.0"
+        report["ticket_real_optimizer"] = "NO_BET"
+        report["segment_roi_optimizer"] = "NO_BET"
+        report["edge_status_optimizer"] = "EDGE_ABSENT"
+        report["economic_confidence"] = "NULLE"
+        report["variance_status"] = "BLOQUEE"
+        report["optimizer_hard_blocks"] = "H5_REPORT_CONTEXT_MISMATCH"
+        report["optimizer_reason_codes"] = "H5_REPORT_CONTEXT_MISMATCH"
+        report["cp_sec_optimizer_status"] = "REJECTED_HARD_BLOCK"
+        report["sp_optimizer_status"] = "REJECTED_HARD_BLOCK"
+        report["cp3_optimizer_status"] = "REJECTED_HARD_BLOCK"
+        report["cp3_audit_allowed"] = "non"
+        report["cp3_audit_ticket"] = "NO_BET"
+        report["cp3_audit_stake"] = "0.0"
+        report["cp3_audit_segment_roi"] = "NO_BET"
+        report["cp3_audit_reason"] = "H5_REPORT_CONTEXT_MISMATCH"
 
     return {
         "ok": True,
