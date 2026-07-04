@@ -591,7 +591,7 @@ def _gpi_norm_h5_course_key_for_compare(value) -> str:
         s = re.sub(r"\s+", " ", s).strip()
         return s
 
-def _gpi_latest_h5_context_freshness() -> dict:
+def _gpi_latest_h5_context_freshness(reference_course_uid: str = "", reference_source: str = "latest_h5_auto_brief") -> dict:
     """
     Controle read-only.
     Ne modifie pas GCS.
@@ -616,20 +616,28 @@ def _gpi_latest_h5_context_freshness() -> dict:
             "error": f"{type(exc).__name__}:{exc}",
         }
 
-    brief = {
-        "ok": False,
-        "reason": "LATEST_H5_AUTO_BRIEF_NOT_READ",
-    }
-
-    try:
-        latest_func = globals().get("gpi_latest_h5_auto_brief")
-        if callable(latest_func):
-            brief = latest_func()
-    except Exception as exc:
+    if reference_course_uid not in {None, "", "ND"}:
+        brief = {
+            "ok": True,
+            "course_uid": str(reference_course_uid),
+            "reference_source": str(reference_source or "explicit_reference"),
+        }
+    else:
         brief = {
             "ok": False,
-            "reason": f"LATEST_H5_AUTO_BRIEF_READ_ERROR:{type(exc).__name__}:{exc}",
+            "reason": "LATEST_H5_AUTO_BRIEF_NOT_READ",
         }
+
+        try:
+            latest_func = globals().get("gpi_latest_h5_auto_brief")
+            if callable(latest_func):
+                brief = latest_func()
+                reference_source = "latest_h5_auto_brief"
+        except Exception as exc:
+            brief = {
+                "ok": False,
+                "reason": f"LATEST_H5_AUTO_BRIEF_READ_ERROR:{type(exc).__name__}:{exc}",
+            }
 
     context_course_key = str(context.get("course_key", "") if isinstance(context, dict) else "").strip()
     brief_course_uid = str(brief.get("course_uid", "") if isinstance(brief, dict) else "").strip()
@@ -660,6 +668,7 @@ def _gpi_latest_h5_context_freshness() -> dict:
         "latest_h5_context_mismatch_oui_non": "oui" if mismatch else "non",
         "latest_h5_context_course_key": context_course_key or "ND",
         "latest_h5_auto_brief_course_uid": brief_course_uid or "ND",
+        "latest_h5_reference_source": str(reference_source or "ND"),
         "latest_h5_context_source": context_source,
         "latest_h5_context_norm": context_norm or "ND",
         "latest_h5_auto_brief_norm": brief_norm or "ND",
@@ -5680,11 +5689,24 @@ def gpi_brief(course_uid: Optional[str] = None):
     cloud_payload = get_latest_brief_from_cloud_payload()
 
     if cloud_payload.get("ok"):
+        payload_course_uid = (
+            cloud_payload.get("course_uid")
+            or cloud_payload.get("latest_course_uid")
+            or cloud_payload.get("course_key")
+            or "ND"
+        )
+
+        payload_context_freshness = _gpi_latest_h5_context_freshness(
+            reference_course_uid=str(payload_course_uid),
+            reference_source="gpi_brief_payload",
+        )
+
         cloud_payload["latest_h5_context"] = latest_context
-        cloud_payload["latest_h5_context_freshness"] = h5_context_freshness
+        cloud_payload["latest_h5_context_freshness"] = payload_context_freshness
+        cloud_payload["latest_h5_context_freshness_payload_scoped_oui_non"] = "oui"
         cloud_payload["warning"] = (
             "latest_h5_context.json absent ou obsolete. "
-            "Brief global retourne par fallback latest_h5_auto_brief."
+            "Brief global retourne par fallback latest_decision_engine_outputs."
         )
         return cloud_payload
 
