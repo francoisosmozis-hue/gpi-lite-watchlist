@@ -5183,9 +5183,99 @@ def gpi_status():
             "error": f"{type(exc).__name__}: {exc}",
         }
 
+    # GPI STATUS H5 AUTO CONTEXT READY V0_1
+    # Lecture seule : ne modifie jamais cloud_ready, strict_allowed_global ni les tickets.
+    h5_auto_context_ready_oui_non = "non"
+    h5_auto_context_health_source = "/health/h5-report-auto-context"
+    h5_auto_context_health_error = ""
+    h5_auto_context_course_uid = "ND"
+    h5_auto_context_snapshot_kind = "ND"
+    h5_auto_context_rows_ok_oui_non = "non"
+    h5_auto_context_top_cotes_ok_oui_non = "non"
+    h5_auto_context_mouvements_ok_oui_non = "non"
+    h5_auto_context_strict_closed_oui_non = "ND"
+    h5_auto_context_ticket_real_no_bet_oui_non = "ND"
+    legacy_h5_context_stale_oui_non = "ND"
+
+    try:
+        legacy_h5_context_stale_oui_non = (
+            "oui" if latest_h5_context_fresh is False else "non"
+        )
+
+        h5_health = health_h5_report_auto_context()
+        if not isinstance(h5_health, dict):
+            h5_health = {}
+
+        h5_checks = h5_health.get("checks", {})
+        if not isinstance(h5_checks, dict):
+            h5_checks = {}
+
+        h5_summary = h5_health.get("summary", {})
+        if not isinstance(h5_summary, dict):
+            h5_summary = {}
+
+        h5_auto_context_course_uid = h5_health.get("course_uid", "ND")
+        h5_auto_context_snapshot_kind = h5_summary.get("snapshot_kind", "ND")
+
+        h5_auto_context_rows_ok_oui_non = (
+            "oui"
+            if h5_checks.get("snapshot_reference_rows_positive") is True
+            and h5_checks.get("snapshot_h5_rows_positive") is True
+            else "non"
+        )
+
+        h5_auto_context_top_cotes_ok_oui_non = (
+            "oui" if h5_checks.get("top_cotes_non_empty") is True else "non"
+        )
+
+        h5_auto_context_mouvements_ok_oui_non = (
+            "oui" if h5_checks.get("mouvements_non_empty") is True else "non"
+        )
+
+        h5_auto_context_strict_closed_oui_non = (
+            "oui" if h5_checks.get("strict_closed") is True else "non"
+        )
+
+        h5_auto_context_ticket_real_no_bet_oui_non = (
+            "oui" if h5_checks.get("ticket_real_no_bet") is True else "non"
+        )
+
+        h5_auto_context_ready_oui_non = (
+            "oui"
+            if h5_health.get("ok") is True
+            and h5_checks.get("context_mismatch_non") is True
+            and h5_checks.get("auto_context_used") is True
+            and h5_checks.get("auto_context_aligned") is True
+            and h5_checks.get("snapshot_kind_auto") is True
+            and h5_checks.get("snapshot_reference_rows_positive") is True
+            and h5_checks.get("snapshot_h5_rows_positive") is True
+            and h5_checks.get("top_cotes_non_empty") is True
+            and h5_checks.get("mouvements_non_empty") is True
+            and h5_checks.get("strict_closed") is True
+            and h5_checks.get("ticket_real_no_bet") is True
+            else "non"
+        )
+
+    except Exception as exc:
+        h5_auto_context_ready_oui_non = "non"
+        h5_auto_context_health_error = f"{type(exc).__name__}:{exc}"
+
     return {
         "ok": True,
         "source_pack_status": "OK" if source_pack.get("ok") else "KO",
+
+        # GPI STATUS H5 AUTO CONTEXT READY V0_1
+        "h5_auto_context_ready_oui_non": h5_auto_context_ready_oui_non,
+        "h5_auto_context_health_source": h5_auto_context_health_source,
+        "h5_auto_context_health_error": h5_auto_context_health_error,
+        "h5_auto_context_course_uid": h5_auto_context_course_uid,
+        "h5_auto_context_snapshot_kind": h5_auto_context_snapshot_kind,
+        "h5_auto_context_rows_ok_oui_non": h5_auto_context_rows_ok_oui_non,
+        "h5_auto_context_top_cotes_ok_oui_non": h5_auto_context_top_cotes_ok_oui_non,
+        "h5_auto_context_mouvements_ok_oui_non": h5_auto_context_mouvements_ok_oui_non,
+        "h5_auto_context_strict_closed_oui_non": h5_auto_context_strict_closed_oui_non,
+        "h5_auto_context_ticket_real_no_bet_oui_non": h5_auto_context_ticket_real_no_bet_oui_non,
+        "legacy_h5_context_stale_oui_non": legacy_h5_context_stale_oui_non,
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
         "source_pack_manifest_sha256": source_pack.get("manifest_sha256", "ND"),
         "source_documents_count": source_pack.get("source_documents_count", 0),
