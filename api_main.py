@@ -5282,7 +5282,11 @@ def gpi_status():
         _paper_status_obj = locals().get("paper_status", {})
         _h5_freshness_obj = locals().get("h5_context_freshness", {})
 
+        # Priorite shadow : la course latest doit suivre le brief H5 auto
+        # ou le gate courant, pas le paper_status qui peut pointer vers une autre course.
         _latest_uid_candidates = [
+            _h5_freshness_obj.get("latest_h5_auto_brief_course_uid") if isinstance(_h5_freshness_obj, dict) else None,
+            locals().get("latest_course_uid_for_gate"),
             locals().get("latest_course_uid"),
             _latest_obj.get("course_uid") if isinstance(_latest_obj, dict) else None,
             _latest_obj.get("course_key") if isinstance(_latest_obj, dict) else None,
@@ -5291,13 +5295,29 @@ def gpi_status():
             _latest_decision_obj.get("course_key") if isinstance(_latest_decision_obj, dict) else None,
             _latest_decision_obj.get("latest_course_uid") if isinstance(_latest_decision_obj, dict) else None,
             _paper_status_obj.get("latest_course_uid") if isinstance(_paper_status_obj, dict) else None,
-            _h5_freshness_obj.get("latest_h5_auto_brief_course_uid") if isinstance(_h5_freshness_obj, dict) else None,
         ]
 
-        for _candidate_uid in _latest_uid_candidates:
+        _latest_uid_source_names = [
+            "h5_context_freshness.latest_h5_auto_brief_course_uid",
+            "locals.latest_course_uid_for_gate",
+            "locals.latest_course_uid",
+            "latest.course_uid",
+            "latest.course_key",
+            "latest.latest_course_uid",
+            "latest_decision.course_uid",
+            "latest_decision.course_key",
+            "latest_decision.latest_course_uid",
+            "paper_status.latest_course_uid",
+        ]
+
+        for _idx, _candidate_uid in enumerate(_latest_uid_candidates):
             _candidate_uid = str(_candidate_uid or "").strip()
             if _candidate_uid and _candidate_uid != "ND":
                 latest_course_uid = _candidate_uid
+                try:
+                    cloud_ready_shadow_latest_uid_source = _latest_uid_source_names[_idx]
+                except Exception:
+                    cloud_ready_shadow_latest_uid_source = "UNKNOWN_SOURCE"
                 break
 
     except Exception:
@@ -5315,6 +5335,10 @@ def gpi_status():
     cloud_ready_shadow_audit_error = ""
     cloud_ready_shadow_audit_path = "gpi-lite/outputs/cloud_ready_shadow_audit.json"
     cloud_ready_shadow_latest_run_key = "ND"
+    # Conserve la source choisie par le bloc latest UID safe.
+    cloud_ready_shadow_latest_uid_source = str(
+        locals().get("cloud_ready_shadow_latest_uid_source", "ND") or "ND"
+    ).strip()
 
     try:
         import json as _json
@@ -5588,6 +5612,7 @@ def gpi_status():
         "cloud_ready_shadow_audit_error": cloud_ready_shadow_audit_error,
         "cloud_ready_shadow_audit_path": cloud_ready_shadow_audit_path,
         "cloud_ready_shadow_latest_run_key": cloud_ready_shadow_latest_run_key,
+        "cloud_ready_shadow_latest_uid_source": cloud_ready_shadow_latest_uid_source,
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
         "source_pack_manifest_sha256": source_pack.get("manifest_sha256", "ND"),
         "source_documents_count": source_pack.get("source_documents_count", 0),
@@ -7108,6 +7133,7 @@ def action_status():
         "cloud_ready_shadow_audit_error",
         "cloud_ready_shadow_audit_path",
         "cloud_ready_shadow_latest_run_key",
+        "cloud_ready_shadow_latest_uid_source",
         "legacy_h5_context_stale_oui_non",
     ]:
         compact[_h5_ready_key] = payload.get(_h5_ready_key, "ND")
