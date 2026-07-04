@@ -2067,6 +2067,94 @@ def _h5auto_extract_depart_time_from_morning_pdf(course_uid):
 
 
 
+
+
+# ============================================================
+# H5 HISTORY ARCHIVE V0_1
+# Conserve plans, captures, briefs, decisions et statuts H5.
+# Ce qui n'a pas ete horodate avant course n'est pas une decision live.
+# C'est au mieux un audit de rattrapage.
+# ============================================================
+
+from tools.archive_h5_history import (
+    archive_h5_artifact,
+    extract_date_course,
+)
+
+
+def _archive_h5_payload_safe(
+    *,
+    payload,
+    course_uid,
+    capture_label,
+    source_route,
+    artifact_type,
+    status,
+    reason,
+    decision_before_race_oui_non="ND",
+    result_known_at_decision="ND",
+    live_eligible_oui_non="non",
+    retro_audit_only_oui_non="non",
+):
+    """
+    Archive best-effort H5.
+    Ne doit jamais casser une route H5.
+    Ne cree aucun ticket reel.
+    Ne modifie aucun strict.
+    """
+    try:
+        archive_result = archive_h5_artifact(
+            base_dir="data/output",
+            payload=payload if isinstance(payload, dict) else {"payload": str(payload)},
+            course_uid=course_uid or "COURSE_ND",
+            date_course=extract_date_course(course_uid or ""),
+            capture_label=capture_label or "ND",
+            source_route=source_route,
+            artifact_type=artifact_type,
+            status=status,
+            reason=reason,
+            decision_before_race_oui_non=decision_before_race_oui_non,
+            result_known_at_decision=result_known_at_decision,
+            live_eligible_oui_non=live_eligible_oui_non,
+            retro_audit_only_oui_non=retro_audit_only_oui_non,
+        )
+
+        gcs_uploads = []
+
+        for local_key in ["artifact_path", "index_path"]:
+            local_value = archive_result.get(local_key)
+            if local_value:
+                local_path = Path(local_value)
+                try:
+                    rel_path = local_path.relative_to(Path("data/output/history/h5"))
+                    blob_name = f"gpi-lite/history/h5/{rel_path.as_posix()}"
+                    gcs_uploads.append(_h5auto_upload_file_to_gcs(local_path, blob_name))
+                except Exception as upload_exc:
+                    gcs_uploads.append({
+                        "ok": False,
+                        "reason": f"H5_HISTORY_GCS_UPLOAD_ERROR:{type(upload_exc).__name__}:{upload_exc}",
+                        "local_path": str(local_path),
+                    })
+
+        archive_result["gcs_uploads"] = gcs_uploads
+        archive_result["gcs_uploaded_count"] = len([x for x in gcs_uploads if isinstance(x, dict) and x.get("ok") is True])
+        archive_result["gcs_upload_ok"] = all(x.get("ok") is True for x in gcs_uploads) if gcs_uploads else False
+
+        return archive_result
+    except Exception as exc:
+        return {
+            "ok": False,
+            "archive_version": "ARCHIVE_H5_HISTORY_V0_1",
+            "error": str(exc),
+            "source_route": source_route,
+            "artifact_type": artifact_type,
+            "course_uid": course_uid or "COURSE_ND",
+            "ticket_real": "NO_BET",
+            "strict_allowed_oui_non": "non",
+        }
+
+
+
 def _h5auto_upload_file_to_gcs(local_path, blob_name):
     """
     Upload best-effort vers GCS.
@@ -2448,6 +2536,29 @@ def drive_run_h5_auto_plan():
     return {
         "ok": True,
         "phase": "h5_auto_plan",
+        "history_archive": _archive_h5_payload_safe(
+            payload={
+                "phase": "h5_auto_plan",
+                "watchlist_source": watchlist_source,
+                "watchlist_rows": len(watchlist_rows),
+                "planned_count": len(plan_rows),
+                "skipped_count": len(skipped),
+                "plan_sample": plan_rows[:10],
+                "skipped_sample": skipped[:10],
+                "plan_csv": str(plan_path),
+                "skipped_csv": str(skipped_path),
+            },
+            course_uid=plan_rows[0].get("course_uid", "H5_AUTO_PLAN_GLOBAL") if plan_rows else "H5_AUTO_PLAN_GLOBAL",
+            capture_label="PLAN",
+            source_route="/drive/run/h5-auto-plan",
+            artifact_type="h5_auto_plan",
+            status="LIVE_VALID_PRE_RACE",
+            reason="PLAN_CREATED",
+            decision_before_race_oui_non="oui",
+            result_known_at_decision="non",
+            live_eligible_oui_non="oui",
+            retro_audit_only_oui_non="non",
+        ),
         "watchlist_source": watchlist_source,
         "watchlist_rows": len(watchlist_rows),
         "morning_sync": {
@@ -2526,6 +2637,28 @@ def drive_run_h5_url_resolver():
     return {
         "ok": True,
         "phase": "h5_url_resolver",
+        "history_archive": _archive_h5_payload_safe(
+            payload={
+                "phase": "h5_url_resolver",
+                "report": report,
+                "rows_input": report.get("rows_input", "ND") if isinstance(report, dict) else "ND",
+                "rows_output": report.get("rows_output", "ND") if isinstance(report, dict) else "ND",
+                "unique_courses": report.get("unique_courses", "ND") if isinstance(report, dict) else "ND",
+                "url_ok_count": report.get("url_ok_count", "ND") if isinstance(report, dict) else "ND",
+                "url_not_found_count": report.get("url_not_found_count", "ND") if isinstance(report, dict) else "ND",
+                "low_confidence_count": report.get("low_confidence_count", "ND") if isinstance(report, dict) else "ND",
+            },
+            course_uid="H5_URL_RESOLVER_GLOBAL",
+            capture_label="URL_RESOLVED",
+            source_route="/drive/run/h5-url-resolver",
+            artifact_type="h5_url_resolver",
+            status="LIVE_VALID_PRE_RACE",
+            reason="URLS_RESOLVED",
+            decision_before_race_oui_non="oui",
+            result_known_at_decision="non",
+            live_eligible_oui_non="oui",
+            retro_audit_only_oui_non="non",
+        ),
         "download_plan": download_plan,
         "report": report,
         "upload_resolved": upload_resolved,
@@ -2689,6 +2822,48 @@ def drive_run_h5_auto_capture():
     return {
         "ok": True,
         "phase": "h5_auto_capture",
+        "history_archive": _archive_h5_payload_safe(
+            payload={
+                "phase": "h5_auto_capture",
+                "now": now_iso,
+                "rows_input": len(rows),
+                "capture_count": len([c for c in captures if c.get("ok")]),
+                "capture_error_count": len([c for c in captures if not c.get("ok")]),
+                "skipped_count": len(skipped),
+                "captures_sample": captures[:10],
+                "skipped_sample": skipped[:10],
+            },
+            course_uid=(
+                captures[0].get("course_uid", "H5_AUTO_CAPTURE_GLOBAL")
+                if captures else (
+                    skipped[0].get("course_uid", "H5_AUTO_CAPTURE_GLOBAL")
+                    if skipped else "H5_AUTO_CAPTURE_GLOBAL"
+                )
+            ),
+            capture_label=(
+                captures[0].get("capture_label", "CAPTURE")
+                if captures else (
+                    skipped[0].get("capture_label", "CAPTURE")
+                    if skipped else "CAPTURE"
+                )
+            ),
+            source_route="/drive/run/h5-auto-capture",
+            artifact_type="h5_auto_capture",
+            status=(
+                "LIVE_CAPTURED_PRE_RACE"
+                if len([c for c in captures if c.get("ok")]) > 0
+                else "LIVE_VALID_PRE_RACE"
+            ),
+            reason=(
+                "CAPTURE_ROUTE_COMPLETED"
+                if len([c for c in captures if c.get("ok")]) > 0
+                else "NO_CAPTURE_DUE_OR_CAPTURE_SKIPPED"
+            ),
+            decision_before_race_oui_non="oui",
+            result_known_at_decision="non",
+            live_eligible_oui_non="oui",
+            retro_audit_only_oui_non="non",
+        ),
         "now": now_iso,
         "download_resolved": download_resolved,
         "rows_input": len(rows),
@@ -3428,6 +3603,39 @@ def drive_run_h5_auto_brief():
     return {
         "ok": True,
         "phase": "h5_auto_brief",
+        "history_archive": _archive_h5_payload_safe(
+            payload={
+                "phase": "h5_auto_brief",
+                "rows_input": len(rows),
+                "matched_courses": len(processed),
+                "errors_count": len(errors),
+                "movement_rows_total": movement_rows_total,
+                "briefs_created": len(processed),
+                "processed_sample": processed[:10],
+                "errors_sample": errors[:10],
+            },
+            course_uid=(
+                processed[0].get("course_uid", "H5_AUTO_BRIEF_GLOBAL")
+                if processed else "H5_AUTO_BRIEF_GLOBAL"
+            ),
+            capture_label="H5",
+            source_route="/drive/run/h5-auto-brief",
+            artifact_type="h5_auto_brief",
+            status=(
+                "LIVE_BRIEF_CREATED_PRE_RACE"
+                if len(processed) > 0
+                else "LIVE_VALID_PRE_RACE"
+            ),
+            reason=(
+                "BRIEF_CREATED"
+                if len(processed) > 0
+                else "NO_BRIEF_CREATED"
+            ),
+            decision_before_race_oui_non="oui",
+            result_known_at_decision="non",
+            live_eligible_oui_non="oui",
+            retro_audit_only_oui_non="non",
+        ),
         "rows_input": len(rows),
         "matched_courses": len(processed),
         "errors_count": len(errors),
@@ -6266,6 +6474,57 @@ def action_run_results():
 
 
 
+
+
+# ============================================================
+# ACTION_H5_HISTORY_STATUS_V0_1
+# Lecture seule archive H5.
+# Ne relance aucun traitement.
+# Ne crée jamais de ticket strict.
+# ============================================================
+
+@app.get("/action/h5-history-status")
+def action_h5_history_status():
+    from pathlib import Path
+    import csv
+
+    root = Path("data/output/history/h5")
+
+    json_files = sorted(root.glob("**/*.json")) if root.exists() else []
+    index_files = sorted(root.glob("**/index_h5_history.csv")) if root.exists() else []
+
+    latest_json = json_files[-1] if json_files else None
+    latest_index = index_files[-1] if index_files else None
+
+    latest_index_rows = []
+    if latest_index and latest_index.exists():
+        try:
+            with latest_index.open("r", encoding="utf-8", newline="") as f:
+                latest_index_rows = list(csv.DictReader(f))[-10:]
+        except Exception:
+            latest_index_rows = []
+
+    return {
+        "ok": True,
+        "route": "/action/h5-history-status",
+        "history_archive_version": "ARCHIVE_H5_HISTORY_V0_1",
+        "read_only": "oui",
+        "runs_h5": "non",
+        "writes_gcs": "non",
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "history_root": str(root),
+        "history_root_exists": root.exists(),
+        "json_file_count": len(json_files),
+        "index_file_count": len(index_files),
+        "latest_json": str(latest_json) if latest_json else "ND",
+        "latest_index": str(latest_index) if latest_index else "ND",
+        "latest_index_rows_sample": latest_index_rows,
+        "strict_policy": "Lecture seule archive H5. Aucun ticket strict.",
+    }
+
+
 # ============================================================
 # SCHEDULER_RUN_DUE_H5_V0_9_27
 # Wrapper Cloud Scheduler : lance les traitements H10/H5 dus.
@@ -6323,12 +6582,39 @@ def scheduler_run_due_h5():
                 return value
         return default
 
+    history_items = []
+
+    for source_name, source_payload in [
+        ("capture", capture_payload),
+        ("brief", brief_payload),
+    ]:
+        if isinstance(source_payload, dict):
+            archive = source_payload.get("history_archive")
+            if isinstance(archive, dict):
+                item = dict(archive)
+                item["source"] = source_name
+                history_items.append(item)
+
+    history_archive_ok = bool(history_items) and all(
+        item.get("ok") is True for item in history_items
+    )
+
+    history_archive_paths = [
+        item.get("artifact_path")
+        for item in history_items
+        if item.get("artifact_path")
+    ]
+
     return {
         "ok": True,
         "h5_run_ok": bool(capture_ok or brief_ok),
         "run_status": "H5_RUN_OK" if (capture_ok or brief_ok) else "NO_H5_RUN_OR_SOURCE_MISSING",
         "route": "/scheduler/run-due-h5",
         "scheduler_version": "SCHEDULER_RUN_DUE_H5_V0_9_27",
+        "history_archive_ok": history_archive_ok,
+        "history_archive_count": len(history_items),
+        "history_archive_paths": history_archive_paths,
+        "history_archive_items": history_items[:10],
         "now_paris": now_paris.isoformat(),
         "runs_h5": "oui",
         "writes_gcs": "oui",
