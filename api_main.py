@@ -8427,10 +8427,86 @@ def action_h5_report(limit: int = 8):
                 brief["h5_auto_context_sync_source"] = auto_brief_source
                 brief["h5_auto_context_sync_auto_brief_course_uid"] = auto_brief_course_uid
             else:
-                brief["h5_auto_context_sync_injected_oui_non"] = "non"
-                brief["h5_auto_context_sync_injection_reason"] = "LATEST_H5_AUTO_BRIEF_COURSE_MISMATCH_OR_SYNC_ABSENT"
-                brief["h5_auto_context_sync_auto_brief_course_uid"] = auto_brief_course_uid
-                brief["h5_auto_context_sync_auto_brief_source"] = auto_brief_source
+                # Fallback direct : latest_h5_auto_brief peut pointer une autre course.
+                # On tente alors le contexte course-scope derive du brief courant.
+                try:
+                    import re
+                    import unicodedata
+
+                    def _h5r_slug_from_course_uid(value):
+                        raw = str(value or "").strip().lower()
+                        raw = unicodedata.normalize("NFKD", raw)
+                        raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
+                        raw = raw.replace("&", " ")
+                        raw = re.sub(r"[^a-z0-9]+", "_", raw)
+                        raw = re.sub(r"_+", "_", raw).strip("_")
+                        return raw
+
+                    direct_slug = _h5r_slug_from_course_uid(brief_course_uid_for_sync)
+                    direct_blob = (
+                        "gpi-lite/outputs/h5_contexts/"
+                        + direct_slug
+                        + "_h5_auto_context.json"
+                    )
+
+                    direct_context, direct_context_source = _h5r_load_json_candidates(
+                        local_names=[],
+                        gcs_names=[direct_blob],
+                    )
+
+                    if not isinstance(direct_context, dict):
+                        direct_context = {}
+
+                    direct_context_course_uid = str(
+                        direct_context.get("course_uid")
+                        or direct_context.get("course_key")
+                        or "ND"
+                    ).strip()
+
+                    try:
+                        direct_context_norm = _h5auto_normalize_course_key(direct_context_course_uid)
+                    except Exception:
+                        direct_context_norm = str(direct_context_course_uid or "").strip().lower()
+
+                    direct_aligned = bool(
+                        direct_context.get("ok") is True
+                        and brief_sync_norm
+                        and direct_context_norm
+                        and brief_sync_norm != "nd"
+                        and direct_context_norm != "nd"
+                        and brief_sync_norm == direct_context_norm
+                    )
+
+                    if direct_aligned:
+                        brief["h5_auto_context_sync"] = {
+                            "ok": True,
+                            "reason": "H5_AUTO_CONTEXT_DIRECT_COURSE_SCOPE",
+                            "course_uid": direct_context_course_uid,
+                            "context_gcs_uri": "gs://gpi-lite-watchlist-data/" + direct_blob,
+                            "strict_allowed_oui_non": "non",
+                            "ticket_strict": "NO_BET",
+                        }
+                        brief["h5_auto_context_sync_injected_oui_non"] = "oui"
+                        brief["h5_auto_context_sync_injection_reason"] = "DIRECT_COURSE_SCOPE_CONTEXT_FOUND"
+                        brief["h5_auto_context_sync_auto_brief_course_uid"] = auto_brief_course_uid
+                        brief["h5_auto_context_sync_direct_course_uid"] = direct_context_course_uid
+                        brief["h5_auto_context_sync_direct_blob"] = direct_blob
+                        brief["h5_auto_context_sync_direct_source"] = direct_context_source
+                    else:
+                        brief["h5_auto_context_sync_injected_oui_non"] = "non"
+                        brief["h5_auto_context_sync_injection_reason"] = "LATEST_H5_AUTO_BRIEF_MISMATCH_AND_DIRECT_CONTEXT_NOT_FOUND_OR_MISMATCH"
+                        brief["h5_auto_context_sync_auto_brief_course_uid"] = auto_brief_course_uid
+                        brief["h5_auto_context_sync_auto_brief_source"] = auto_brief_source
+                        brief["h5_auto_context_sync_direct_blob"] = direct_blob
+                        brief["h5_auto_context_sync_direct_course_uid"] = direct_context_course_uid
+                        brief["h5_auto_context_sync_direct_source"] = direct_context_source
+
+                except Exception as direct_exc:
+                    brief["h5_auto_context_sync_injected_oui_non"] = "non"
+                    brief["h5_auto_context_sync_injection_reason"] = "DIRECT_COURSE_SCOPE_CONTEXT_ERROR"
+                    brief["h5_auto_context_sync_injection_error"] = f"{type(direct_exc).__name__}:{direct_exc}"
+                    brief["h5_auto_context_sync_auto_brief_course_uid"] = auto_brief_course_uid
+                    brief["h5_auto_context_sync_auto_brief_source"] = auto_brief_source
 
     except Exception as exc:
         try:
@@ -8653,6 +8729,9 @@ def action_h5_report(limit: int = 8):
             "h5_auto_context_sync_injection_reason": brief.get("h5_auto_context_sync_injection_reason", ""),
             "h5_auto_context_sync_injection_error": brief.get("h5_auto_context_sync_injection_error", ""),
             "h5_auto_context_sync_auto_brief_course_uid": brief.get("h5_auto_context_sync_auto_brief_course_uid", ""),
+            "h5_auto_context_sync_direct_blob": brief.get("h5_auto_context_sync_direct_blob", ""),
+            "h5_auto_context_sync_direct_course_uid": brief.get("h5_auto_context_sync_direct_course_uid", ""),
+            "h5_auto_context_sync_direct_source": brief.get("h5_auto_context_sync_direct_source", {}),
             "auto_context_used_oui_non": snapshot.get("auto_context_used_oui_non", "ND"),
             "auto_context_aligned_oui_non": snapshot.get("auto_context_aligned_oui_non", "ND"),
             "legacy_context_mismatch_oui_non": snapshot.get("legacy_context_mismatch_oui_non", "ND"),
