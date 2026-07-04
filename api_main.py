@@ -8523,10 +8523,36 @@ def action_h5_report(limit: int = 8):
                         "legacy_snapshot_course_key": snapshot_course_key_before_guard,
                     }
 
+                    h10_blob = str(auto_context.get("h10_odds_csv_gcs", "") or "").strip()
+                    h5_blob = str(auto_context.get("h5_odds_csv_gcs", "") or "").strip()
+
+                    h10_local = h10_blob.split("/")[-1] if h10_blob else "latest_h10_odds.csv"
+                    h5_local = h5_blob.split("/")[-1] if h5_blob else "latest_h5_odds.csv"
+
+                    h10_rows, h10_source = _h5r_load_csv_candidates(
+                        local_names=[h10_local],
+                        gcs_names=[h10_blob] if h10_blob else [],
+                    )
+                    h5_rows, h5_source = _h5r_load_csv_candidates(
+                        local_names=[h5_local],
+                        gcs_names=[h5_blob] if h5_blob else [],
+                    )
+
+                    if not isinstance(h10_rows, list):
+                        h10_rows = []
+                    if not isinstance(h5_rows, list):
+                        h5_rows = []
+
                     snapshot = {
                         "course_key": auto_course_uid,
-                        "rows_9h": [],
-                        "rows_h5": [],
+                        "rows_9h": h10_rows,
+                        "rows_h5": h5_rows,
+                        "source_9h": h10_source,
+                        "source_h5": h5_source,
+                        "snapshot_reference_source": h10_source,
+                        "snapshot_h5_source": h5_source,
+                        "snapshot_reference_rows": len(h10_rows),
+                        "snapshot_h5_rows": len(h5_rows),
                         "context_mismatch": "non",
                         "mismatch_reason": "",
                         "legacy_context_mismatch_oui_non": "oui",
@@ -8535,8 +8561,10 @@ def action_h5_report(limit: int = 8):
                         "snapshot_kind": "H5_AUTO_ODDS_CAPTURE",
                         "auto_context_course_uid": auto_course_uid,
                         "auto_context_source": h5_context_source,
-                        "h10_rows_count": auto_context.get("h10_rows_count", "ND"),
-                        "h5_rows_count": auto_context.get("h5_rows_count", "ND"),
+                        "h10_odds_csv_gcs": h10_blob,
+                        "h5_odds_csv_gcs": h5_blob,
+                        "h10_rows_count": len(h10_rows),
+                        "h5_rows_count": len(h5_rows),
                         "previous_snapshot_label": auto_context.get("previous_snapshot_label", "H10"),
                         "current_snapshot_label": auto_context.get("current_snapshot_label", "H5"),
                     }
@@ -8633,6 +8661,10 @@ def action_h5_report(limit: int = 8):
             "auto_context_mismatch_reason": snapshot.get("auto_context_mismatch_reason", ""),
             "auto_context_error": snapshot.get("auto_context_error", ""),
             "auto_context_source": snapshot.get("auto_context_source", {}),
+            "h10_odds_csv_gcs": snapshot.get("h10_odds_csv_gcs", ""),
+            "h5_odds_csv_gcs": snapshot.get("h5_odds_csv_gcs", ""),
+            "h10_rows_count": snapshot.get("h10_rows_count", "ND"),
+            "h5_rows_count": snapshot.get("h5_rows_count", "ND"),
         },
         "top_cotes": top_marche,
         "mouvements": mouvements,
