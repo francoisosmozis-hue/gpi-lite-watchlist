@@ -5287,7 +5287,6 @@ def gpi_status():
         "h5_auto_context_mouvements_ok_oui_non": h5_auto_context_mouvements_ok_oui_non,
         "h5_auto_context_strict_closed_oui_non": h5_auto_context_strict_closed_oui_non,
         "h5_auto_context_ticket_real_no_bet_oui_non": h5_auto_context_ticket_real_no_bet_oui_non,
-        "legacy_h5_context_stale_oui_non": legacy_h5_context_stale_oui_non,
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
         "source_pack_manifest_sha256": source_pack.get("manifest_sha256", "ND"),
         "source_documents_count": source_pack.get("source_documents_count", 0),
@@ -5308,6 +5307,12 @@ def gpi_status():
         "cloud_ready": cloud_ready,
         "cloud_ready_files": cloud_ready_files,
         "latest_h5_context_fresh_oui_non": h5_context_freshness.get("latest_h5_context_fresh_oui_non", "non"),
+        # GPI STATUS LEGACY H5 STALE OVERRIDE V0_1
+        # Champ informatif uniquement : ne modifie pas cloud_ready ni strict_allowed_global.
+        "legacy_h5_context_stale_oui_non": (
+            "oui" if str(h5_context_freshness.get("latest_h5_context_fresh_oui_non", "non")).strip().lower() == "non"
+            else legacy_h5_context_stale_oui_non
+        ),
         "latest_h5_context_mismatch_oui_non": h5_context_freshness.get("latest_h5_context_mismatch_oui_non", "non"),
         "latest_h5_context_course_key": h5_context_freshness.get("latest_h5_context_course_key", "ND"),
         "latest_h5_auto_brief_course_uid": h5_context_freshness.get("latest_h5_auto_brief_course_uid", "ND"),
@@ -6771,6 +6776,24 @@ def action_status():
         }
 
     compact = _action_compact_status(payload)
+
+    # GPI ACTION STATUS H5 AUTO CONTEXT READY MIRROR V0_1
+    # Reprise lecture seule des champs /gpi/status.
+    # Ne modifie jamais cloud_ready, strict_allowed_global ni les tickets.
+    for _h5_ready_key in [
+        "h5_auto_context_ready_oui_non",
+        "h5_auto_context_health_source",
+        "h5_auto_context_health_error",
+        "h5_auto_context_course_uid",
+        "h5_auto_context_snapshot_kind",
+        "h5_auto_context_rows_ok_oui_non",
+        "h5_auto_context_top_cotes_ok_oui_non",
+        "h5_auto_context_mouvements_ok_oui_non",
+        "h5_auto_context_strict_closed_oui_non",
+        "h5_auto_context_ticket_real_no_bet_oui_non",
+        "legacy_h5_context_stale_oui_non",
+    ]:
+        compact[_h5_ready_key] = payload.get(_h5_ready_key, "ND")
 
     # GPI ACTION STATUS H5 REPORT HEALTH V0_1
     # Expose le health H5 auto_context dans /action/status.
