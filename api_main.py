@@ -8721,6 +8721,77 @@ def action_h5_report(limit: int = 8):
     }
 
 
+@app.get("/health/h5-report-auto-context")
+def health_h5_report_auto_context():
+    """
+    Health leger de non-regression pour /action/h5-report.
+    Controle le fallback h5_auto_context course-scope + CSV H10/H5.
+    Ne valide jamais un ticket strict.
+    """
+    try:
+        payload = action_h5_report()
+        report = payload.get("report", {}) if isinstance(payload, dict) else {}
+        snapshots = report.get("snapshots", {}) if isinstance(report, dict) else {}
+
+        top_cotes = report.get("top_cotes", []) if isinstance(report, dict) else []
+        mouvements = report.get("mouvements", []) if isinstance(report, dict) else []
+        strict_gate = report.get("strict_gate", {}) if isinstance(report, dict) else {}
+
+        def _as_int(value):
+            try:
+                return int(value)
+            except Exception:
+                return 0
+
+        checks = {
+            "route_ok": payload.get("ok") is True if isinstance(payload, dict) else False,
+            "context_mismatch_non": snapshots.get("context_mismatch") == "non",
+            "auto_context_used": snapshots.get("auto_context_used_oui_non") == "oui",
+            "auto_context_aligned": snapshots.get("auto_context_aligned_oui_non") == "oui",
+            "snapshot_kind_auto": snapshots.get("snapshot_kind") == "H5_AUTO_ODDS_CAPTURE",
+            "snapshot_reference_rows_positive": _as_int(snapshots.get("snapshot_reference_rows")) > 0,
+            "snapshot_h5_rows_positive": _as_int(snapshots.get("snapshot_h5_rows")) > 0,
+            "top_cotes_non_empty": isinstance(top_cotes, list) and len(top_cotes) > 0,
+            "mouvements_non_empty": isinstance(mouvements, list) and len(mouvements) > 0,
+            "strict_closed": strict_gate.get("strict_allowed_oui_non") == "non",
+            "ticket_real_no_bet": report.get("ticket_real_optimizer") == "NO_BET",
+        }
+
+        ok = all(checks.values())
+
+        return {
+            "ok": ok,
+            "health_version": "H5_REPORT_AUTO_CONTEXT_HEALTH_V0_1",
+            "source_route": "/health/h5-report-auto-context",
+            "checked_route": "/action/h5-report",
+            "course_uid": report.get("course_uid", "ND"),
+            "checks": checks,
+            "summary": {
+                "context_mismatch": snapshots.get("context_mismatch", "ND"),
+                "snapshot_kind": snapshots.get("snapshot_kind", "ND"),
+                "auto_context_used_oui_non": snapshots.get("auto_context_used_oui_non", "ND"),
+                "auto_context_aligned_oui_non": snapshots.get("auto_context_aligned_oui_non", "ND"),
+                "snapshot_reference_rows": snapshots.get("snapshot_reference_rows", "ND"),
+                "snapshot_h5_rows": snapshots.get("snapshot_h5_rows", "ND"),
+                "top_cotes_count": len(top_cotes) if isinstance(top_cotes, list) else 0,
+                "mouvements_count": len(mouvements) if isinstance(mouvements, list) else 0,
+                "strict_allowed_oui_non": strict_gate.get("strict_allowed_oui_non", "ND"),
+                "ticket_real_optimizer": report.get("ticket_real_optimizer", "ND"),
+                "optimizer_hard_blocks": report.get("optimizer_hard_blocks", "ND"),
+            },
+            "doctrine": "Health de non-regression lecture seule. Ne cree aucun ticket et ne valide jamais le strict.",
+        }
+
+    except Exception as exc:
+        return {
+            "ok": False,
+            "health_version": "H5_REPORT_AUTO_CONTEXT_HEALTH_V0_1",
+            "source_route": "/health/h5-report-auto-context",
+            "error": f"{type(exc).__name__}:{exc}",
+            "doctrine": "Erreur health = NO_BET implicite. Aucun ticket strict.",
+        }
+
+
 @app.get("/action/h5-decision-preview")
 def action_h5_decision_preview():
     """P9.1 preview route. Security-first H-5 decision engine."""
