@@ -6668,7 +6668,79 @@ def action_status():
             "facade_error": _action_str(payload.get("facade_error")),
         }
 
-    return _action_compact_status(payload)
+    compact = _action_compact_status(payload)
+
+    # GPI ACTION STATUS H5 REPORT HEALTH V0_1
+    # Expose le health H5 auto_context dans /action/status.
+    # Lecture seule : ne modifie jamais strict_allowed_global ni les tickets.
+    try:
+        h5_health = health_h5_report_auto_context()
+        if not isinstance(h5_health, dict):
+            h5_health = {}
+
+        h5_summary = h5_health.get("summary", {})
+        if not isinstance(h5_summary, dict):
+            h5_summary = {}
+
+        h5_checks = h5_health.get("checks", {})
+        if not isinstance(h5_checks, dict):
+            h5_checks = {}
+
+        h5_ok = h5_health.get("ok") is True
+
+        compact["h5_report_auto_context_health_ok"] = "oui" if h5_ok else "non"
+        compact["h5_report_auto_context_health"] = {
+            "ok": h5_ok,
+            "health_version": h5_health.get("health_version", "ND"),
+            "checked_route": h5_health.get("checked_route", "/action/h5-report"),
+            "course_uid": h5_health.get("course_uid", "ND"),
+            "context_mismatch": h5_summary.get("context_mismatch", "ND"),
+            "snapshot_kind": h5_summary.get("snapshot_kind", "ND"),
+            "auto_context_used_oui_non": h5_summary.get("auto_context_used_oui_non", "ND"),
+            "auto_context_aligned_oui_non": h5_summary.get("auto_context_aligned_oui_non", "ND"),
+            "snapshot_reference_rows": h5_summary.get("snapshot_reference_rows", "ND"),
+            "snapshot_h5_rows": h5_summary.get("snapshot_h5_rows", "ND"),
+            "top_cotes_count": h5_summary.get("top_cotes_count", 0),
+            "mouvements_count": h5_summary.get("mouvements_count", 0),
+            "strict_allowed_oui_non": h5_summary.get("strict_allowed_oui_non", "ND"),
+            "ticket_real_optimizer": h5_summary.get("ticket_real_optimizer", "ND"),
+            "optimizer_hard_blocks": h5_summary.get("optimizer_hard_blocks", "ND"),
+            "checks": h5_checks,
+            "doctrine": "Lecture seule. Ce health ne valide jamais le strict.",
+        }
+
+        compact["h5_report_context_mismatch_oui_non"] = (
+            "oui" if h5_summary.get("context_mismatch") == "oui" else "non"
+        )
+        compact["h5_report_snapshot_kind"] = h5_summary.get("snapshot_kind", "ND")
+        compact["h5_report_rows_ok_oui_non"] = (
+            "oui"
+            if h5_checks.get("snapshot_reference_rows_positive") is True
+            and h5_checks.get("snapshot_h5_rows_positive") is True
+            else "non"
+        )
+        compact["h5_report_top_cotes_ok_oui_non"] = (
+            "oui" if h5_checks.get("top_cotes_non_empty") is True else "non"
+        )
+        compact["h5_report_mouvements_ok_oui_non"] = (
+            "oui" if h5_checks.get("mouvements_non_empty") is True else "non"
+        )
+        compact["h5_report_strict_closed_oui_non"] = (
+            "oui" if h5_checks.get("strict_closed") is True else "non"
+        )
+        compact["h5_report_ticket_real_no_bet_oui_non"] = (
+            "oui" if h5_checks.get("ticket_real_no_bet") is True else "non"
+        )
+
+    except Exception as exc:
+        compact["h5_report_auto_context_health_ok"] = "non"
+        compact["h5_report_auto_context_health"] = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+            "doctrine": "Erreur health = diagnostic KO. Aucun ticket strict.",
+        }
+
+    return compact
 
 
 @app.get("/action/brief")
