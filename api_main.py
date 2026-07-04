@@ -5287,6 +5287,35 @@ def gpi_status():
         "h5_auto_context_mouvements_ok_oui_non": h5_auto_context_mouvements_ok_oui_non,
         "h5_auto_context_strict_closed_oui_non": h5_auto_context_strict_closed_oui_non,
         "h5_auto_context_ticket_real_no_bet_oui_non": h5_auto_context_ticket_real_no_bet_oui_non,
+
+        # GPI STATUS H5 AUTO CONTEXT CLOUD GATE SHADOW V0_1
+        # Shadow gate informatif uniquement : ne modifie pas cloud_ready.
+        "h5_auto_context_aligned_with_latest_oui_non": (
+            "oui"
+            if str(h5_auto_context_course_uid).strip() != "ND"
+            and str(latest_course_uid).strip() != "ND"
+            and str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
+            else "non"
+        ),
+        "h5_auto_context_ready_for_cloud_gate_oui_non": (
+            "oui"
+            if h5_auto_context_ready_oui_non == "oui"
+            and str(h5_auto_context_course_uid).strip() != "ND"
+            and str(latest_course_uid).strip() != "ND"
+            and str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
+            and h5_auto_context_rows_ok_oui_non == "oui"
+            and h5_auto_context_top_cotes_ok_oui_non == "oui"
+            and h5_auto_context_mouvements_ok_oui_non == "oui"
+            and h5_auto_context_strict_closed_oui_non == "oui"
+            and h5_auto_context_ticket_real_no_bet_oui_non == "oui"
+            else "non"
+        ),
+        "h5_auto_context_cloud_gate_shadow_reason": (
+            "READY_SHADOW_ONLY_NO_CLOUD_READY_CHANGE"
+            if h5_auto_context_ready_oui_non == "oui"
+            and str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
+            else "H5_AUTO_CONTEXT_NOT_ALIGNED_OR_NOT_READY"
+        ),
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
         "source_pack_manifest_sha256": source_pack.get("manifest_sha256", "ND"),
         "source_documents_count": source_pack.get("source_documents_count", 0),
@@ -6791,6 +6820,9 @@ def action_status():
         "h5_auto_context_mouvements_ok_oui_non",
         "h5_auto_context_strict_closed_oui_non",
         "h5_auto_context_ticket_real_no_bet_oui_non",
+        "h5_auto_context_aligned_with_latest_oui_non",
+        "h5_auto_context_ready_for_cloud_gate_oui_non",
+        "h5_auto_context_cloud_gate_shadow_reason",
         "legacy_h5_context_stale_oui_non",
     ]:
         compact[_h5_ready_key] = payload.get(_h5_ready_key, "ND")
