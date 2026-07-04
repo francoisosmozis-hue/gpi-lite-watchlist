@@ -3448,6 +3448,135 @@ def drive_run_h5_auto_brief():
                 "ticket_strict": "NO_BET",
             }
 
+            # GPI H5 AUTO CONTEXT V0_1
+            # Source auto distincte du legacy latest_h5_context.json.
+            # Ne cree jamais de course_h5_clean synthetique.
+            # Strict reel toujours interdit ici.
+            h5_auto_context_sync = {
+                "ok": False,
+                "reason": "H5_AUTO_CONTEXT_NOT_WRITTEN",
+                "strict_allowed_oui_non": "non",
+                "ticket_strict": "NO_BET",
+            }
+
+            try:
+                h10_rows_for_context = _h5auto_read_csv_dicts(h10_local)
+                h5_rows_for_context = _h5auto_read_csv_dicts(h5_local)
+
+                h5_rows_count_for_context = len(h5_rows_for_context)
+                h10_rows_count_for_context = len(h10_rows_for_context)
+
+                if h5_rows_count_for_context > 0:
+                    h5_context_dir = Path("data/output/h5_contexts")
+                    h5_context_dir.mkdir(parents=True, exist_ok=True)
+
+                    h5_auto_context_path = h5_context_dir / f"{course_slug}_h5_auto_context.json"
+                    latest_h5_auto_context_path = Path("data/output/latest_h5_auto_context.json")
+
+                    h5_auto_context_payload = {
+                        "ok": True,
+                        "context_version": "latest_h5_auto_context_v0_1",
+                        "source_kind": "H5_AUTO_ODDS_CAPTURE",
+                        "generated_at_utc": h5_auto_generated_at_utc,
+                        "course_uid": course_uid,
+                        "course_key": course_uid,
+                        "course_slug": course_slug,
+                        "previous_snapshot_label": "H10",
+                        "current_snapshot_label": "H5",
+                        "h10_rows_count": h10_rows_count_for_context,
+                        "h5_rows_count": h5_rows_count_for_context,
+                        "runners_count": context_payload.get("runners_count", h5_rows_count_for_context),
+                        "h10_odds_csv_gcs": h10_blob,
+                        "h5_odds_csv_gcs": h5_blob,
+                        "movement_csv_local": str(movement_csv),
+                        "movement_json_local": str(movement_json),
+                        "gate_csv_local": str(gate_csv),
+                        "gate_json_local": str(gate_json),
+                        "latest_odds_context_local": str(latest_context_json),
+                        "course_statut_marche": course_statut_marche,
+                        "strict_allowed_by_odds_context": strict_allowed_by_odds_context,
+                        "edge_status_by_odds_context": edge_status_by_odds_context,
+                        "reason_codes": reason_codes,
+                        "np_ok": np_statut_fields.get("np_ok", "ND"),
+                        "statut_ok": np_statut_fields.get("statut_ok", "ND"),
+                        "np_source": np_statut_fields.get("np_source", "ND"),
+                        "statut_source": np_statut_fields.get("statut_source", "ND"),
+                        "np_count": np_statut_fields.get("np_count", "ND"),
+                        "statut_missing_count": np_statut_fields.get("statut_missing_count", "ND"),
+                        "np_statut_source_level": np_statut_fields.get("np_statut_source_level", "ND"),
+                        "decision_before_race_oui_non": decision_before_race_oui_non_effective,
+                        "backfill_technical_oui_non": backfill_technical_oui_non,
+                        "strict_kpi_excluded_oui_non": strict_kpi_excluded_oui_non,
+                        "strict_kpi_exclusion_reason": strict_kpi_exclusion_reason,
+                        "strict_allowed_oui_non": "non",
+                        "strict_usable_oui_non": "non",
+                        "ticket_strict": "NO_BET",
+                        "doctrine": (
+                            "Contexte H5 auto issu des odds ZEturf capturees. "
+                            "Ne vaut pas validation stricte sans NP/statut officiels, "
+                            "proxy/SP calibres et gates complets."
+                        ),
+                    }
+
+                    h5_auto_context_path.write_text(
+                        json.dumps(h5_auto_context_payload, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    latest_h5_auto_context_path.write_text(
+                        json.dumps(h5_auto_context_payload, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+
+                    upload_h5_auto_context = _h5auto_upload_file_to_gcs(
+                        h5_auto_context_path,
+                        f"gpi-lite/outputs/h5_contexts/{course_slug}_h5_auto_context.json",
+                    )
+                    upload_latest_h5_auto_context = _h5auto_upload_file_to_gcs(
+                        latest_h5_auto_context_path,
+                        "gpi-lite/outputs/latest_h5_auto_context.json",
+                    )
+
+                    h5_auto_context_sync = {
+                        "ok": bool(
+                            upload_h5_auto_context.get("ok")
+                            and upload_latest_h5_auto_context.get("ok")
+                        ),
+                        "reason": "H5_AUTO_CONTEXT_WRITTEN",
+                        "course_uid": course_uid,
+                        "h5_rows_count": h5_rows_count_for_context,
+                        "h10_rows_count": h10_rows_count_for_context,
+                        "context_gcs_uri": upload_h5_auto_context.get("gcs_uri", ""),
+                        "latest_context_gcs_uri": upload_latest_h5_auto_context.get("gcs_uri", ""),
+                        "upload_h5_auto_context": upload_h5_auto_context,
+                        "upload_latest_h5_auto_context": upload_latest_h5_auto_context,
+                        "strict_allowed_oui_non": "non",
+                        "ticket_strict": "NO_BET",
+                    }
+                else:
+                    h5_auto_context_sync = {
+                        "ok": False,
+                        "reason": "H5_AUTO_CONTEXT_H5_ROWS_EMPTY",
+                        "course_uid": course_uid,
+                        "h5_rows_count": h5_rows_count_for_context,
+                        "h10_rows_count": h10_rows_count_for_context,
+                        "strict_allowed_oui_non": "non",
+                        "ticket_strict": "NO_BET",
+                    }
+
+            except Exception as exc:
+                h5_auto_context_sync = {
+                    "ok": False,
+                    "reason": f"H5_AUTO_CONTEXT_WRITE_ERROR:{type(exc).__name__}:{exc}",
+                    "course_uid": course_uid,
+                    "strict_allowed_oui_non": "non",
+                    "ticket_strict": "NO_BET",
+                }
+
+            brief_payload["h5_auto_context_sync"] = h5_auto_context_sync
+            brief_payload["latest_h5_auto_context_available_oui_non"] = (
+                "oui" if h5_auto_context_sync.get("ok") is True else "non"
+            )
+
             brief_json.write_text(
                 json.dumps(brief_payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
