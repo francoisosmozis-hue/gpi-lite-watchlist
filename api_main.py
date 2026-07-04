@@ -5198,9 +5198,21 @@ def gpi_status():
     legacy_h5_context_stale_oui_non = "ND"
 
     try:
-        legacy_h5_context_stale_oui_non = (
-            "oui" if latest_h5_context_fresh is False else "non"
-        )
+        # Ne depend pas d'une variable interne potentiellement absente.
+        # Le statut legacy est informatif seulement ; il ne modifie pas cloud_ready ni le strict.
+        legacy_fresh_value = locals().get("latest_h5_context_fresh", None)
+        legacy_fresh_text = str(
+            locals().get("latest_h5_context_fresh_oui_non", "")
+            or locals().get("latest_h5_context_freshness_oui_non", "")
+            or ""
+        ).strip().lower()
+
+        if legacy_fresh_value is False or legacy_fresh_text == "non":
+            legacy_h5_context_stale_oui_non = "oui"
+        elif legacy_fresh_value is True or legacy_fresh_text == "oui":
+            legacy_h5_context_stale_oui_non = "non"
+        else:
+            legacy_h5_context_stale_oui_non = "ND"
 
         h5_health = health_h5_report_auto_context()
         if not isinstance(h5_health, dict):
