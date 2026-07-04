@@ -5347,6 +5347,68 @@ def gpi_status():
             and str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
             else "H5_AUTO_CONTEXT_NOT_ALIGNED_OR_NOT_READY"
         ),
+
+        # GPI STATUS CLOUD READY SHADOW V0_1
+        # Comparaison informative legacy vs auto_context.
+        # Ne modifie jamais cloud_ready, strict_allowed_global ni les tickets.
+        "cloud_ready_legacy_oui_non": (
+            "oui" if cloud_ready is True else "non"
+        ),
+        "cloud_ready_auto_context_shadow_oui_non": (
+            "oui"
+            if h5_auto_context_ready_oui_non == "oui"
+            and str(h5_auto_context_course_uid).strip() != "ND"
+            and str(latest_course_uid).strip() != "ND"
+            and str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
+            and h5_auto_context_rows_ok_oui_non == "oui"
+            and h5_auto_context_top_cotes_ok_oui_non == "oui"
+            and h5_auto_context_mouvements_ok_oui_non == "oui"
+            and h5_auto_context_strict_closed_oui_non == "oui"
+            and h5_auto_context_ticket_real_no_bet_oui_non == "oui"
+            else "non"
+        ),
+        "cloud_ready_shadow_reason": (
+            "LEGACY_AND_AUTO_CONTEXT_READY_SHADOW_ONLY"
+            if cloud_ready is True
+            and h5_auto_context_ready_oui_non == "oui"
+            and str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
+            and h5_auto_context_rows_ok_oui_non == "oui"
+            and h5_auto_context_top_cotes_ok_oui_non == "oui"
+            and h5_auto_context_mouvements_ok_oui_non == "oui"
+            and h5_auto_context_strict_closed_oui_non == "oui"
+            and h5_auto_context_ticket_real_no_bet_oui_non == "oui"
+            else (
+                "LEGACY_BLOCKED_AUTO_CONTEXT_READY_SHADOW_ONLY"
+                if cloud_ready is not True
+                and h5_auto_context_ready_oui_non == "oui"
+                and str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
+                and h5_auto_context_rows_ok_oui_non == "oui"
+                and h5_auto_context_top_cotes_ok_oui_non == "oui"
+                and h5_auto_context_mouvements_ok_oui_non == "oui"
+                and h5_auto_context_strict_closed_oui_non == "oui"
+                and h5_auto_context_ticket_real_no_bet_oui_non == "oui"
+                else (
+                    "LEGACY_READY_AUTO_CONTEXT_BLOCKED_KEEP_LEGACY"
+                    if cloud_ready is True
+                    else "LEGACY_AND_AUTO_CONTEXT_BLOCKED"
+                )
+            )
+        ),
+        "cloud_ready_migration_candidate_oui_non": (
+            "oui"
+            if cloud_ready is not True
+            and h5_auto_context_ready_oui_non == "oui"
+            and str(h5_auto_context_course_uid).strip() != "ND"
+            and str(latest_course_uid).strip() != "ND"
+            and str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
+            and h5_auto_context_rows_ok_oui_non == "oui"
+            and h5_auto_context_top_cotes_ok_oui_non == "oui"
+            and h5_auto_context_mouvements_ok_oui_non == "oui"
+            and h5_auto_context_strict_closed_oui_non == "oui"
+            and h5_auto_context_ticket_real_no_bet_oui_non == "oui"
+            and str(h5_context_freshness.get("latest_h5_context_fresh_oui_non", "non")).strip().lower() == "non"
+            else "non"
+        ),
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
         "source_pack_manifest_sha256": source_pack.get("manifest_sha256", "ND"),
         "source_documents_count": source_pack.get("source_documents_count", 0),
@@ -6854,6 +6916,10 @@ def action_status():
         "h5_auto_context_aligned_with_latest_oui_non",
         "h5_auto_context_ready_for_cloud_gate_oui_non",
         "h5_auto_context_cloud_gate_shadow_reason",
+        "cloud_ready_legacy_oui_non",
+        "cloud_ready_auto_context_shadow_oui_non",
+        "cloud_ready_shadow_reason",
+        "cloud_ready_migration_candidate_oui_non",
         "legacy_h5_context_stale_oui_non",
     ]:
         compact[_h5_ready_key] = payload.get(_h5_ready_key, "ND")
