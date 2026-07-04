@@ -598,7 +598,23 @@ def _gpi_latest_h5_context_freshness() -> dict:
     Ne cree jamais de contexte synthetique.
     Sert uniquement a refuser un latest_h5_context obsolete.
     """
-    context = read_latest_h5_context()
+    context_source = {
+        "kind": "local_reader",
+        "file": "latest_h5_context.json",
+    }
+
+    try:
+        h5r_context_func = globals().get("_h5r_load_latest_h5_context")
+        if callable(h5r_context_func):
+            context, context_source = h5r_context_func()
+        else:
+            context = read_latest_h5_context()
+    except Exception as exc:
+        context = read_latest_h5_context()
+        context_source = {
+            "kind": "fallback_after_h5r_error",
+            "error": f"{type(exc).__name__}:{exc}",
+        }
 
     brief = {
         "ok": False,
@@ -644,6 +660,7 @@ def _gpi_latest_h5_context_freshness() -> dict:
         "latest_h5_context_mismatch_oui_non": "oui" if mismatch else "non",
         "latest_h5_context_course_key": context_course_key or "ND",
         "latest_h5_auto_brief_course_uid": brief_course_uid or "ND",
+        "latest_h5_context_source": context_source,
         "latest_h5_context_norm": context_norm or "ND",
         "latest_h5_auto_brief_norm": brief_norm or "ND",
         "reason": "OK" if fresh else ("H5_CONTEXT_COURSE_MISMATCH" if mismatch else "H5_CONTEXT_NOT_FRESH_OR_MISSING"),
