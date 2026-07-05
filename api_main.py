@@ -5501,6 +5501,7 @@ def gpi_status():
     cloud_ready_next_reason = "INIT"
     cloud_ready_next_source = "shadow_audit_only"
     cloud_ready_next_cloud_brief_source = "ND"
+    cloud_ready_next_cloud_brief_diag = "ND"
     cloud_ready_next_differs_from_legacy_oui_non = "non"
 
     try:
@@ -5510,16 +5511,29 @@ def gpi_status():
         # Ne depend pas uniquement d'une variable locale cloud_brief_ok.
         # Si elle est absente, on utilise l'equivalent H5 auto_context shadow deja audite.
         _cloud_brief_ok_local = bool(locals().get("cloud_brief_ok", False))
+        # CLOUD_READY_NEXT H5 BRIEF DIAG V0_1
+        _cloud_brief_h5_ready_ok = h5_auto_context_ready_oui_non == "oui"
+        _cloud_brief_h5_course_ok = str(h5_auto_context_course_uid).strip() != "ND"
+        _cloud_brief_latest_course_ok = str(latest_course_uid).strip() != "ND"
+        _cloud_brief_h5_aligned_ok = (
+            str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
+        )
+        _cloud_brief_h5_rows_ok = h5_auto_context_rows_ok_oui_non == "oui"
+        _cloud_brief_h5_top_cotes_ok = h5_auto_context_top_cotes_ok_oui_non == "oui"
+        _cloud_brief_h5_mouvements_ok = h5_auto_context_mouvements_ok_oui_non == "oui"
+        _cloud_brief_h5_strict_closed_ok = h5_auto_context_strict_closed_oui_non == "oui"
+        _cloud_brief_h5_ticket_no_bet_ok = h5_auto_context_ticket_real_no_bet_oui_non == "oui"
+
         _cloud_brief_ok_h5_auto_context = (
-            h5_auto_context_ready_oui_non == "oui"
-            and str(h5_auto_context_course_uid).strip() != "ND"
-            and str(latest_course_uid).strip() != "ND"
-            and str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
-            and h5_auto_context_rows_ok_oui_non == "oui"
-            and h5_auto_context_top_cotes_ok_oui_non == "oui"
-            and h5_auto_context_mouvements_ok_oui_non == "oui"
-            and h5_auto_context_strict_closed_oui_non == "oui"
-            and h5_auto_context_ticket_real_no_bet_oui_non == "oui"
+            _cloud_brief_h5_ready_ok is True
+            and _cloud_brief_h5_course_ok is True
+            and _cloud_brief_latest_course_ok is True
+            and _cloud_brief_h5_aligned_ok is True
+            and _cloud_brief_h5_rows_ok is True
+            and _cloud_brief_h5_top_cotes_ok is True
+            and _cloud_brief_h5_mouvements_ok is True
+            and _cloud_brief_h5_strict_closed_ok is True
+            and _cloud_brief_h5_ticket_no_bet_ok is True
         )
 
         _cloud_brief_ok = (
@@ -5535,6 +5549,29 @@ def gpi_status():
                 if _cloud_brief_ok_h5_auto_context is True
                 else "cloud_brief_not_available"
             )
+        )
+
+        cloud_ready_next_cloud_brief_diag = (
+            "local="
+            + str(_cloud_brief_ok_local)
+            + "|h5_ready="
+            + str(_cloud_brief_h5_ready_ok)
+            + "|h5_course="
+            + str(_cloud_brief_h5_course_ok)
+            + "|latest_course="
+            + str(_cloud_brief_latest_course_ok)
+            + "|aligned="
+            + str(_cloud_brief_h5_aligned_ok)
+            + "|rows="
+            + str(_cloud_brief_h5_rows_ok)
+            + "|top_cotes="
+            + str(_cloud_brief_h5_top_cotes_ok)
+            + "|mouvements="
+            + str(_cloud_brief_h5_mouvements_ok)
+            + "|strict_closed="
+            + str(_cloud_brief_h5_strict_closed_ok)
+            + "|ticket_no_bet="
+            + str(_cloud_brief_h5_ticket_no_bet_ok)
         )
 
         _shadow_green_enough = (
@@ -5578,6 +5615,7 @@ def gpi_status():
         cloud_ready_next_reason = f"CLOUD_READY_NEXT_EXCEPTION:{type(_next_exc).__name__}:{_next_exc}"
         cloud_ready_next_source = "shadow_audit_exception"
         cloud_ready_next_cloud_brief_source = "exception"
+        cloud_ready_next_cloud_brief_diag = "exception"
 
     return {
         "ok": True,
@@ -5703,6 +5741,7 @@ def gpi_status():
         "cloud_ready_next_reason": cloud_ready_next_reason,
         "cloud_ready_next_source": cloud_ready_next_source,
         "cloud_ready_next_cloud_brief_source": cloud_ready_next_cloud_brief_source,
+        "cloud_ready_next_cloud_brief_diag": cloud_ready_next_cloud_brief_diag,
         "cloud_ready_next_differs_from_legacy_oui_non": cloud_ready_next_differs_from_legacy_oui_non,
         "cloud_ready_next_activation_note": "Lecture seule. Ne modifie pas cloud_ready ni strict_allowed_global.",
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
@@ -7230,6 +7269,7 @@ def action_status():
         "cloud_ready_next_reason",
         "cloud_ready_next_source",
         "cloud_ready_next_cloud_brief_source",
+        "cloud_ready_next_cloud_brief_diag",
         "cloud_ready_next_differs_from_legacy_oui_non",
         "cloud_ready_next_activation_note",
         "legacy_h5_context_stale_oui_non",
