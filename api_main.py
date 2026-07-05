@@ -5503,13 +5503,16 @@ def gpi_status():
     cloud_ready_next_differs_from_legacy_oui_non = "non"
 
     try:
+        _cloud_ready_files_ok = bool(locals().get("cloud_ready_files", False))
+        _cloud_brief_ok = bool(locals().get("cloud_brief_ok", False))
+
         _shadow_green_enough = (
             int(cloud_ready_shadow_green_runs) >= int(cloud_ready_shadow_required_runs)
         )
 
         _cloud_ready_next_ok = (
-            cloud_ready_files is True
-            and cloud_brief_ok is True
+            _cloud_ready_files_ok is True
+            and _cloud_brief_ok is True
             and cloud_ready_shadow_audit_ok_oui_non == "oui"
             and _shadow_green_enough is True
             and str(cloud_ready_shadow_audit_error or "").strip() == ""
@@ -5519,9 +5522,9 @@ def gpi_status():
 
         if _cloud_ready_next_ok:
             cloud_ready_next_reason = "CLOUD_READY_NEXT_OK_SHADOW_AUDIT_GREEN"
-        elif cloud_ready_files is not True:
+        elif _cloud_ready_files_ok is not True:
             cloud_ready_next_reason = "CLOUD_READY_FILES_FALSE"
-        elif cloud_brief_ok is not True:
+        elif _cloud_brief_ok is not True:
             cloud_ready_next_reason = "CLOUD_BRIEF_NOT_OK"
         elif cloud_ready_shadow_audit_ok_oui_non != "oui":
             cloud_ready_next_reason = "SHADOW_AUDIT_NOT_OK"
