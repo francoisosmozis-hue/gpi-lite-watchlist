@@ -5750,9 +5750,81 @@ def gpi_status():
     _cloud_ready_migration_strict_allowed = bool(
         locals().get("strict_allowed_global", False)
     )
-    _cloud_ready_migration_latest_ticket = str(
-        locals().get("latest_ticket", "ND") or "ND"
-    ).strip()
+    # CLOUD_READY MIGRATION LATEST TICKET SAFE SOURCE V0_1
+    # Le champ latest_ticket peut etre expose dans le payload final sans exister comme variable locale ici.
+    # On le source donc depuis plusieurs objets connus, sans jamais inventer de ticket.
+    _cloud_ready_migration_latest_ticket = "ND"
+    _cloud_ready_migration_latest_ticket_source = "ND"
+
+    _cloud_ready_migration_latest_obj = locals().get("latest", {})
+    if not isinstance(_cloud_ready_migration_latest_obj, dict):
+        _cloud_ready_migration_latest_obj = {}
+
+    _cloud_ready_migration_latest_decision_obj = locals().get("latest_decision", {})
+    if not isinstance(_cloud_ready_migration_latest_decision_obj, dict):
+        _cloud_ready_migration_latest_decision_obj = {}
+
+    _cloud_ready_migration_paper_status_obj = locals().get("paper_status", {})
+    if not isinstance(_cloud_ready_migration_paper_status_obj, dict):
+        _cloud_ready_migration_paper_status_obj = {}
+
+    _cloud_ready_migration_ticket_candidates = [
+        locals().get("latest_ticket"),
+        locals().get("ticket"),
+        locals().get("ticket_exact"),
+        locals().get("ticket_reel"),
+        _cloud_ready_migration_latest_obj.get("latest_ticket"),
+        _cloud_ready_migration_latest_obj.get("ticket"),
+        _cloud_ready_migration_latest_obj.get("ticket_exact"),
+        _cloud_ready_migration_latest_obj.get("ticket_reel"),
+        _cloud_ready_migration_latest_obj.get("ticket_real"),
+        _cloud_ready_migration_latest_obj.get("structure_max"),
+        _cloud_ready_migration_latest_decision_obj.get("latest_ticket"),
+        _cloud_ready_migration_latest_decision_obj.get("ticket"),
+        _cloud_ready_migration_latest_decision_obj.get("ticket_exact"),
+        _cloud_ready_migration_latest_decision_obj.get("ticket_reel"),
+        _cloud_ready_migration_latest_decision_obj.get("ticket_real"),
+        _cloud_ready_migration_latest_decision_obj.get("structure_max"),
+        _cloud_ready_migration_paper_status_obj.get("latest_ticket"),
+        _cloud_ready_migration_paper_status_obj.get("ticket"),
+        _cloud_ready_migration_paper_status_obj.get("ticket_exact"),
+        _cloud_ready_migration_paper_status_obj.get("ticket_reel"),
+        _cloud_ready_migration_paper_status_obj.get("ticket_real"),
+    ]
+
+    _cloud_ready_migration_ticket_source_names = [
+        "locals.latest_ticket",
+        "locals.ticket",
+        "locals.ticket_exact",
+        "locals.ticket_reel",
+        "latest.latest_ticket",
+        "latest.ticket",
+        "latest.ticket_exact",
+        "latest.ticket_reel",
+        "latest.ticket_real",
+        "latest.structure_max",
+        "latest_decision.latest_ticket",
+        "latest_decision.ticket",
+        "latest_decision.ticket_exact",
+        "latest_decision.ticket_reel",
+        "latest_decision.ticket_real",
+        "latest_decision.structure_max",
+        "paper_status.latest_ticket",
+        "paper_status.ticket",
+        "paper_status.ticket_exact",
+        "paper_status.ticket_reel",
+        "paper_status.ticket_real",
+    ]
+
+    for _idx, _ticket_candidate in enumerate(_cloud_ready_migration_ticket_candidates):
+        _ticket_candidate = str(_ticket_candidate or "").strip()
+        if _ticket_candidate and _ticket_candidate != "ND":
+            _cloud_ready_migration_latest_ticket = _ticket_candidate
+            try:
+                _cloud_ready_migration_latest_ticket_source = _cloud_ready_migration_ticket_source_names[_idx]
+            except Exception:
+                _cloud_ready_migration_latest_ticket_source = "UNKNOWN_SOURCE"
+            break
 
     _cloud_ready_migration_safety_ok = (
         _cloud_ready_migration_strict_allowed is not True
@@ -5925,6 +5997,7 @@ def gpi_status():
         "cloud_ready_migration_rollback_env": cloud_ready_migration_rollback_env,
         "cloud_ready_migration_safety_strict_allowed": _cloud_ready_migration_strict_allowed,
         "cloud_ready_migration_safety_latest_ticket": _cloud_ready_migration_latest_ticket,
+        "cloud_ready_migration_safety_latest_ticket_source": _cloud_ready_migration_latest_ticket_source,
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
         "source_pack_manifest_sha256": source_pack.get("manifest_sha256", "ND"),
         "source_documents_count": source_pack.get("source_documents_count", 0),
@@ -7466,6 +7539,7 @@ def action_status():
         "cloud_ready_migration_rollback_env",
         "cloud_ready_migration_safety_strict_allowed",
         "cloud_ready_migration_safety_latest_ticket",
+        "cloud_ready_migration_safety_latest_ticket_source",
         "legacy_h5_context_stale_oui_non",
     ]:
         compact[_h5_ready_key] = payload.get(_h5_ready_key, "ND")
