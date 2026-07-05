@@ -5571,17 +5571,49 @@ def gpi_status():
             and _cloud_brief_h5_ticket_no_bet_ok is True
         )
 
-        # CLOUD_READY_NEXT SHADOW AUDIT PRIMARY SOURCE V0_1
-        # A ce stade, l'audit shadow est la source stable.
-        # Le H5 instantane peut changer de course entre deux appels et ne doit plus bloquer cloud_ready_next.
+        # CLOUD_READY_NEXT READONLY AUDIT SOURCE V0_1
+        # Source primaire : audit persistant lu en read-only.
+        # Ne depend pas du run H5 instantane de /gpi/status.
+        _cloud_ready_next_audit_read_ok = False
+        _cloud_ready_next_audit_read_error = ""
+        _cloud_ready_next_audit_ok_oui_non = "non"
+        _cloud_ready_next_audit_migration_allowed_oui_non = "non"
+        _cloud_ready_next_audit_green_runs = 0
+        _cloud_ready_next_audit_required_runs = 3
+
+        try:
+            _audit_reader = globals().get("health_cloud_ready_shadow_audit")
+            if callable(_audit_reader):
+                _audit_read_payload = _audit_reader()
+                if isinstance(_audit_read_payload, dict):
+                    _cloud_ready_next_audit_read_ok = _audit_read_payload.get("ok") is True
+                    _cloud_ready_next_audit_ok_oui_non = str(_audit_read_payload.get("audit_ok_oui_non", "non") or "non")
+                    _cloud_ready_next_audit_migration_allowed_oui_non = str(_audit_read_payload.get("migration_allowed_oui_non", "non") or "non")
+                    try:
+                        _cloud_ready_next_audit_green_runs = int(_audit_read_payload.get("green_runs", 0))
+                    except Exception:
+                        _cloud_ready_next_audit_green_runs = 0
+                    try:
+                        _cloud_ready_next_audit_required_runs = int(_audit_read_payload.get("required_runs", 3))
+                    except Exception:
+                        _cloud_ready_next_audit_required_runs = 3
+                else:
+                    _cloud_ready_next_audit_read_error = "AUDIT_READ_PAYLOAD_NOT_DICT"
+            else:
+                _cloud_ready_next_audit_read_error = "AUDIT_READER_NOT_CALLABLE"
+        except Exception as _audit_read_exc:
+            _cloud_ready_next_audit_read_error = f"{type(_audit_read_exc).__name__}:{_audit_read_exc}"
+
         _shadow_green_enough_for_brief = (
-            int(cloud_ready_shadow_green_runs) >= int(cloud_ready_shadow_required_runs)
+            _cloud_ready_next_audit_green_runs >= _cloud_ready_next_audit_required_runs
         )
 
         _cloud_brief_ok_shadow_audit = (
-            cloud_ready_shadow_audit_ok_oui_non == "oui"
+            _cloud_ready_next_audit_read_ok is True
+            and _cloud_ready_next_audit_ok_oui_non == "oui"
+            and _cloud_ready_next_audit_migration_allowed_oui_non == "oui"
             and _shadow_green_enough_for_brief is True
-            and str(cloud_ready_shadow_audit_error or "").strip() == ""
+            and str(_cloud_ready_next_audit_read_error or "").strip() == ""
         )
 
         _cloud_brief_ok = (
@@ -5597,7 +5629,7 @@ def gpi_status():
                 "h5_auto_context_ready_for_cloud_gate_equivalent"
                 if _cloud_brief_ok_h5_auto_context is True
                 else (
-                    "shadow_audit_migration_allowed"
+                    "shadow_audit_readonly_migration_allowed"
                     if _cloud_brief_ok_shadow_audit is True
                     else "cloud_brief_not_available"
                 )
@@ -5631,18 +5663,34 @@ def gpi_status():
             + str(_cloud_brief_h5_ticket_no_bet_ok)
             + "|shadow_audit="
             + str(_cloud_brief_ok_shadow_audit)
+            + "|audit_read_ok="
+            + str(_cloud_ready_next_audit_read_ok)
+            + "|audit_ok="
+            + str(_cloud_ready_next_audit_ok_oui_non)
+            + "|audit_migration_allowed="
+            + str(_cloud_ready_next_audit_migration_allowed_oui_non)
+            + "|audit_green_runs="
+            + str(_cloud_ready_next_audit_green_runs)
+            + "|audit_required_runs="
+            + str(_cloud_ready_next_audit_required_runs)
+            + "|audit_read_error="
+            + str(_cloud_ready_next_audit_read_error)
         )
 
+        # CLOUD_READY_NEXT FINAL READONLY AUDIT GATE V0_1
+        # Le verdict final utilise l'audit persistant read-only, pas le shadow local du run courant.
         _shadow_green_enough = (
-            int(cloud_ready_shadow_green_runs) >= int(cloud_ready_shadow_required_runs)
+            _cloud_ready_next_audit_green_runs >= _cloud_ready_next_audit_required_runs
         )
 
         _cloud_ready_next_ok = (
             _cloud_ready_files_ok is True
             and _cloud_brief_ok is True
-            and cloud_ready_shadow_audit_ok_oui_non == "oui"
+            and _cloud_ready_next_audit_read_ok is True
+            and _cloud_ready_next_audit_ok_oui_non == "oui"
+            and _cloud_ready_next_audit_migration_allowed_oui_non == "oui"
             and _shadow_green_enough is True
-            and str(cloud_ready_shadow_audit_error or "").strip() == ""
+            and str(_cloud_ready_next_audit_read_error or "").strip() == ""
         )
 
         cloud_ready_next_oui_non = "oui" if _cloud_ready_next_ok else "non"
@@ -5653,12 +5701,16 @@ def gpi_status():
             cloud_ready_next_reason = "CLOUD_READY_FILES_FALSE"
         elif _cloud_brief_ok is not True:
             cloud_ready_next_reason = "CLOUD_BRIEF_NOT_OK"
-        elif cloud_ready_shadow_audit_ok_oui_non != "oui":
-            cloud_ready_next_reason = "SHADOW_AUDIT_NOT_OK"
+        elif _cloud_ready_next_audit_read_ok is not True:
+            cloud_ready_next_reason = "READONLY_SHADOW_AUDIT_NOT_READABLE"
+        elif _cloud_ready_next_audit_ok_oui_non != "oui":
+            cloud_ready_next_reason = "READONLY_SHADOW_AUDIT_NOT_OK"
+        elif _cloud_ready_next_audit_migration_allowed_oui_non != "oui":
+            cloud_ready_next_reason = "READONLY_SHADOW_AUDIT_MIGRATION_NOT_ALLOWED"
         elif not _shadow_green_enough:
-            cloud_ready_next_reason = "NOT_ENOUGH_SHADOW_GREEN_RUNS"
-        elif str(cloud_ready_shadow_audit_error or "").strip() != "":
-            cloud_ready_next_reason = "SHADOW_AUDIT_ERROR"
+            cloud_ready_next_reason = "NOT_ENOUGH_READONLY_SHADOW_GREEN_RUNS"
+        elif str(_cloud_ready_next_audit_read_error or "").strip() != "":
+            cloud_ready_next_reason = "READONLY_SHADOW_AUDIT_ERROR"
         else:
             cloud_ready_next_reason = "CLOUD_READY_NEXT_BLOCKED_UNKNOWN"
 
