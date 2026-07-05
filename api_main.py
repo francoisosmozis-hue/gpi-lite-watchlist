@@ -5571,9 +5571,23 @@ def gpi_status():
             and _cloud_brief_h5_ticket_no_bet_ok is True
         )
 
+        # CLOUD_READY_NEXT SHADOW AUDIT PRIMARY SOURCE V0_1
+        # A ce stade, l'audit shadow est la source stable.
+        # Le H5 instantane peut changer de course entre deux appels et ne doit plus bloquer cloud_ready_next.
+        _shadow_green_enough_for_brief = (
+            int(cloud_ready_shadow_green_runs) >= int(cloud_ready_shadow_required_runs)
+        )
+
+        _cloud_brief_ok_shadow_audit = (
+            cloud_ready_shadow_audit_ok_oui_non == "oui"
+            and _shadow_green_enough_for_brief is True
+            and str(cloud_ready_shadow_audit_error or "").strip() == ""
+        )
+
         _cloud_brief_ok = (
             _cloud_brief_ok_local is True
             or _cloud_brief_ok_h5_auto_context is True
+            or _cloud_brief_ok_shadow_audit is True
         )
 
         cloud_ready_next_cloud_brief_source = (
@@ -5582,7 +5596,11 @@ def gpi_status():
             else (
                 "h5_auto_context_ready_for_cloud_gate_equivalent"
                 if _cloud_brief_ok_h5_auto_context is True
-                else "cloud_brief_not_available"
+                else (
+                    "shadow_audit_migration_allowed"
+                    if _cloud_brief_ok_shadow_audit is True
+                    else "cloud_brief_not_available"
+                )
             )
         )
 
@@ -5611,6 +5629,8 @@ def gpi_status():
             + str(_cloud_brief_h5_strict_closed_ok)
             + "|ticket_no_bet="
             + str(_cloud_brief_h5_ticket_no_bet_ok)
+            + "|shadow_audit="
+            + str(_cloud_brief_ok_shadow_audit)
         )
 
         _shadow_green_enough = (
