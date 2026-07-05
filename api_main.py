@@ -5730,6 +5730,61 @@ def gpi_status():
         cloud_ready_next_latest_uid_for_alignment = "exception"
         cloud_ready_next_latest_uid_source = "exception"
 
+    # GPI STATUS CLOUD READY MIGRATION CONTROL V0_1
+    # Migration controlee cloud_ready_next -> cloud_ready.
+    # Par defaut, aucune bascule reelle : mode legacy.
+    # Rollback explicite : GPI_CLOUD_READY_MIGRATION_MODE=legacy.
+    cloud_ready_migration_version = "CLOUD_READY_MIGRATION_CONTROL_V0_1"
+    cloud_ready_migration_mode = str(
+        os.getenv("GPI_CLOUD_READY_MIGRATION_MODE", "legacy") or "legacy"
+    ).strip().lower()
+
+    cloud_ready_migration_allowed_modes = ["legacy", "next"]
+    cloud_ready_before_migration = bool(cloud_ready)
+    cloud_ready_migration_effective_oui_non = "non"
+    cloud_ready_migration_enabled_oui_non = "oui" if cloud_ready_migration_mode == "next" else "non"
+    cloud_ready_migration_rollback_env = "GPI_CLOUD_READY_MIGRATION_MODE=legacy"
+    cloud_ready_migration_activation_env = "GPI_CLOUD_READY_MIGRATION_MODE=next"
+    cloud_ready_migration_reason = "LEGACY_MODE_NO_CHANGE"
+
+    _cloud_ready_migration_strict_allowed = bool(
+        locals().get("strict_allowed_global", False)
+    )
+    _cloud_ready_migration_latest_ticket = str(
+        locals().get("latest_ticket", "ND") or "ND"
+    ).strip()
+
+    _cloud_ready_migration_safety_ok = (
+        _cloud_ready_migration_strict_allowed is not True
+        and _cloud_ready_migration_latest_ticket == "NO_BET"
+    )
+
+    if cloud_ready_migration_mode not in cloud_ready_migration_allowed_modes:
+        cloud_ready_migration_reason = "INVALID_MODE_FALLBACK_LEGACY"
+        cloud_ready_migration_mode = "legacy"
+        cloud_ready_migration_enabled_oui_non = "non"
+
+    elif cloud_ready_migration_mode == "next":
+        if (
+            cloud_ready_next_oui_non == "oui"
+            and cloud_ready_next_reason == "CLOUD_READY_NEXT_OK_SHADOW_AUDIT_GREEN"
+            and _cloud_ready_migration_safety_ok is True
+        ):
+            cloud_ready = True
+            cloud_ready_migration_effective_oui_non = "oui"
+            cloud_ready_migration_reason = "MIGRATED_FROM_CLOUD_READY_NEXT"
+        elif cloud_ready_next_oui_non != "oui":
+            cloud_ready_migration_reason = "NEXT_NOT_READY_NO_MIGRATION"
+        elif _cloud_ready_migration_safety_ok is not True:
+            cloud_ready_migration_reason = "SAFETY_BLOCK_STRICT_OR_TICKET"
+        else:
+            cloud_ready_migration_reason = "NEXT_REASON_NOT_VALIDATED"
+
+    else:
+        cloud_ready_migration_reason = "LEGACY_MODE_NO_CHANGE"
+
+    cloud_ready_after_migration = bool(cloud_ready)
+
     return {
         "ok": True,
         "source_pack_status": "OK" if source_pack.get("ok") else "KO",
@@ -5858,7 +5913,18 @@ def gpi_status():
         "cloud_ready_next_latest_uid_for_alignment": cloud_ready_next_latest_uid_for_alignment,
         "cloud_ready_next_latest_uid_source": cloud_ready_next_latest_uid_source,
         "cloud_ready_next_differs_from_legacy_oui_non": cloud_ready_next_differs_from_legacy_oui_non,
-        "cloud_ready_next_activation_note": "Lecture seule. Ne modifie pas cloud_ready ni strict_allowed_global.",
+        "cloud_ready_next_activation_note": "Source shadow. La bascule cloud_ready est controlee par GPI_CLOUD_READY_MIGRATION_MODE.",
+        "cloud_ready_migration_version": cloud_ready_migration_version,
+        "cloud_ready_migration_mode": cloud_ready_migration_mode,
+        "cloud_ready_migration_enabled_oui_non": cloud_ready_migration_enabled_oui_non,
+        "cloud_ready_migration_effective_oui_non": cloud_ready_migration_effective_oui_non,
+        "cloud_ready_migration_reason": cloud_ready_migration_reason,
+        "cloud_ready_before_migration": cloud_ready_before_migration,
+        "cloud_ready_after_migration": cloud_ready_after_migration,
+        "cloud_ready_migration_activation_env": cloud_ready_migration_activation_env,
+        "cloud_ready_migration_rollback_env": cloud_ready_migration_rollback_env,
+        "cloud_ready_migration_safety_strict_allowed": _cloud_ready_migration_strict_allowed,
+        "cloud_ready_migration_safety_latest_ticket": _cloud_ready_migration_latest_ticket,
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
         "source_pack_manifest_sha256": source_pack.get("manifest_sha256", "ND"),
         "source_documents_count": source_pack.get("source_documents_count", 0),
@@ -7389,6 +7455,17 @@ def action_status():
         "cloud_ready_next_latest_uid_source",
         "cloud_ready_next_differs_from_legacy_oui_non",
         "cloud_ready_next_activation_note",
+        "cloud_ready_migration_version",
+        "cloud_ready_migration_mode",
+        "cloud_ready_migration_enabled_oui_non",
+        "cloud_ready_migration_effective_oui_non",
+        "cloud_ready_migration_reason",
+        "cloud_ready_before_migration",
+        "cloud_ready_after_migration",
+        "cloud_ready_migration_activation_env",
+        "cloud_ready_migration_rollback_env",
+        "cloud_ready_migration_safety_strict_allowed",
+        "cloud_ready_migration_safety_latest_ticket",
         "legacy_h5_context_stale_oui_non",
     ]:
         compact[_h5_ready_key] = payload.get(_h5_ready_key, "ND")
