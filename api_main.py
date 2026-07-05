@@ -5495,6 +5495,55 @@ def gpi_status():
         cloud_ready_shadow_audit_error = f"{type(_audit_exc).__name__}:{_audit_exc}"
         cloud_ready_shadow_last_mismatch_reason = "AUDIT_EXCEPTION"
 
+    # GPI STATUS CLOUD READY NEXT SHADOW V0_1
+    # Lecture seule : ne remplace jamais cloud_ready.
+    cloud_ready_next_oui_non = "non"
+    cloud_ready_next_reason = "INIT"
+    cloud_ready_next_source = "shadow_audit_only"
+    cloud_ready_next_differs_from_legacy_oui_non = "non"
+
+    try:
+        _shadow_green_enough = (
+            int(cloud_ready_shadow_green_runs) >= int(cloud_ready_shadow_required_runs)
+        )
+
+        _cloud_ready_next_ok = (
+            cloud_ready_files is True
+            and cloud_brief_ok is True
+            and cloud_ready_shadow_audit_ok_oui_non == "oui"
+            and _shadow_green_enough is True
+            and str(cloud_ready_shadow_audit_error or "").strip() == ""
+        )
+
+        cloud_ready_next_oui_non = "oui" if _cloud_ready_next_ok else "non"
+
+        if _cloud_ready_next_ok:
+            cloud_ready_next_reason = "CLOUD_READY_NEXT_OK_SHADOW_AUDIT_GREEN"
+        elif cloud_ready_files is not True:
+            cloud_ready_next_reason = "CLOUD_READY_FILES_FALSE"
+        elif cloud_brief_ok is not True:
+            cloud_ready_next_reason = "CLOUD_BRIEF_NOT_OK"
+        elif cloud_ready_shadow_audit_ok_oui_non != "oui":
+            cloud_ready_next_reason = "SHADOW_AUDIT_NOT_OK"
+        elif not _shadow_green_enough:
+            cloud_ready_next_reason = "NOT_ENOUGH_SHADOW_GREEN_RUNS"
+        elif str(cloud_ready_shadow_audit_error or "").strip() != "":
+            cloud_ready_next_reason = "SHADOW_AUDIT_ERROR"
+        else:
+            cloud_ready_next_reason = "CLOUD_READY_NEXT_BLOCKED_UNKNOWN"
+
+        cloud_ready_next_differs_from_legacy_oui_non = (
+            "oui"
+            if (cloud_ready is True and cloud_ready_next_oui_non == "non")
+            or (cloud_ready is not True and cloud_ready_next_oui_non == "oui")
+            else "non"
+        )
+
+    except Exception as _next_exc:
+        cloud_ready_next_oui_non = "non"
+        cloud_ready_next_reason = f"CLOUD_READY_NEXT_EXCEPTION:{type(_next_exc).__name__}:{_next_exc}"
+        cloud_ready_next_source = "shadow_audit_exception"
+
     return {
         "ok": True,
         "source_pack_status": "OK" if source_pack.get("ok") else "KO",
@@ -5613,6 +5662,13 @@ def gpi_status():
         "cloud_ready_shadow_audit_path": cloud_ready_shadow_audit_path,
         "cloud_ready_shadow_latest_run_key": cloud_ready_shadow_latest_run_key,
         "cloud_ready_shadow_latest_uid_source": cloud_ready_shadow_latest_uid_source,
+
+        # GPI STATUS CLOUD READY NEXT SHADOW V0_1
+        "cloud_ready_next_oui_non": cloud_ready_next_oui_non,
+        "cloud_ready_next_reason": cloud_ready_next_reason,
+        "cloud_ready_next_source": cloud_ready_next_source,
+        "cloud_ready_next_differs_from_legacy_oui_non": cloud_ready_next_differs_from_legacy_oui_non,
+        "cloud_ready_next_activation_note": "Lecture seule. Ne modifie pas cloud_ready ni strict_allowed_global.",
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
         "source_pack_manifest_sha256": source_pack.get("manifest_sha256", "ND"),
         "source_documents_count": source_pack.get("source_documents_count", 0),
@@ -7134,6 +7190,11 @@ def action_status():
         "cloud_ready_shadow_audit_path",
         "cloud_ready_shadow_latest_run_key",
         "cloud_ready_shadow_latest_uid_source",
+        "cloud_ready_next_oui_non",
+        "cloud_ready_next_reason",
+        "cloud_ready_next_source",
+        "cloud_ready_next_differs_from_legacy_oui_non",
+        "cloud_ready_next_activation_note",
         "legacy_h5_context_stale_oui_non",
     ]:
         compact[_h5_ready_key] = payload.get(_h5_ready_key, "ND")
