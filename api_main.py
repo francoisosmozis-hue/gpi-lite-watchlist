@@ -5502,6 +5502,8 @@ def gpi_status():
     cloud_ready_next_source = "shadow_audit_only"
     cloud_ready_next_cloud_brief_source = "ND"
     cloud_ready_next_cloud_brief_diag = "ND"
+    cloud_ready_next_latest_uid_for_alignment = "ND"
+    cloud_ready_next_latest_uid_source = "ND"
     cloud_ready_next_differs_from_legacy_oui_non = "non"
 
     try:
@@ -5514,9 +5516,42 @@ def gpi_status():
         # CLOUD_READY_NEXT H5 BRIEF DIAG V0_1
         _cloud_brief_h5_ready_ok = h5_auto_context_ready_oui_non == "oui"
         _cloud_brief_h5_course_ok = str(h5_auto_context_course_uid).strip() != "ND"
-        _cloud_brief_latest_course_ok = str(latest_course_uid).strip() != "ND"
+
+        # CLOUD_READY_NEXT LATEST UID ALIGNMENT V0_1
+        # Utilise le meme principe que le shadow audit : priorite au brief H5 auto.
+        _cloud_ready_next_h5_freshness_obj = locals().get("h5_context_freshness", {})
+        if not isinstance(_cloud_ready_next_h5_freshness_obj, dict):
+            _cloud_ready_next_h5_freshness_obj = {}
+
+        _cloud_ready_next_latest_uid_candidates = [
+            _cloud_ready_next_h5_freshness_obj.get("latest_h5_auto_brief_course_uid"),
+            locals().get("latest_course_uid_for_gate"),
+            locals().get("latest_h5_auto_brief_course_uid"),
+            locals().get("latest_course_uid"),
+            latest_course_uid,
+        ]
+
+        _cloud_ready_next_latest_uid_source_names = [
+            "h5_context_freshness.latest_h5_auto_brief_course_uid",
+            "locals.latest_course_uid_for_gate",
+            "locals.latest_h5_auto_brief_course_uid",
+            "locals.latest_course_uid",
+            "latest_course_uid_variable",
+        ]
+
+        for _idx, _candidate_uid in enumerate(_cloud_ready_next_latest_uid_candidates):
+            _candidate_uid = str(_candidate_uid or "").strip()
+            if _candidate_uid and _candidate_uid != "ND":
+                cloud_ready_next_latest_uid_for_alignment = _candidate_uid
+                try:
+                    cloud_ready_next_latest_uid_source = _cloud_ready_next_latest_uid_source_names[_idx]
+                except Exception:
+                    cloud_ready_next_latest_uid_source = "UNKNOWN_SOURCE"
+                break
+
+        _cloud_brief_latest_course_ok = str(cloud_ready_next_latest_uid_for_alignment).strip() != "ND"
         _cloud_brief_h5_aligned_ok = (
-            str(h5_auto_context_course_uid).strip() == str(latest_course_uid).strip()
+            str(h5_auto_context_course_uid).strip() == str(cloud_ready_next_latest_uid_for_alignment).strip()
         )
         _cloud_brief_h5_rows_ok = h5_auto_context_rows_ok_oui_non == "oui"
         _cloud_brief_h5_top_cotes_ok = h5_auto_context_top_cotes_ok_oui_non == "oui"
@@ -5560,6 +5595,10 @@ def gpi_status():
             + str(_cloud_brief_h5_course_ok)
             + "|latest_course="
             + str(_cloud_brief_latest_course_ok)
+            + "|latest_uid_source="
+            + str(cloud_ready_next_latest_uid_source)
+            + "|latest_uid="
+            + str(cloud_ready_next_latest_uid_for_alignment)
             + "|aligned="
             + str(_cloud_brief_h5_aligned_ok)
             + "|rows="
@@ -5616,6 +5655,8 @@ def gpi_status():
         cloud_ready_next_source = "shadow_audit_exception"
         cloud_ready_next_cloud_brief_source = "exception"
         cloud_ready_next_cloud_brief_diag = "exception"
+        cloud_ready_next_latest_uid_for_alignment = "exception"
+        cloud_ready_next_latest_uid_source = "exception"
 
     return {
         "ok": True,
@@ -5742,6 +5783,8 @@ def gpi_status():
         "cloud_ready_next_source": cloud_ready_next_source,
         "cloud_ready_next_cloud_brief_source": cloud_ready_next_cloud_brief_source,
         "cloud_ready_next_cloud_brief_diag": cloud_ready_next_cloud_brief_diag,
+        "cloud_ready_next_latest_uid_for_alignment": cloud_ready_next_latest_uid_for_alignment,
+        "cloud_ready_next_latest_uid_source": cloud_ready_next_latest_uid_source,
         "cloud_ready_next_differs_from_legacy_oui_non": cloud_ready_next_differs_from_legacy_oui_non,
         "cloud_ready_next_activation_note": "Lecture seule. Ne modifie pas cloud_ready ni strict_allowed_global.",
         "source_pack_version": source_pack.get("source_pack_version", "ND"),
@@ -7270,6 +7313,8 @@ def action_status():
         "cloud_ready_next_source",
         "cloud_ready_next_cloud_brief_source",
         "cloud_ready_next_cloud_brief_diag",
+        "cloud_ready_next_latest_uid_for_alignment",
+        "cloud_ready_next_latest_uid_source",
         "cloud_ready_next_differs_from_legacy_oui_non",
         "cloud_ready_next_activation_note",
         "legacy_h5_context_stale_oui_non",
