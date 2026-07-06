@@ -6020,21 +6020,96 @@ def gpi_status():
     cloud_ready_after_migration = bool(cloud_ready)
 
 
-    # GPI STATUS STRICT REASON AFTER CLOUD_READY MIGRATION V0_1
-    # Diagnostic only. Ne doit jamais ouvrir le strict.
+    # GPI STATUS STRICT GLOBAL AFTER CLOUD_READY MIGRATION V0_2
+    # Recalcule la porte globale apres migration cloud_ready_next.
+    # N'ouvre le strict que si GPI_STRICT_ACTIVATION_MODE=controlled.
+    strict_activation_mode = (
+        os.getenv("GPI_STRICT_ACTIVATION_MODE", "closed") or "closed"
+    ).strip().lower()
+
+    if strict_activation_mode not in {"closed", "controlled"}:
+        strict_activation_mode = "closed"
+
+    strict_global_post_migration_blockers = []
+
+    if mvp_gate_status != "PAPER_READY":
+        strict_global_post_migration_blockers.append(
+            f"mvp_gate_status {mvp_gate_status}"
+        )
+
+    _paper_ready_after_migration = locals().get(
+        "paper_kpi_ready_50_for_gate",
+        locals().get("paper_kpi_ready_50", None),
+    )
+
+    # Si la variable detaillee n'existe pas, PAPER_READY reste la source
+    # de verite globale deja calculee par le MVP gate.
+    if _paper_ready_after_migration is None:
+        _paper_ready_after_migration = mvp_gate_status == "PAPER_READY"
+
+    if not bool(_paper_ready_after_migration):
+        strict_global_post_migration_blockers.append("paper_kpi_ready_50 false")
+
+    _result_leak_raw = locals().get(
+        "paper_result_leak_count_for_gate",
+        locals().get(
+            "result_leak_count",
+            locals().get("paper_kpi_global_result_leak_count", 0),
+        ),
+    )
+
+    try:
+        _result_leak_for_gate = int(_result_leak_raw or 0)
+    except Exception:
+        _result_leak_for_gate = 999999
+
+    if _result_leak_for_gate > 0:
+        strict_global_post_migration_blockers.append(
+            f"{_result_leak_for_gate} result leak"
+        )
+
+    if cloud_ready_after_migration is not True:
+        strict_global_post_migration_blockers.append("cloud_ready false")
+
+    if not bool(locals().get("cloud_ok", False)):
+        strict_global_post_migration_blockers.append("cloud_brief_ok false")
+
+    strict_global_post_migration_candidate = (
+        len(strict_global_post_migration_blockers) == 0
+    )
+
     if (
         cloud_ready_before_migration is False
         and cloud_ready_after_migration is True
         and str(strict_allowed_reason or "").strip()
         == "strict global disabled: cloud_ready false"
     ):
-        strict_allowed_global = False
-        strict_allowed_reason = (
-            "strict global disabled: cloud_ready migrated from next after initial gate, "
-            "strict kept closed by migration safety, latest_ticket="
-            f"{_cloud_ready_migration_latest_ticket}"
-        )
-        mvp_gate_reason = strict_allowed_reason
+        if (
+            strict_activation_mode == "controlled"
+            and strict_global_post_migration_candidate is True
+        ):
+            strict_allowed_global = True
+            strict_allowed_reason = (
+                "strict global enabled after cloud_ready next migration, "
+                "decision-level gates still required"
+            )
+            mvp_gate_reason = strict_allowed_reason
+        else:
+            strict_allowed_global = False
+
+            if strict_global_post_migration_candidate is True:
+                strict_allowed_reason = (
+                    "strict global disabled: activation mode closed after "
+                    "cloud_ready next migration, set "
+                    "GPI_STRICT_ACTIVATION_MODE=controlled to enable global strict gate"
+                )
+            else:
+                strict_allowed_reason = (
+                    "strict global disabled after cloud_ready next migration: "
+                    + ", ".join(strict_global_post_migration_blockers)
+                )
+
+            mvp_gate_reason = strict_allowed_reason
 
     return {
         "ok": True,
@@ -6238,6 +6313,15 @@ def gpi_status():
         "mvp_gate_reason": mvp_gate_reason,
         "strict_allowed_global": strict_allowed_global,
         "strict_allowed_reason": strict_allowed_reason,
+
+        # GPI STATUS STRICT GLOBAL AFTER CLOUD_READY MIGRATION V0_2B
+        "strict_activation_mode": locals().get("strict_activation_mode", "legacy"),
+        "strict_global_post_migration_candidate": bool(
+            locals().get("strict_global_post_migration_candidate", False)
+        ),
+        "strict_global_post_migration_blockers": locals().get(
+            "strict_global_post_migration_blockers", []
+        ),
         "paper_kpi_ready_50_for_gate": paper_kpi_ready_50_for_gate,
         "paper_result_leak_count_for_gate": paper_result_leak_count_for_gate,
         "paper_kpi_stale": paper_kpi_stale,
