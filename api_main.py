@@ -7562,6 +7562,15 @@ def _action_compact_status(payload):
         "mvp_gate_reason": _action_str(payload.get("mvp_gate_reason")),
         "strict_allowed_global": _action_bool(payload.get("strict_allowed_global"), False),
         "strict_allowed_reason": _action_str(payload.get("strict_allowed_reason")),
+
+        # GPI ACTION STATUS STRICT GLOBAL AFTER CLOUD_READY MIGRATION V0_2C
+        "strict_activation_mode": payload.get("strict_activation_mode"),
+        "strict_global_post_migration_candidate": payload.get(
+            "strict_global_post_migration_candidate"
+        ),
+        "strict_global_post_migration_blockers": payload.get(
+            "strict_global_post_migration_blockers", []
+        ),
         "paper_trading_count": payload.get("paper_trading_count", "ND"),
         "paper_trading_ready_50": _action_bool(payload.get("paper_trading_ready_50"), False),
         "paper_kpi_global_decisions": payload.get("paper_kpi_global_decisions", "ND"),
