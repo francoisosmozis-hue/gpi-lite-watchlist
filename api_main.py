@@ -5749,15 +5749,18 @@ def gpi_status():
             or _cloud_brief_ok_proof is True
         )
 
+        # CLOUD_READY_NEXT PROOF SOURCE PRIORITY ONLY V0_1
+        # La preuve fig?e GCS doit ?tre la source prioritaire de migration.
+        # Le H5 vivant reste visible dans le diagnostic, mais ne masque plus la preuve.
         cloud_ready_next_cloud_brief_source = (
             "locals.cloud_brief_ok"
             if _cloud_brief_ok_local is True
             else (
-                "h5_auto_context_ready_for_cloud_gate_equivalent"
-                if _cloud_brief_ok_h5_auto_context is True
+                "migration_proof_gcs"
+                if locals().get("_cloud_brief_ok_proof", False) is True
                 else (
-                    "migration_proof_gcs"
-                    if locals().get("_cloud_brief_ok_proof", False) is True
+                    "h5_auto_context_ready_for_cloud_gate_equivalent"
+                    if _cloud_brief_ok_h5_auto_context is True
                     else (
                         "shadow_audit_readonly_migration_allowed"
                         if _cloud_brief_ok_shadow_audit is True
