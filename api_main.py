@@ -10106,6 +10106,7 @@ def health_cloud_ready_shadow_audit():
         }
 
 
+# CLOUD_READY ACTION AUDIT EFFECTIVE FIELDS V0_3
 @app.get("/action/cloud-ready-shadow-audit")
 def action_cloud_ready_shadow_audit():
     """
@@ -10121,7 +10122,15 @@ def action_cloud_ready_shadow_audit():
             "audit_exists": payload.get("audit_exists", False),
             "audit_path": payload.get("audit_path", "gpi-lite/outputs/cloud_ready_shadow_audit.json"),
             "audit_ok_oui_non": payload.get("audit_ok_oui_non", "non"),
+            "green_runs_raw": payload.get("green_runs_raw", 0),
+            "green_runs_effective": payload.get("green_runs_effective", 0),
             "migration_allowed_oui_non": "non",
+            "migration_allowed_effective_oui_non": payload.get("migration_allowed_effective_oui_non", "non"),
+            "effective_course_uid": payload.get("effective_course_uid", "ND"),
+            "last_effective_break_reason": payload.get("last_effective_break_reason", "ND"),
+            "last_effective_break_run_key": payload.get("last_effective_break_run_key", "ND"),
+            "last_effective_break_recorded_at_utc": payload.get("last_effective_break_recorded_at_utc", "ND"),
+            "ignored_other_course_runs": payload.get("ignored_other_course_runs", 0),
             "error": _action_str(payload.get("error")),
             "doctrine": "Lecture seule. Aucun gate reel modifie.",
         }
@@ -10136,8 +10145,16 @@ def action_cloud_ready_shadow_audit():
         "audit_ok_oui_non": payload.get("audit_ok_oui_non", "non"),
         "required_runs": payload.get("required_runs", 3),
         "green_runs": payload.get("green_runs", 0),
+        "green_runs_raw": payload.get("green_runs_raw", payload.get("green_runs", 0)),
+        "green_runs_effective": payload.get("green_runs_effective", 0),
         "remaining_green_runs": payload.get("remaining_green_runs", 3),
         "migration_allowed_oui_non": payload.get("migration_allowed_oui_non", "non"),
+        "migration_allowed_effective_oui_non": payload.get("migration_allowed_effective_oui_non", "non"),
+        "effective_course_uid": payload.get("effective_course_uid", "ND"),
+        "last_effective_break_reason": payload.get("last_effective_break_reason", "ND"),
+        "last_effective_break_run_key": payload.get("last_effective_break_run_key", "ND"),
+        "last_effective_break_recorded_at_utc": payload.get("last_effective_break_recorded_at_utc", "ND"),
+        "ignored_other_course_runs": payload.get("ignored_other_course_runs", 0),
         "latest_run_key": payload.get("latest_run_key", "ND"),
         "latest_reason": payload.get("latest_reason", "ND"),
         "latest_course_uid": payload.get("latest_course_uid", "ND"),
