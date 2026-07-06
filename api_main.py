@@ -10074,10 +10074,21 @@ def health_cloud_ready_shadow_audit():
             "latest_green_oui_non": latest.get("green_oui_non", "ND") if isinstance(latest, dict) else "ND",
             "history_count": len(history),
             # CLOUD_READY SHADOW AUDIT EFFECTIVE RETURN V0_1
+        # CLOUD_READY EFFECTIVE GREEN RUNS SAFE COURSE UID V0_1
         **_gpi_compute_effective_green_runs_by_course(
             history=history,
             required_runs=required_runs,
-            current_course_uid=latest_course_uid,
+            current_course_uid=(
+                locals().get("latest_course_uid")
+                or locals().get("_latest_course_uid")
+                or (
+                    history[-1].get("course_uid")
+                    if isinstance(history, list)
+                    and len(history) > 0
+                    and isinstance(history[-1], dict)
+                    else ""
+                )
+            ),
         ),
         "green_runs_raw": green_runs,
         "history_tail": history[-10:],
