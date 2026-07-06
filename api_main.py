@@ -9908,6 +9908,88 @@ def health_h5_report_auto_context():
 
 
 
+
+
+# CLOUD_READY SHADOW AUDIT EFFECTIVE GREEN RUNS V0_1
+def _gpi_compute_effective_green_runs_by_course(history, required_runs=3, current_course_uid=None):
+    """
+    Calcule une serie verte effective par course_uid.
+    Les runs d'autres courses sont ignores.
+    Un run non vert du meme course_uid casse la serie.
+    """
+    if not isinstance(history, list):
+        history = []
+
+    required_runs = int(required_runs or 3)
+
+    def _s(value):
+        return str(value or "").strip()
+
+    def _is_green(entry):
+        return (
+            _s(entry.get("green_oui_non")) == "oui"
+            and _s(entry.get("course_uid")) != ""
+            and _s(entry.get("course_uid")) == _s(entry.get("h5_auto_context_course_uid"))
+            and _s(entry.get("h5_auto_context_ready_oui_non")) == "oui"
+            and _s(entry.get("h5_auto_context_ready_for_cloud_gate_oui_non")) == "oui"
+            and _s(entry.get("cloud_ready_legacy_oui_non")) == "non"
+        )
+
+    # Course effective = course courante si fournie, sinon derniere entree historisee.
+    effective_course_uid = _s(current_course_uid)
+    if not effective_course_uid:
+        for entry in reversed(history):
+            if isinstance(entry, dict) and _s(entry.get("course_uid")):
+                effective_course_uid = _s(entry.get("course_uid"))
+                break
+
+    green_runs_effective = 0
+    ignored_other_course_runs = 0
+    last_effective_break_reason = "ND"
+    last_effective_break_run_key = "ND"
+    last_effective_break_recorded_at_utc = "ND"
+
+    if not effective_course_uid:
+        return {
+            "green_runs_effective": 0,
+            "migration_allowed_effective_oui_non": "non",
+            "effective_course_uid": "ND",
+            "last_effective_break_reason": "NO_EFFECTIVE_COURSE_UID",
+            "last_effective_break_run_key": "ND",
+            "last_effective_break_recorded_at_utc": "ND",
+            "ignored_other_course_runs": 0,
+        }
+
+    for entry in reversed(history):
+        if not isinstance(entry, dict):
+            continue
+
+        entry_course_uid = _s(entry.get("course_uid"))
+
+        if entry_course_uid != effective_course_uid:
+            ignored_other_course_runs += 1
+            continue
+
+        if _is_green(entry):
+            green_runs_effective += 1
+            continue
+
+        last_effective_break_reason = _s(entry.get("reason")) or "SAME_COURSE_NON_GREEN"
+        last_effective_break_run_key = _s(entry.get("run_key")) or "ND"
+        last_effective_break_recorded_at_utc = _s(entry.get("recorded_at_utc")) or "ND"
+        break
+
+    return {
+        "green_runs_effective": green_runs_effective,
+        "migration_allowed_effective_oui_non": "oui" if green_runs_effective >= required_runs else "non",
+        "effective_course_uid": effective_course_uid,
+        "last_effective_break_reason": last_effective_break_reason,
+        "last_effective_break_run_key": last_effective_break_run_key,
+        "last_effective_break_recorded_at_utc": last_effective_break_recorded_at_utc,
+        "ignored_other_course_runs": ignored_other_course_runs,
+    }
+
+
 # CLOUD READY SHADOW AUDIT READ V0_1
 @app.get("/health/cloud-ready-shadow-audit")
 def health_cloud_ready_shadow_audit():
@@ -9991,7 +10073,14 @@ def health_cloud_ready_shadow_audit():
             "latest_h5_auto_context_course_uid": latest.get("h5_auto_context_course_uid", "ND") if isinstance(latest, dict) else "ND",
             "latest_green_oui_non": latest.get("green_oui_non", "ND") if isinstance(latest, dict) else "ND",
             "history_count": len(history),
-            "history_tail": history[-10:],
+            # CLOUD_READY SHADOW AUDIT EFFECTIVE RETURN V0_1
+        **_gpi_compute_effective_green_runs_by_course(
+            history=history,
+            required_runs=required_runs,
+            current_course_uid=latest_course_uid,
+        ),
+        "green_runs_raw": green_runs,
+        "history_tail": history[-10:],
             "doctrine": "Lecture seule. Ne modifie jamais cloud_ready, strict_allowed_global ni les tickets.",
         }
 
