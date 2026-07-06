@@ -5644,10 +5644,109 @@ def gpi_status():
             and str(_cloud_ready_next_audit_read_error or "").strip() == ""
         )
 
+        # CLOUD_READY_NEXT MIGRATION PROOF SOURCE V0_1
+        # Source stable de migration : preuve fig?e GCS.
+        # Ne cr?e aucun ticket, n'ouvre pas le strict, ne modifie pas cloud_ready.
+        _cloud_ready_next_proof_ok = False
+        _cloud_ready_next_proof_exists = False
+        _cloud_ready_next_proof_reason = "PROOF_NOT_READ"
+        _cloud_ready_next_proof_course_uid = "ND"
+        _cloud_ready_next_proof_green_runs_effective = 0
+        _cloud_ready_next_proof_required_runs = 3
+        _cloud_ready_next_proof_path = "gpi-lite/outputs/cloud_ready_migration_proof.json"
+        _cloud_ready_next_proof_error = ""
+
+        try:
+            import json as _proof_json
+
+            _proof_bucket, _proof_bucket_error = get_gcs_bucket()
+            if _proof_bucket is None:
+                _cloud_ready_next_proof_reason = f"GCS_BUCKET_ERROR:{_proof_bucket_error}"
+            else:
+                _proof_blob = _proof_bucket.blob(_cloud_ready_next_proof_path)
+                if not _proof_blob.exists():
+                    _cloud_ready_next_proof_reason = "PROOF_FILE_NOT_FOUND"
+                else:
+                    _cloud_ready_next_proof_exists = True
+                    _proof_raw = _proof_blob.download_as_text(encoding="utf-8")
+                    _proof_payload = _proof_json.loads(_proof_raw or "{}")
+                    if not isinstance(_proof_payload, dict):
+                        _proof_payload = {}
+
+                    _cloud_ready_next_proof_course_uid = str(
+                        _proof_payload.get("effective_course_uid", "ND") or "ND"
+                    )
+
+                    try:
+                        _cloud_ready_next_proof_green_runs_effective = int(
+                            _proof_payload.get("green_runs_effective", 0)
+                        )
+                    except Exception:
+                        _cloud_ready_next_proof_green_runs_effective = 0
+
+                    try:
+                        _cloud_ready_next_proof_required_runs = int(
+                            _proof_payload.get("required_runs", 3)
+                        )
+                    except Exception:
+                        _cloud_ready_next_proof_required_runs = 3
+
+                    _proof_safety = _proof_payload.get("safety_status", {})
+                    if not isinstance(_proof_safety, dict):
+                        _proof_safety = {}
+
+                    _proof_strict_snapshot = _proof_safety.get("strict_allowed_global", True)
+                    _proof_strict_snapshot_ok = (
+                        _proof_strict_snapshot is False
+                        or str(_proof_strict_snapshot).strip().lower() in {"false", "non", "0"}
+                    )
+
+                    _proof_latest_ticket = str(
+                        _proof_safety.get("latest_ticket", "ND") or "ND"
+                    ).strip()
+
+                    _proof_latest_strict = str(
+                        _proof_safety.get("latest_strict_allowed_oui_non", "ND") or "ND"
+                    ).strip().lower()
+
+                    _proof_latest_decision_strict = str(
+                        _proof_safety.get("latest_decision_strict_allowed", "ND") or "ND"
+                    ).strip().lower()
+
+                    _cloud_ready_next_proof_ok = (
+                        str(_proof_payload.get("proof_valid_oui_non", "non") or "non") == "oui"
+                        and str(_proof_payload.get("migration_allowed_effective_oui_non", "non") or "non") == "oui"
+                        and _cloud_ready_next_proof_green_runs_effective >= _cloud_ready_next_proof_required_runs
+                        and _proof_strict_snapshot_ok is True
+                        and _proof_latest_ticket == "NO_BET"
+                        and _proof_latest_strict == "non"
+                        and _proof_latest_decision_strict == "non"
+                    )
+
+                    _cloud_ready_next_proof_reason = (
+                        "PROOF_OK"
+                        if _cloud_ready_next_proof_ok is True
+                        else "PROOF_GUARDS_NOT_OK"
+                    )
+
+        except Exception as _proof_exc:
+            _cloud_ready_next_proof_error = f"{type(_proof_exc).__name__}:{_proof_exc}"
+            _cloud_ready_next_proof_reason = "PROOF_READ_EXCEPTION"
+
+        if _cloud_ready_next_proof_ok is True:
+            _cloud_ready_next_audit_read_ok = True
+            _cloud_ready_next_audit_ok_oui_non = "oui"
+            _cloud_ready_next_audit_migration_allowed_oui_non = "oui"
+            _cloud_ready_next_audit_green_runs = _cloud_ready_next_proof_green_runs_effective
+            _cloud_ready_next_audit_required_runs = _cloud_ready_next_proof_required_runs
+
+        _cloud_brief_ok_proof = _cloud_ready_next_proof_ok is True
+
         _cloud_brief_ok = (
             _cloud_brief_ok_local is True
             or _cloud_brief_ok_h5_auto_context is True
             or _cloud_brief_ok_shadow_audit is True
+            or _cloud_brief_ok_proof is True
         )
 
         cloud_ready_next_cloud_brief_source = (
@@ -5657,9 +5756,13 @@ def gpi_status():
                 "h5_auto_context_ready_for_cloud_gate_equivalent"
                 if _cloud_brief_ok_h5_auto_context is True
                 else (
-                    "shadow_audit_readonly_migration_allowed"
-                    if _cloud_brief_ok_shadow_audit is True
-                    else "cloud_brief_not_available"
+                    "migration_proof_gcs"
+                    if locals().get("_cloud_brief_ok_proof", False) is True
+                    else (
+                        "shadow_audit_readonly_migration_allowed"
+                        if _cloud_brief_ok_shadow_audit is True
+                        else "cloud_brief_not_available"
+                    )
                 )
             )
         )
@@ -5705,6 +5808,20 @@ def gpi_status():
             + str(locals().get("_cloud_ready_next_audit_migration_allowed_effective_oui_non", "ND"))
             + "|audit_green_runs_effective="
             + str(locals().get("_cloud_ready_next_audit_green_runs_effective", "ND"))
+            + "|proof_ok="
+            + str(locals().get("_cloud_ready_next_proof_ok", False))
+            + "|proof_exists="
+            + str(locals().get("_cloud_ready_next_proof_exists", False))
+            + "|proof_course_uid="
+            + str(locals().get("_cloud_ready_next_proof_course_uid", "ND"))
+            + "|proof_green_runs_effective="
+            + str(locals().get("_cloud_ready_next_proof_green_runs_effective", "ND"))
+            + "|proof_required_runs="
+            + str(locals().get("_cloud_ready_next_proof_required_runs", "ND"))
+            + "|proof_reason="
+            + str(locals().get("_cloud_ready_next_proof_reason", "ND"))
+            + "|proof_error="
+            + str(locals().get("_cloud_ready_next_proof_error", ""))
             + "|audit_read_error="
             + str(_cloud_ready_next_audit_read_error)
         )
