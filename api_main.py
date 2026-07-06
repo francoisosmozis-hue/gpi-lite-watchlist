@@ -6019,6 +6019,23 @@ def gpi_status():
 
     cloud_ready_after_migration = bool(cloud_ready)
 
+
+    # GPI STATUS STRICT REASON AFTER CLOUD_READY MIGRATION V0_1
+    # Diagnostic only. Ne doit jamais ouvrir le strict.
+    if (
+        cloud_ready_before_migration is False
+        and cloud_ready_after_migration is True
+        and str(strict_allowed_reason or "").strip()
+        == "strict global disabled: cloud_ready false"
+    ):
+        strict_allowed_global = False
+        strict_allowed_reason = (
+            "strict global disabled: cloud_ready migrated from next after initial gate, "
+            "strict kept closed by migration safety, latest_ticket="
+            f"{_cloud_ready_migration_latest_ticket}"
+        )
+        mvp_gate_reason = strict_allowed_reason
+
     return {
         "ok": True,
         "source_pack_status": "OK" if source_pack.get("ok") else "KO",
