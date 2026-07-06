@@ -5597,6 +5597,34 @@ def gpi_status():
                         _cloud_ready_next_audit_required_runs = int(_audit_read_payload.get("required_runs", 3))
                     except Exception:
                         _cloud_ready_next_audit_required_runs = 3
+
+                    # CLOUD_READY_NEXT EFFECTIVE AUDIT GATE V0_1
+                    # Le gate next utilise le compteur effectif par course_uid quand il existe.
+                    # Les champs bruts restent conserves pour audit et diagnostic.
+                    _cloud_ready_next_audit_migration_allowed_effective_oui_non = str(
+                        _audit_read_payload.get(
+                            "migration_allowed_effective_oui_non",
+                            _cloud_ready_next_audit_migration_allowed_oui_non,
+                        ) or "non"
+                    )
+
+                    try:
+                        _cloud_ready_next_audit_green_runs_effective = int(
+                            _audit_read_payload.get(
+                                "green_runs_effective",
+                                _cloud_ready_next_audit_green_runs,
+                            )
+                        )
+                    except Exception:
+                        _cloud_ready_next_audit_green_runs_effective = _cloud_ready_next_audit_green_runs
+
+                    if (
+                        _cloud_ready_next_audit_migration_allowed_effective_oui_non == "oui"
+                        and _cloud_ready_next_audit_green_runs_effective >= _cloud_ready_next_audit_required_runs
+                    ):
+                        _cloud_ready_next_audit_ok_oui_non = "oui"
+                        _cloud_ready_next_audit_migration_allowed_oui_non = "oui"
+                        _cloud_ready_next_audit_green_runs = _cloud_ready_next_audit_green_runs_effective
                 else:
                     _cloud_ready_next_audit_read_error = "AUDIT_READ_PAYLOAD_NOT_DICT"
             else:
@@ -5673,6 +5701,10 @@ def gpi_status():
             + str(_cloud_ready_next_audit_green_runs)
             + "|audit_required_runs="
             + str(_cloud_ready_next_audit_required_runs)
+            + "|audit_effective_migration_allowed="
+            + str(locals().get("_cloud_ready_next_audit_migration_allowed_effective_oui_non", "ND"))
+            + "|audit_green_runs_effective="
+            + str(locals().get("_cloud_ready_next_audit_green_runs_effective", "ND"))
             + "|audit_read_error="
             + str(_cloud_ready_next_audit_read_error)
         )
