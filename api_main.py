@@ -5826,6 +5826,16 @@ def gpi_status():
                 _cloud_ready_migration_latest_ticket_source = "UNKNOWN_SOURCE"
             break
 
+    # CLOUD_READY MIGRATION NO_BET H5 FALLBACK V0_1
+    # Fallback conservateur : on accepte NO_BET seulement si le contexte H5 auto confirme
+    # explicitement que le ticket reel est NO_BET.
+    if (
+        _cloud_ready_migration_latest_ticket == "ND"
+        and str(locals().get("h5_auto_context_ticket_real_no_bet_oui_non", "non") or "non").strip() == "oui"
+    ):
+        _cloud_ready_migration_latest_ticket = "NO_BET"
+        _cloud_ready_migration_latest_ticket_source = "h5_auto_context_ticket_real_no_bet_oui_non"
+
     _cloud_ready_migration_safety_ok = (
         _cloud_ready_migration_strict_allowed is not True
         and _cloud_ready_migration_latest_ticket == "NO_BET"
