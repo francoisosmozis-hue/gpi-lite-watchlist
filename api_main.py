@@ -3469,6 +3469,10 @@ def drive_run_h5_auto_brief():
     movement_rows_total = 0
     latest_brief_payload = None
 
+    # GPI_H5_BRIEF_HISTORY_ARCHIVES_PATCH_V0_9_28B2
+    # Liste additive : ne remplace pas le history_archive legacy.
+    h5_brief_archive_payloads = []
+
     odds_from_gcs_dir = Path("data/output/odds_from_gcs")
     odds_out_dir = Path("data/output/odds")
     brief_out_dir = Path("data/output/h5_briefs")
@@ -4096,6 +4100,11 @@ def drive_run_h5_auto_brief():
             movement_rows_total += len(movement_rows)
             latest_brief_payload = brief_payload
 
+            h5_brief_archive_payloads.append({
+                "course_uid": course_uid,
+                "payload": brief_payload,
+            })
+
             processed.append({
                 "course_uid": course_uid,
                 "ok": True,
@@ -4127,9 +4136,71 @@ def drive_run_h5_auto_brief():
                 "ticket_strict": "NO_BET",
             })
 
+    # GPI_H5_BRIEF_HISTORY_ARCHIVES_FIX_V0_9_28B2A
+    history_archives = []
+    history_archive_errors = []
+
+    for _archive_source in h5_brief_archive_payloads:
+        try:
+            _course_uid = _archive_source.get("course_uid", "H5_AUTO_BRIEF_GLOBAL")
+            _payload = _archive_source.get("payload")
+
+            if not isinstance(_payload, dict):
+                _payload = {"payload": str(_payload)}
+
+            _exclusion_reason = str(_payload.get("strict_kpi_exclusion_reason", "") or "").strip()
+
+            if _exclusion_reason:
+                _archive_status = "POST_START_EXCLUDED"
+                _archive_reason = _exclusion_reason
+                _decision_before = "non"
+                _live_eligible = "non"
+                _retro_audit = "oui"
+            else:
+                _archive_status = "LIVE_BRIEF_CREATED_PRE_RACE"
+                _archive_reason = "BRIEF_CREATED"
+                _decision_before = "oui"
+                _live_eligible = "oui"
+                _retro_audit = "non"
+
+            _archive_item = _archive_h5_payload_safe(
+                payload=_payload,
+                course_uid=_course_uid,
+                capture_label="H5",
+                source_route="/drive/run/h5-auto-brief",
+                artifact_type="h5_auto_brief",
+                status=_archive_status,
+                reason=_archive_reason,
+                decision_before_race_oui_non=_decision_before,
+                result_known_at_decision="non",
+                live_eligible_oui_non=_live_eligible,
+                retro_audit_only_oui_non=_retro_audit,
+            )
+
+            if isinstance(_archive_item, dict):
+                _archive_item["archive_scope"] = "per_course_brief_v0_9_28B2"
+                _archive_item["course_uid"] = _course_uid
+                _archive_item["strict_kpi_exclusion_reason"] = _exclusion_reason
+                history_archives.append(_archive_item)
+
+        except Exception as exc:
+            history_archive_errors.append({
+                "course_uid": (
+                    _archive_source.get("course_uid", "H5_AUTO_BRIEF_GLOBAL")
+                    if isinstance(_archive_source, dict)
+                    else "H5_AUTO_BRIEF_GLOBAL"
+                ),
+                "reason": f"H5_BRIEF_HISTORY_ARCHIVE_ERROR:{type(exc).__name__}:{exc}",
+                "ticket_strict": "NO_BET",
+                "strict_allowed_oui_non": "non",
+            })
+
     return {
         "ok": True,
         "phase": "h5_auto_brief",
+        "history_archives": history_archives,
+        "history_archive_errors": history_archive_errors,
+        "history_archive_count": len(history_archives),
         "history_archive": _archive_h5_payload_safe(
             payload={
                 "phase": "h5_auto_brief",
