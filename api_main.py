@@ -8656,6 +8656,24 @@ def scheduler_run_due_h5():
         except Exception:
             return default
 
+    # GPI_H5_SCHEDULER_RESOLVER_METRICS_PATCH_V0_9_29A2
+    # Les métriques du resolver peuvent être dans resolver_payload["report"].
+    def resolver_metric(key, default="ND"):
+        if not isinstance(resolver_payload, dict):
+            return default
+
+        value = resolver_payload.get(key, None)
+        if value not in (None, ""):
+            return value
+
+        report = resolver_payload.get("report")
+        if isinstance(report, dict):
+            value = report.get(key, None)
+            if value not in (None, ""):
+                return value
+
+        return default
+
     try:
         plan_payload = drive_run_h5_auto_plan()
         plan_ok = isinstance(plan_payload, dict) and plan_payload.get("ok") is True
@@ -8833,7 +8851,7 @@ def scheduler_run_due_h5():
         "h5_run_ok": h5_run_ok,
         "run_status": run_status,
         "route": "/scheduler/run-due-h5",
-        "scheduler_version": "SCHEDULER_RUN_DUE_H5_V0_9_28A2",
+        "scheduler_version": "SCHEDULER_RUN_DUE_H5_V0_9_29A2",
         "history_archive_ok": history_archive_ok,
         "history_archive_count": len(history_items),
         "history_archive_paths": history_archive_paths,
@@ -8854,11 +8872,11 @@ def scheduler_run_due_h5():
             "ran_oui_non": resolver_ran_oui_non,
             "ok": resolver_payload.get("ok", "ND") if isinstance(resolver_payload, dict) else "ND",
             "phase": resolver_payload.get("phase", "h5_url_resolver") if isinstance(resolver_payload, dict) else "h5_url_resolver",
-            "rows_input": resolver_payload.get("rows_input", "ND") if isinstance(resolver_payload, dict) else "ND",
-            "rows_output": resolver_payload.get("rows_output", "ND") if isinstance(resolver_payload, dict) else "ND",
-            "url_ok_count": resolver_payload.get("url_ok_count", "ND") if isinstance(resolver_payload, dict) else "ND",
-            "url_not_found_count": resolver_payload.get("url_not_found_count", "ND") if isinstance(resolver_payload, dict) else "ND",
-            "low_confidence_count": resolver_payload.get("low_confidence_count", "ND") if isinstance(resolver_payload, dict) else "ND",
+            "rows_input": resolver_metric("rows_input"),
+            "rows_output": resolver_metric("rows_output"),
+            "url_ok_count": resolver_metric("url_ok_count"),
+            "url_not_found_count": resolver_metric("url_not_found_count"),
+            "low_confidence_count": resolver_metric("low_confidence_count"),
             "reason": resolver_payload.get("reason", "") if isinstance(resolver_payload, dict) else "",
             "error": resolver_payload.get("error", "") if isinstance(resolver_payload, dict) else "",
         },
