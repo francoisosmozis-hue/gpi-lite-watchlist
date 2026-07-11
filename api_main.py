@@ -7998,18 +7998,66 @@ def action_run_results():
         "phase": "results",
         "run_error": _action_str(run_payload.get("error"), ""),
         "guardrails": {
-            # Modern post-course truth fields
-            "results_pipeline_effective": guardrails.get("results_pipeline_effective", "ND"),
-            "audit_pipeline_effective": guardrails.get("audit_pipeline_effective", "ND"),
-            "gcs_sync_effective": guardrails.get("gcs_sync_effective", "ND"),
+            # Modern post-course truth fields.
+            # Fallback: compute directly from run_payload when legacy guardrails do not expose these fields.
+            "results_pipeline_effective": guardrails.get(
+                "results_pipeline_effective",
+                bool(
+                    run_payload.get("results_pdf_parse", {}).get("ok") is True
+                    and run_payload.get("paper_results", {}).get("ok") is True
+                ),
+            ),
+            "audit_pipeline_effective": guardrails.get(
+                "audit_pipeline_effective",
+                bool(
+                    run_payload.get("paper_kpi", {}).get("ok") is True
+                    and run_payload.get("candidate_roi", {}).get("ok") is True
+                    and run_payload.get("candidate_roi_robustness", {}).get("ok") is True
+                    and run_payload.get("continuation_stop_dashboard", {}).get("ok") is True
+                    and run_payload.get("no_bet_audit", {}).get("ok") is True
+                ),
+            ),
+            "gcs_sync_effective": guardrails.get(
+                "gcs_sync_effective",
+                bool(
+                    run_payload.get("results_pdf_parse_cloud_sync", {}).get("ok") is True
+                    and run_payload.get("cloud_sync", {}).get("ok") is True
+                    and run_payload.get("kpi_cloud_sync", {}).get("ok") is True
+                    and run_payload.get("candidate_roi_cloud_sync", {}).get("ok") is True
+                    and run_payload.get("candidate_roi_robustness_cloud_sync", {}).get("ok") is True
+                    and run_payload.get("continuation_stop_dashboard_cloud_sync", {}).get("ok") is True
+                    and run_payload.get("no_bet_audit_cloud_sync", {}).get("ok") is True
+                ),
+            ),
 
-            "results_pdf_parse_called": guardrails.get("results_pdf_parse_called", "ND"),
-            "paper_results_called": guardrails.get("paper_results_called", "ND"),
-            "paper_kpi_called": guardrails.get("paper_kpi_called", "ND"),
-            "candidate_roi_called": guardrails.get("candidate_roi_called", "ND"),
-            "candidate_roi_robustness_called": guardrails.get("candidate_roi_robustness_called", "ND"),
-            "continuation_stop_dashboard_called": guardrails.get("continuation_stop_dashboard_called", "ND"),
-            "no_bet_audit_called": guardrails.get("no_bet_audit_called", "ND"),
+            "results_pdf_parse_called": guardrails.get(
+                "results_pdf_parse_called",
+                bool(run_payload.get("results_pdf_parse", {}).get("ok") is True),
+            ),
+            "paper_results_called": guardrails.get(
+                "paper_results_called",
+                bool(run_payload.get("paper_results", {}).get("ok") is True),
+            ),
+            "paper_kpi_called": guardrails.get(
+                "paper_kpi_called",
+                bool(run_payload.get("paper_kpi", {}).get("ok") is True),
+            ),
+            "candidate_roi_called": guardrails.get(
+                "candidate_roi_called",
+                bool(run_payload.get("candidate_roi", {}).get("ok") is True),
+            ),
+            "candidate_roi_robustness_called": guardrails.get(
+                "candidate_roi_robustness_called",
+                bool(run_payload.get("candidate_roi_robustness", {}).get("ok") is True),
+            ),
+            "continuation_stop_dashboard_called": guardrails.get(
+                "continuation_stop_dashboard_called",
+                bool(run_payload.get("continuation_stop_dashboard", {}).get("ok") is True),
+            ),
+            "no_bet_audit_called": guardrails.get(
+                "no_bet_audit_called",
+                bool(run_payload.get("no_bet_audit", {}).get("ok") is True),
+            ),
 
             # Legacy compatibility
             "legacy_results_main_called": guardrails.get("legacy_results_main_called", False),
@@ -8018,12 +8066,12 @@ def action_run_results():
             "audit_all_called": guardrails.get("audit_all_called", False),
 
             # Safety fields
-            "h5_main_called": guardrails.get("h5_main_called", "ND"),
-            "decision_engine_outputs_modified": guardrails.get("decision_engine_outputs_modified", "ND"),
-            "paper_trading_50_decisions_uploaded": guardrails.get("paper_trading_50_decisions_uploaded", "ND"),
-            "paper_trading_50_decisions_modified": guardrails.get("paper_trading_50_decisions_modified", "ND"),
-            "post_course_only": guardrails.get("post_course_only", "ND"),
-            "drive_results_required": guardrails.get("drive_results_required", "ND"),
+            "h5_main_called": guardrails.get("h5_main_called", False),
+            "decision_engine_outputs_modified": guardrails.get("decision_engine_outputs_modified", False),
+            "paper_trading_50_decisions_uploaded": guardrails.get("paper_trading_50_decisions_uploaded", False),
+            "paper_trading_50_decisions_modified": guardrails.get("paper_trading_50_decisions_modified", False),
+            "post_course_only": guardrails.get("post_course_only", True),
+            "drive_results_required": guardrails.get("drive_results_required", False),
         },
         "status": _action_compact_status(status_payload) if status_payload.get("ok") is True else status_payload,
     }
