@@ -1354,6 +1354,195 @@ def drive_run_morning():
     }
 
 
+
+# >>> GPI DRIVE H5 BLOCKED DATE ROUTE V0_1 >>>
+def _gpi_drive_h5_backfill_allowed():
+    import os
+
+    return str(os.getenv("GPI_ALLOW_H5_BACKFILL", "false")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "oui",
+    }
+
+
+def _gpi_drive_h5_course_key_from_context(context_9h):
+    if not isinstance(context_9h, dict):
+        return "ND"
+
+    checked = context_9h.get("checked") or []
+
+    if isinstance(checked, list):
+        for item in checked:
+            if not isinstance(item, dict):
+                continue
+
+            value = (
+                item.get("course_key")
+                or item.get("course_uid")
+                or item.get("h5_pdf")
+                or ""
+            )
+
+            value = str(value or "").strip()
+
+            if value:
+                return value
+
+    return str(context_9h.get("course_key") or context_9h.get("course_uid") or "ND").strip()
+
+
+def _gpi_drive_h5_date_guard(course_uid):
+    import re
+    from datetime import datetime
+
+    try:
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("Europe/Paris")).date().isoformat()
+    except Exception:
+        today = datetime.now().date().isoformat()
+
+    raw_uid = str(course_uid or "").strip()
+    match = re.search(r"(\d{2})_(\d{2})_(\d{4})", raw_uid)
+
+    if not match:
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": "H5_SELECTED_COURSE_DATE_UNREADABLE",
+            "course_uid": raw_uid or "ND",
+            "course_date": "ND",
+            "expected_date": today,
+            "backfill_allowed": _gpi_drive_h5_backfill_allowed(),
+            "policy": "No live H5 decision may be promoted when course date is unreadable.",
+        }
+
+    dd, mm, yyyy = match.groups()
+    course_date = f"{yyyy}-{mm}-{dd}"
+    backfill_allowed = _gpi_drive_h5_backfill_allowed()
+
+    if course_date != today and not backfill_allowed:
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": "H5_SELECTED_COURSE_NOT_TODAY",
+            "course_uid": raw_uid,
+            "course_date": course_date,
+            "expected_date": today,
+            "backfill_allowed": backfill_allowed,
+            "policy": "No live H5 decision may be promoted from an old race unless GPI_ALLOW_H5_BACKFILL=true.",
+        }
+
+    return {
+        "ok": True,
+        "blocked": False,
+        "reason": "H5_SELECTED_COURSE_DATE_OK",
+        "course_uid": raw_uid,
+        "course_date": course_date,
+        "expected_date": today,
+        "backfill_allowed": backfill_allowed,
+    }
+
+
+def _gpi_drive_h5_subprocess_blocked_by_date(h5_result):
+    if not isinstance(h5_result, dict):
+        return False
+
+    stdout = str(h5_result.get("stdout", "") or "")
+
+    return (
+        str(h5_result.get("returncode", "")) == "42"
+        or "H5_SELECTED_COURSE_NOT_TODAY" in stdout
+        or "H5_SELECTED_COURSE_DATE_UNREADABLE" in stdout
+        or "H5 LIVE BLOQUE PAR GARDE-FOU DATE" in stdout
+    )
+
+
+def _gpi_drive_h5_blocked_response(sync_result, context_9h, blocked_guard, h5_result=None, latest_h5_context=None):
+    import json
+
+    if not isinstance(blocked_guard, dict):
+        blocked_guard = {
+            "ok": False,
+            "blocked": True,
+            "reason": "H5_BLOCKED_BY_DATE",
+        }
+
+    blocked_guard_path = OUTPUT_DIR / "latest_h5_blocked_guard.json"
+
+    try:
+        blocked_guard_path.write_text(
+            json.dumps(blocked_guard, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        blocked_guard = {
+            **blocked_guard,
+            "blocked_guard_write_error": f"{type(exc).__name__}:{exc}",
+        }
+
+    blocked_guard_cloud_sync = {
+        "ok": False,
+        "skipped": True,
+        "reason": "H5_BLOCKED_BY_DATE_GUARD_NOT_UPLOADED",
+        "uploads": [],
+    }
+
+    try:
+        if blocked_guard_path.exists():
+            upload_result = upload_file_to_gcs(blocked_guard_path, "outputs")
+            blocked_guard_cloud_sync = {
+                "ok": bool(isinstance(upload_result, dict) and upload_result.get("ok") is True),
+                "files_count": 1,
+                "uploads": [upload_result],
+                "reason": "ONLY_BLOCKED_GUARD_SYNCED",
+            }
+    except Exception as exc:
+        blocked_guard_cloud_sync = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+            "reason": "BLOCKED_GUARD_SYNC_FAILED",
+            "uploads": [],
+        }
+
+    return {
+        "ok": False,
+        "blocked": True,
+        "phase": "h5",
+        "reason": blocked_guard.get("reason", "H5_BLOCKED_BY_DATE"),
+        "error": blocked_guard.get("reason", "H5_BLOCKED_BY_DATE"),
+        "policy": "Old or unreadable H5 race blocked before live promotion.",
+        "sync": sync_result,
+        "context_9h": context_9h,
+        "latest_h5_context": latest_h5_context,
+        "h5": h5_result,
+        "blocked_guard": blocked_guard,
+        "blocked_guard_cloud_sync": blocked_guard_cloud_sync,
+        "decision_aliases": {
+            "skipped": True,
+            "reason": "H5_BLOCKED_BY_DATE",
+        },
+        "quality": {
+            "skipped": True,
+            "reason": "H5_BLOCKED_BY_DATE",
+        },
+        "cloud_sync": {
+            "skipped": True,
+            "reason": "H5_BLOCKED_BY_DATE",
+            "policy": "Full cloud sync skipped after stale H5 block.",
+        },
+        "brief": {
+            "skipped": True,
+            "reason": "H5_BLOCKED_BY_DATE",
+        },
+        "archive": None,
+        "ticket_exact": "NO_BET",
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+    }
+# <<< GPI DRIVE H5 BLOCKED DATE ROUTE V0_1 <<<
+
 @app.post("/drive/run/h5", dependencies=[Depends(require_api_key)])
 def drive_run_h5():
     ensure_dirs()
@@ -1392,6 +1581,43 @@ def drive_run_h5():
         output_dir="data/output"
     )
 
+    if not context_9h.get("ok"):
+        return {
+            "ok": False,
+            "phase": "h5",
+            "error": "fichier 9h correspondant absent pour H-5",
+            "sync": sync_result,
+            "context_9h": context_9h,
+            "latest_h5_context": None,
+            "morning": None,
+            "h5": None,
+            "results": None,
+            "audit": None,
+            "quality": None,
+            "cloud_sync": None,
+            "brief": None,
+            "gpi_audit": None,
+            "archive": None
+        }
+
+    route_course_key = _gpi_drive_h5_course_key_from_context(context_9h)
+    route_h5_date_guard = _gpi_drive_h5_date_guard(route_course_key)
+
+    if route_h5_date_guard.get("blocked") is True:
+        return _gpi_drive_h5_blocked_response(
+            sync_result=sync_result,
+            context_9h=context_9h,
+            blocked_guard=route_h5_date_guard,
+            h5_result={
+                "ok": False,
+                "script": "h5_main.py",
+                "returncode": 42,
+                "stdout": "H5 blocked at /drive/run/h5 before h5_main.py execution.",
+                "stderr": "",
+            },
+            latest_h5_context=None,
+        )
+
     latest_h5_context = write_latest_h5_context(context_9h)
     course_key = latest_h5_context.get("course_key", "")
     decision_aliases = {
@@ -1422,6 +1648,31 @@ def drive_run_h5():
 
     h5_result = run_script("h5_main.py")
     h5_stdout = str(h5_result.get("stdout", ""))
+
+    # >>> GPI H5 SUBPROCESS BLOCKED RETURN GUARD V0_1 >>>
+    if _gpi_drive_h5_subprocess_blocked_by_date(h5_result):
+        subprocess_guard = _gpi_drive_h5_date_guard(course_key)
+
+        if subprocess_guard.get("blocked") is not True:
+            subprocess_guard = {
+                "ok": False,
+                "blocked": True,
+                "reason": "H5_BLOCKED_BY_SUBPROCESS_RETURN",
+                "course_uid": course_key or "ND",
+                "course_date": "ND",
+                "expected_date": "ND",
+                "backfill_allowed": _gpi_drive_h5_backfill_allowed(),
+                "policy": "h5_main.py blocked live promotion before write.",
+            }
+
+        return _gpi_drive_h5_blocked_response(
+            sync_result=sync_result,
+            context_9h=context_9h,
+            blocked_guard=subprocess_guard,
+            h5_result=h5_result,
+            latest_h5_context=latest_h5_context,
+        )
+    # <<< GPI H5 SUBPROCESS BLOCKED RETURN GUARD V0_1 <<<
 
     if "Aucun fichier course_9h_clean.csv" in h5_stdout:
         return {
@@ -7967,6 +8218,30 @@ def action_run_h5():
         return _action_run_blocked_response("h5")
 
     run_payload = _action_call(drive_run_h5, "drive_run_h5")
+
+    if isinstance(run_payload, dict) and run_payload.get("blocked") is True:
+        return {
+            "ok": False,
+            "facade_version": _ACTION_FACADE_VERSION,
+            "phase": "h5",
+            "run_blocked": True,
+            "run_reason": _action_str(run_payload.get("reason"), "H5_BLOCKED_BY_DATE"),
+            "run_error": _action_str(run_payload.get("error"), "H5_BLOCKED_BY_DATE"),
+            "blocked_guard": run_payload.get("blocked_guard", {}),
+            "h5": run_payload.get("h5", {}),
+            "blocked_guard_cloud_sync": run_payload.get("blocked_guard_cloud_sync", {}),
+            "brief": {
+                "skipped": True,
+                "reason": "H5_BLOCKED_BY_DATE",
+            },
+            "status": {
+                "skipped": True,
+                "reason": "H5_BLOCKED_BY_DATE",
+            },
+            "ticket_exact": "NO_BET",
+            "strict_allowed_oui_non": "non",
+        }
+
     brief_payload = _action_call(gpi_chatgpt_brief, "gpi_chatgpt_brief")
     status_payload = _action_call(gpi_status, "gpi_status")
 
