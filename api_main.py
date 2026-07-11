@@ -8519,6 +8519,7 @@ def action_h5_history_status():
 # Ne crée jamais de ticket strict.
 # ============================================================
 
+# GPI_H5_SCHEDULER_STATUS_PATCH_V0_9_28A2
 @app.post("/scheduler/run-due-h5", dependencies=[Depends(require_api_key)])
 def scheduler_run_due_h5():
     from datetime import datetime
@@ -8569,6 +8570,14 @@ def scheduler_run_due_h5():
                 return value
         return default
 
+    def as_int(value, default=0):
+        try:
+            if value in (None, "", "ND"):
+                return default
+            return int(value)
+        except Exception:
+            return default
+
     history_items = []
 
     for source_name, source_payload in [
@@ -8576,11 +8585,19 @@ def scheduler_run_due_h5():
         ("brief", brief_payload),
     ]:
         if isinstance(source_payload, dict):
-            archive = source_payload.get("history_archive")
-            if isinstance(archive, dict):
-                item = dict(archive)
-                item["source"] = source_name
-                history_items.append(item)
+            archives = source_payload.get("history_archives")
+            if isinstance(archives, list):
+                for archive in archives:
+                    if isinstance(archive, dict):
+                        item = dict(archive)
+                        item["source"] = source_name
+                        history_items.append(item)
+            else:
+                archive = source_payload.get("history_archive")
+                if isinstance(archive, dict):
+                    item = dict(archive)
+                    item["source"] = source_name
+                    history_items.append(item)
 
     history_archive_ok = bool(history_items) and all(
         item.get("ok") is True for item in history_items
@@ -8592,12 +8609,59 @@ def scheduler_run_due_h5():
         if item.get("artifact_path")
     ]
 
+    capture_count = as_int(pick(capture_payload, "capture_count", 0))
+    odds_rows_total = as_int(pick(capture_payload, "odds_rows_total", 0))
+    briefs_created = as_int(pick(brief_payload, "briefs_created", 0))
+    movement_rows_total = as_int(pick(brief_payload, "movement_rows_total", 0))
+
+    latest_brief_payload = (
+        brief_payload.get("latest_brief")
+        if isinstance(brief_payload, dict) and isinstance(brief_payload.get("latest_brief"), dict)
+        else {}
+    )
+
+    latest_strict_kpi_exclusion_reason = str(
+        latest_brief_payload.get("strict_kpi_exclusion_reason", "")
+        or ""
+    ).strip()
+
+    latest_decision_before_race_oui_non = str(
+        latest_brief_payload.get("decision_before_race_oui_non", "")
+        or ""
+    ).strip()
+
+    latest_brief_course_uid = str(
+        latest_brief_payload.get("course_uid", "")
+        or pick(status_payload, "latest_course_uid", "")
+        or ""
+    ).strip()
+
+    if not capture_ok or not brief_ok:
+        run_status = "H5_RUN_ERROR"
+    elif capture_count == 0 and briefs_created == 0:
+        run_status = "H5_RUN_NOT_DUE_OR_NO_NEW_ARTIFACT"
+    elif capture_count == 0 and briefs_created > 0 and latest_strict_kpi_exclusion_reason:
+        run_status = "H5_RUN_BRIEF_REPLAYED_POST_START_EXCLUDED"
+    elif latest_strict_kpi_exclusion_reason:
+        run_status = "H5_RUN_POST_START_EXCLUDED"
+    elif capture_count > 0 and odds_rows_total > 0 and briefs_created > 0 and movement_rows_total > 0:
+        run_status = "H5_RUN_CAPTURED_AND_BRIEFED"
+    elif capture_count > 0 and odds_rows_total > 0 and briefs_created == 0:
+        run_status = "H5_RUN_CAPTURED_NO_BRIEF"
+    elif capture_count == 0 and briefs_created > 0:
+        run_status = "H5_RUN_BRIEF_REPLAYED_NO_NEW_CAPTURE"
+    else:
+        run_status = "H5_RUN_OK_PARTIAL"
+
+    h5_run_ok = run_status != "H5_RUN_ERROR"
+    new_artifact_oui_non = "oui" if capture_count > 0 else "non"
+
     return {
         "ok": True,
-        "h5_run_ok": bool(capture_ok or brief_ok),
-        "run_status": "H5_RUN_OK" if (capture_ok or brief_ok) else "NO_H5_RUN_OR_SOURCE_MISSING",
+        "h5_run_ok": h5_run_ok,
+        "run_status": run_status,
         "route": "/scheduler/run-due-h5",
-        "scheduler_version": "SCHEDULER_RUN_DUE_H5_V0_9_27",
+        "scheduler_version": "SCHEDULER_RUN_DUE_H5_V0_9_28A2",
         "history_archive_ok": history_archive_ok,
         "history_archive_count": len(history_items),
         "history_archive_paths": history_archive_paths,
@@ -8609,12 +8673,16 @@ def scheduler_run_due_h5():
         "strict_usable_oui_non": "non",
         "ticket_strict": "NO_BET",
         "strict_policy": "Scheduler H5 automation only. Ne crée jamais de ticket strict.",
+        "new_artifact_oui_non": new_artifact_oui_non,
+        "latest_brief_course_uid": latest_brief_course_uid,
+        "latest_strict_kpi_exclusion_reason": latest_strict_kpi_exclusion_reason,
+        "latest_decision_before_race_oui_non": latest_decision_before_race_oui_non,
         "capture": {
             "ok": capture_ok,
             "phase": pick(capture_payload, "phase"),
             "reason": pick(capture_payload, "reason", ""),
-            "capture_count": pick(capture_payload, "capture_count", 0),
-            "odds_rows_total": pick(capture_payload, "odds_rows_total", 0),
+            "capture_count": capture_count,
+            "odds_rows_total": odds_rows_total,
             "error": pick(capture_payload, "error", ""),
         },
         "brief": {
@@ -8622,8 +8690,8 @@ def scheduler_run_due_h5():
             "phase": pick(brief_payload, "phase"),
             "reason": pick(brief_payload, "reason", ""),
             "matched_courses": pick(brief_payload, "matched_courses", 0),
-            "movement_rows_total": pick(brief_payload, "movement_rows_total", 0),
-            "briefs_created": pick(brief_payload, "briefs_created", 0),
+            "movement_rows_total": movement_rows_total,
+            "briefs_created": briefs_created,
             "error": pick(brief_payload, "error", ""),
         },
         "status_after": {
