@@ -344,6 +344,32 @@ def process_h5_pdf(h5_pdf: Path):
             f"available_columns={list(df_h5.columns)}"
         )
 
+    h5_course_date_guard = _gpi_h5_course_date_guard(course_uid)
+
+    if h5_course_date_guard.get("blocked") is True:
+        import json
+
+        try:
+            blocked_guard_path = OUTPUT_DIR / "latest_h5_blocked_guard.json"
+            blocked_guard_path.write_text(
+                json.dumps(h5_course_date_guard, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+        print("")
+        print("H5 LIVE BLOQUE PAR GARDE-FOU DATE")
+        print(json.dumps(h5_course_date_guard, ensure_ascii=False, indent=2))
+        print("")
+        print("Aucune ecriture H5 live autorisee :")
+        print("- pas de course_h5_clean latest")
+        print("- pas de h5_update latest")
+        print("- pas de decision_lite latest")
+        print("- pas de decision_engine_outputs latest")
+        print("- pas de paper_trading append")
+        raise SystemExit(42)
+
     export_csv(df_h5, f"{course_uid}_course_h5_clean.csv")
 
     h5_update = compare_9h_h5(df_9h, df_h5)
@@ -819,6 +845,71 @@ def _gpi_paper_candidate_fields(watch, kill_switchs, cp_sec_sg_sum, cp_sec_sg_st
 
     return out
 
+
+
+# >>> GPI H5 COURSE DATE GUARD V0_1 >>>
+def _gpi_h5_backfill_allowed():
+    import os
+
+    return str(os.getenv("GPI_ALLOW_H5_BACKFILL", "false")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "oui",
+    }
+
+
+def _gpi_h5_course_date_guard(course_uid):
+    import re
+    from datetime import datetime
+
+    try:
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("Europe/Paris")).date().isoformat()
+    except Exception:
+        today = datetime.now().date().isoformat()
+
+    raw_uid = str(course_uid or "").strip()
+    match = re.match(r"^(\d{2})_(\d{2})_(\d{4})", raw_uid)
+
+    if not match:
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": "H5_SELECTED_COURSE_DATE_UNREADABLE",
+            "course_uid": raw_uid or "ND",
+            "course_date": "ND",
+            "expected_date": today,
+            "backfill_allowed": _gpi_h5_backfill_allowed(),
+            "policy": "No live H5 decision may be promoted when course date is unreadable.",
+        }
+
+    dd, mm, yyyy = match.groups()
+    course_date = f"{yyyy}-{mm}-{dd}"
+    backfill_allowed = _gpi_h5_backfill_allowed()
+
+    if course_date != today and not backfill_allowed:
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": "H5_SELECTED_COURSE_NOT_TODAY",
+            "course_uid": raw_uid,
+            "course_date": course_date,
+            "expected_date": today,
+            "backfill_allowed": backfill_allowed,
+            "policy": "No live H5 decision may be promoted from an old race unless GPI_ALLOW_H5_BACKFILL=true.",
+        }
+
+    return {
+        "ok": True,
+        "blocked": False,
+        "reason": "H5_SELECTED_COURSE_DATE_OK",
+        "course_uid": raw_uid,
+        "course_date": course_date,
+        "expected_date": today,
+        "backfill_allowed": backfill_allowed,
+    }
+# <<< GPI H5 COURSE DATE GUARD V0_1 <<<
 
 def main():
     H5_DIR.mkdir(parents=True, exist_ok=True)
