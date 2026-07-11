@@ -8634,12 +8634,75 @@ def scheduler_run_due_h5():
 
     now_paris = datetime.now(ZoneInfo("Europe/Paris")).replace(microsecond=0)
 
+    plan_payload = {}
+    resolver_payload = {}
     capture_payload = {}
     brief_payload = {}
     status_payload = {}
 
+    plan_ok = False
+    resolver_ok = False
+    resolver_ran_oui_non = "non"
     capture_ok = False
     brief_ok = False
+
+    # GPI_H5_SCHEDULER_ORCHESTRATION_PATCH_V0_9_29A
+    # Orchestration complète : plan -> url_resolver -> capture -> brief.
+    def scheduler_int(value, default=0):
+        try:
+            if value in (None, "", "ND"):
+                return default
+            return int(value)
+        except Exception:
+            return default
+
+    try:
+        plan_payload = drive_run_h5_auto_plan()
+        plan_ok = isinstance(plan_payload, dict) and plan_payload.get("ok") is True
+    except Exception as exc:
+        plan_payload = {
+            "ok": False,
+            "phase": "h5_auto_plan",
+            "error": f"{type(exc).__name__}: {exc}",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    plan_url_required_count = scheduler_int(
+        plan_payload.get("url_required_count", 0)
+        if isinstance(plan_payload, dict)
+        else 0
+    )
+
+    if plan_url_required_count > 0:
+        resolver_ran_oui_non = "oui"
+        try:
+            resolver_payload = drive_run_h5_url_resolver()
+            resolver_ok = (
+                isinstance(resolver_payload, dict)
+                and resolver_payload.get("ok") is True
+            )
+        except Exception as exc:
+            resolver_payload = {
+                "ok": False,
+                "phase": "h5_url_resolver",
+                "error": f"{type(exc).__name__}: {exc}",
+                "strict_allowed_oui_non": "non",
+                "strict_usable_oui_non": "non",
+                "ticket_strict": "NO_BET",
+            }
+    else:
+        resolver_payload = {
+            "ok": True,
+            "phase": "h5_url_resolver",
+            "reason": "SKIPPED_NO_URL_REQUIRED",
+            "url_required_count": plan_url_required_count,
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+        resolver_ok = True
 
     try:
         capture_payload = drive_run_h5_auto_capture()
@@ -8688,6 +8751,8 @@ def scheduler_run_due_h5():
     history_items = []
 
     for source_name, source_payload in [
+        ("plan", plan_payload),
+        ("url_resolver", resolver_payload),
         ("capture", capture_payload),
         ("brief", brief_payload),
     ]:
@@ -8776,6 +8841,27 @@ def scheduler_run_due_h5():
         "now_paris": now_paris.isoformat(),
         "runs_h5": "oui",
         "writes_gcs": "oui",
+        "plan": {
+            "ok": plan_payload.get("ok", "ND") if isinstance(plan_payload, dict) else "ND",
+            "phase": plan_payload.get("phase", "h5_auto_plan") if isinstance(plan_payload, dict) else "h5_auto_plan",
+            "planned_count": plan_payload.get("planned_count", 0) if isinstance(plan_payload, dict) else 0,
+            "due_count": plan_payload.get("due_count", 0) if isinstance(plan_payload, dict) else 0,
+            "url_required_count": plan_payload.get("url_required_count", 0) if isinstance(plan_payload, dict) else 0,
+            "reason": plan_payload.get("reason", "") if isinstance(plan_payload, dict) else "",
+            "error": plan_payload.get("error", "") if isinstance(plan_payload, dict) else "",
+        },
+        "url_resolver": {
+            "ran_oui_non": resolver_ran_oui_non,
+            "ok": resolver_payload.get("ok", "ND") if isinstance(resolver_payload, dict) else "ND",
+            "phase": resolver_payload.get("phase", "h5_url_resolver") if isinstance(resolver_payload, dict) else "h5_url_resolver",
+            "rows_input": resolver_payload.get("rows_input", "ND") if isinstance(resolver_payload, dict) else "ND",
+            "rows_output": resolver_payload.get("rows_output", "ND") if isinstance(resolver_payload, dict) else "ND",
+            "url_ok_count": resolver_payload.get("url_ok_count", "ND") if isinstance(resolver_payload, dict) else "ND",
+            "url_not_found_count": resolver_payload.get("url_not_found_count", "ND") if isinstance(resolver_payload, dict) else "ND",
+            "low_confidence_count": resolver_payload.get("low_confidence_count", "ND") if isinstance(resolver_payload, dict) else "ND",
+            "reason": resolver_payload.get("reason", "") if isinstance(resolver_payload, dict) else "",
+            "error": resolver_payload.get("error", "") if isinstance(resolver_payload, dict) else "",
+        },
         "strict_allowed_oui_non": "non",
         "strict_usable_oui_non": "non",
         "ticket_strict": "NO_BET",
