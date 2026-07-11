@@ -4204,6 +4204,44 @@ def drive_run_h5_auto_brief():
         if len(_first_uid) >= 10 and _first_uid[2:3] == "_" and _first_uid[5:6] == "_":
             legacy_summary_course_uid = f"{_first_uid[:10]} - H5_AUTO_BRIEF - GLOBAL_SUMMARY"
 
+    # GPI_H5_BRIEF_LEGACY_SUMMARY_STATUS_PATCH_V0_9_28C4
+    # Le résumé global hérite du statut le plus prudent des briefs course.
+    legacy_summary_has_post_start_excluded = any(
+        isinstance(_archive_item, dict)
+        and str(_archive_item.get("status", "") or "").strip() == "POST_START_EXCLUDED"
+        for _archive_item in history_archives
+    )
+
+    legacy_summary_status = (
+        "POST_START_EXCLUDED"
+        if legacy_summary_has_post_start_excluded
+        else (
+            "LIVE_BRIEF_CREATED_PRE_RACE"
+            if len(processed) > 0
+            else "LIVE_VALID_PRE_RACE"
+        )
+    )
+
+    legacy_summary_reason = (
+        "H5_AUTO_BRIEF_SUMMARY_CONTAINS_POST_START_EXCLUDED"
+        if legacy_summary_has_post_start_excluded
+        else (
+            "BRIEF_CREATED"
+            if len(processed) > 0
+            else "NO_BRIEF_CREATED"
+        )
+    )
+
+    legacy_summary_decision_before = (
+        "non" if legacy_summary_has_post_start_excluded else "oui"
+    )
+    legacy_summary_live_eligible = (
+        "non" if legacy_summary_has_post_start_excluded else "oui"
+    )
+    legacy_summary_retro_audit = (
+        "oui" if legacy_summary_has_post_start_excluded else "non"
+    )
+
     return {
         "ok": True,
         "phase": "h5_auto_brief",
@@ -4225,20 +4263,12 @@ def drive_run_h5_auto_brief():
             capture_label="SUMMARY",
             source_route="/drive/run/h5-auto-brief",
             artifact_type="h5_auto_brief",
-            status=(
-                "LIVE_BRIEF_CREATED_PRE_RACE"
-                if len(processed) > 0
-                else "LIVE_VALID_PRE_RACE"
-            ),
-            reason=(
-                "BRIEF_CREATED"
-                if len(processed) > 0
-                else "NO_BRIEF_CREATED"
-            ),
-            decision_before_race_oui_non="oui",
+            status=legacy_summary_status,
+            reason=legacy_summary_reason,
+            decision_before_race_oui_non=legacy_summary_decision_before,
             result_known_at_decision="non",
-            live_eligible_oui_non="oui",
-            retro_audit_only_oui_non="non",
+            live_eligible_oui_non=legacy_summary_live_eligible,
+            retro_audit_only_oui_non=legacy_summary_retro_audit,
         ),
         "rows_input": len(rows),
         "matched_courses": len(processed),
