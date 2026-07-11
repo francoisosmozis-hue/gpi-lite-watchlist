@@ -4195,6 +4195,15 @@ def drive_run_h5_auto_brief():
                 "strict_allowed_oui_non": "non",
             })
 
+    # GPI_H5_BRIEF_LEGACY_SUMMARY_PATCH_V0_9_28C3
+    # Le legacy history_archive devient un résumé global distinct.
+    # Les archives officielles par course restent dans history_archives.
+    legacy_summary_course_uid = "H5_AUTO_BRIEF_GLOBAL_SUMMARY"
+    if processed:
+        _first_uid = str(processed[0].get("course_uid", "") or "").strip()
+        if len(_first_uid) >= 10 and _first_uid[2:3] == "_" and _first_uid[5:6] == "_":
+            legacy_summary_course_uid = f"{_first_uid[:10]} - H5_AUTO_BRIEF - GLOBAL_SUMMARY"
+
     return {
         "ok": True,
         "phase": "h5_auto_brief",
@@ -4212,11 +4221,8 @@ def drive_run_h5_auto_brief():
                 "processed_sample": processed[:10],
                 "errors_sample": errors[:10],
             },
-            course_uid=(
-                processed[0].get("course_uid", "H5_AUTO_BRIEF_GLOBAL")
-                if processed else "H5_AUTO_BRIEF_GLOBAL"
-            ),
-            capture_label="H5",
+            course_uid=legacy_summary_course_uid,
+            capture_label="SUMMARY",
             source_route="/drive/run/h5-auto-brief",
             artifact_type="h5_auto_brief",
             status=(
