@@ -8645,6 +8645,8 @@ def scheduler_run_due_h5():
     resolver_ran_oui_non = "non"
     capture_ok = False
     brief_ok = False
+    brief_skipped_oui_non = "non"
+    brief_skip_reason = ""
 
     # GPI_H5_SCHEDULER_ORCHESTRATION_PATCH_V0_9_29A
     # Orchestration complète : plan -> url_resolver -> capture -> brief.
@@ -8732,15 +8734,62 @@ def scheduler_run_due_h5():
             "error": f"{type(exc).__name__}: {exc}",
         }
 
-    try:
-        brief_payload = drive_run_h5_auto_brief()
-        brief_ok = isinstance(brief_payload, dict) and brief_payload.get("ok") is True
-    except Exception as exc:
+    # GPI_H5_SCHEDULER_SKIP_IDLE_BRIEF_PATCH_V0_9_29A3
+    # Si aucun plan et aucune capture nouvelle, ne pas rejouer les anciens briefs.
+    plan_planned_count_for_brief = scheduler_int(
+        plan_payload.get("planned_count", 0)
+        if isinstance(plan_payload, dict)
+        else 0
+    )
+    plan_due_count_for_brief = scheduler_int(
+        plan_payload.get("due_count", 0)
+        if isinstance(plan_payload, dict)
+        else 0
+    )
+    capture_count_for_brief = scheduler_int(
+        capture_payload.get("capture_count", 0)
+        if isinstance(capture_payload, dict)
+        else 0
+    )
+    odds_rows_total_for_brief = scheduler_int(
+        capture_payload.get("odds_rows_total", 0)
+        if isinstance(capture_payload, dict)
+        else 0
+    )
+
+    skip_idle_brief = (
+        plan_planned_count_for_brief == 0
+        and plan_due_count_for_brief == 0
+        and capture_count_for_brief == 0
+        and odds_rows_total_for_brief == 0
+    )
+
+    if skip_idle_brief:
+        brief_skipped_oui_non = "oui"
+        brief_skip_reason = "SKIPPED_NO_PLAN_NO_CAPTURE"
         brief_payload = {
-            "ok": False,
+            "ok": True,
             "phase": "h5_auto_brief",
-            "error": f"{type(exc).__name__}: {exc}",
+            "reason": brief_skip_reason,
+            "matched_courses": 0,
+            "movement_rows_total": 0,
+            "briefs_created": 0,
+            "error": "",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
         }
+        brief_ok = True
+    else:
+        try:
+            brief_payload = drive_run_h5_auto_brief()
+            brief_ok = isinstance(brief_payload, dict) and brief_payload.get("ok") is True
+        except Exception as exc:
+            brief_payload = {
+                "ok": False,
+                "phase": "h5_auto_brief",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
 
     try:
         status_payload = gpi_status()
@@ -8846,12 +8895,16 @@ def scheduler_run_due_h5():
     h5_run_ok = run_status != "H5_RUN_ERROR"
     new_artifact_oui_non = "oui" if capture_count > 0 else "non"
 
+    if brief_skipped_oui_non == "oui":
+        run_status = "H5_RUN_IDLE_NO_PLAN_NO_CAPTURE"
+        new_artifact_oui_non = "non"
+
     return {
         "ok": True,
         "h5_run_ok": h5_run_ok,
         "run_status": run_status,
         "route": "/scheduler/run-due-h5",
-        "scheduler_version": "SCHEDULER_RUN_DUE_H5_V0_9_29A2",
+        "scheduler_version": "SCHEDULER_RUN_DUE_H5_V0_9_29A3",
         "history_archive_ok": history_archive_ok,
         "history_archive_count": len(history_items),
         "history_archive_paths": history_archive_paths,
@@ -8859,6 +8912,8 @@ def scheduler_run_due_h5():
         "now_paris": now_paris.isoformat(),
         "runs_h5": "oui",
         "writes_gcs": "oui",
+        "brief_skipped_oui_non": brief_skipped_oui_non,
+        "brief_skip_reason": brief_skip_reason,
         "plan": {
             "ok": plan_payload.get("ok", "ND") if isinstance(plan_payload, dict) else "ND",
             "phase": plan_payload.get("phase", "h5_auto_plan") if isinstance(plan_payload, dict) else "h5_auto_plan",
