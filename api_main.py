@@ -12575,6 +12575,356 @@ def action_official_runner_status_preview():
 # <<< GPI V0_9_31B1 OFFICIAL RUNNER STATUS CONTRACT <<<
 
 
+
+
+
+# >>> GPI V0_9_31B2_1 LETROT TODAY INDEX PREVIEW >>>
+# V0_9_31B2_1_1_REGEX_FIX
+# V0_9_31B2_1_2_PARSE_QUALITY_GUARD
+def _p32_letrot_now_utc_iso():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _p32_norm_space(value):
+    import re
+    import html as html_lib
+
+    s = "" if value is None else str(value)
+    s = html_lib.unescape(s)
+    s = s.replace("\xa0", " ")
+    s = s.replace("&nbsp;", " ")
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def _p32_fetch_letrot_today_html(timeout_seconds=12):
+    """
+    Lecture seule LeTrot.
+    Ne modifie rien.
+    Ne contourne aucune protection.
+    """
+    import urllib.request
+
+    source_url = "https://www.letrot.com/courses/aujourd-hui"
+
+    req = urllib.request.Request(
+        source_url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 compatible; GPI-Lite-Watchlist/0.9 "
+                "(official index preview; read-only)"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.5",
+        },
+        method="GET",
+    )
+
+    checked_at = _p32_letrot_now_utc_iso()
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+            raw = resp.read()
+            charset = resp.headers.get_content_charset() or "utf-8"
+            html_text = raw.decode(charset, errors="replace")
+            return {
+                "ok": True,
+                "source_url": source_url,
+                "checked_at_utc": checked_at,
+                "http_status": getattr(resp, "status", "ND"),
+                "content_type": resp.headers.get("content-type", "ND"),
+                "html_bytes": len(raw),
+                "html": html_text,
+                "error": "ND",
+            }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "source_url": source_url,
+            "checked_at_utc": checked_at,
+            "http_status": "ND",
+            "content_type": "ND",
+            "html_bytes": 0,
+            "html": "",
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+
+def _p32_html_to_text(html_text):
+    import re
+    import html as html_lib
+
+    s = "" if html_text is None else str(html_text)
+
+    s = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", s)
+    s = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", s)
+    s = re.sub(r"(?is)<noscript[^>]*>.*?</noscript>", " ", s)
+
+    # S?parer les balises utiles avant suppression.
+    s = re.sub(r"(?i)<(br|/p|/div|/section|/article|/li|/a|/h[1-6])[^>]*>", "\n", s)
+    s = re.sub(r"(?is)<[^>]+>", " ", s)
+
+    s = html_lib.unescape(s)
+    s = s.replace("\xa0", " ")
+    s = s.replace("&nbsp;", " ")
+    s = re.sub(r"[ \t\r\f\v]+", " ", s)
+    s = re.sub(r"\n\s+", "\n", s)
+    s = re.sub(r"\n{2,}", "\n", s)
+
+    return s.strip()
+
+
+def _p32_extract_letrot_today_index_from_html(html_text):
+    """
+    Extraction prudente depuis le HTML public LeTrot.
+    Niveau B2.1 : index r?unions/courses visible uniquement.
+    Pas de matching ZEturf.
+    Pas de partants d?taill?s.
+    """
+    import re
+
+    source_url = "https://www.letrot.com/courses/aujourd-hui"
+    checked_at = _p32_letrot_now_utc_iso()
+
+    text = _p32_html_to_text(html_text)
+    one_line = _p32_norm_space(text)
+
+    status_terms = [
+        "en cours",
+        "? venir",
+        "a venir",
+        "termin?e",
+        "terminee",
+        "provisoire",
+        "annul?e",
+        "annulee",
+        "report?e",
+        "reportee",
+    ]
+    status_pattern = "|".join(re.escape(term) for term in status_terms)
+
+    meeting_re = re.compile(
+        rf"(?P<meeting_time>\d{{1,2}}:\d{{2}})\s+"
+        rf"R(?P<reunion_no>\d+)\s+"
+        rf"(?P<hippodrome>[A-Z?-??-?0-9'?\-\s]+?)\s+"
+        rf"(?P<meeting_status>{status_pattern})\s+"
+        rf"(?P<declared_courses>\d+)\s*courses?",
+        flags=re.IGNORECASE,
+    )
+
+    course_re = re.compile(
+        rf"(?P<course_time>\d{{1,2}}:\d{{2}})\s+"
+        rf"(?:(?P<status_before>{status_pattern})\s+)?"
+        rf"C(?P<course_no>\d+)\s+C(?P=course_no)"
+        rf"(?:\s+(?P<tail>.*?))?"
+        rf"(?=\s+\d{{1,2}}:\d{{2}}\s+(?:(?:{status_pattern})\s+)?C\d+\s+C\d+|\s+\d{{1,2}}:\d{{2}}\s+R\d+|$)",
+        flags=re.IGNORECASE,
+    )
+
+    meetings = []
+    meeting_matches = list(meeting_re.finditer(one_line))
+
+    for idx, m in enumerate(meeting_matches):
+        start = m.end()
+        end = meeting_matches[idx + 1].start() if idx + 1 < len(meeting_matches) else len(one_line)
+        segment = one_line[start:end]
+
+        meeting_status = _p32_norm_space(m.group("meeting_status")).lower()
+        hippodrome = _p32_norm_space(m.group("hippodrome")).upper()
+
+        courses = []
+        seen_course_keys = set()
+
+        for c in course_re.finditer(segment):
+            course_no = str(c.group("course_no")).strip()
+            course_time = _p32_norm_space(c.group("course_time"))
+
+            status_before = _p32_norm_space(c.group("status_before")).lower()
+            tail = _p32_norm_space(c.group("tail")).lower()
+
+            course_status = status_before
+            if not course_status:
+                for candidate in ["en cours", "? venir", "termin?e", "provisoire", "annul?e", "report?e"]:
+                    if candidate in tail:
+                        course_status = candidate
+                        break
+
+            if not course_status:
+                course_status = "ND"
+
+            key = (course_no, course_time)
+            if key in seen_course_keys:
+                continue
+            seen_course_keys.add(key)
+
+            courses.append({
+                "course_no": f"C{course_no}",
+                "course_no_int": int(course_no),
+                "scheduled_time": course_time,
+                "course_status": course_status,
+                "official_source": "LETROT",
+                "official_source_kind": "LETROT_TODAY_INDEX",
+            })
+
+        # Fallback B2.1.2 : si la regex horaire/statut ne r?cup?re pas toutes les courses,
+        # on r?cup?re au moins les num?ros C1/C2/C3 visibles dans le segment.
+        declared_count = int(m.group("declared_courses"))
+        if len(courses) < declared_count:
+            existing_course_ints = {int(c.get("course_no_int")) for c in courses if str(c.get("course_no_int", "")).isdigit()}
+            fallback_re = re.compile(r"\bC(?P<course_no>\d{1,2})\b(?:\s+C(?P=course_no)\b)?", flags=re.IGNORECASE)
+
+            for fc in fallback_re.finditer(segment):
+                try:
+                    fallback_no = int(fc.group("course_no"))
+                except Exception:
+                    continue
+
+                if fallback_no < 1 or fallback_no > max(declared_count, 20):
+                    continue
+
+                if fallback_no in existing_course_ints:
+                    continue
+
+                before = segment[max(0, fc.start() - 80):fc.start()]
+                time_matches = list(re.finditer(r"\b\d{1,2}:\d{2}\b", before))
+                fallback_time = time_matches[-1].group(0) if time_matches else "ND"
+
+                courses.append({
+                    "course_no": f"C{fallback_no}",
+                    "course_no_int": fallback_no,
+                    "scheduled_time": fallback_time,
+                    "course_status": "ND",
+                    "official_source": "LETROT",
+                    "official_source_kind": "LETROT_TODAY_INDEX_FALLBACK",
+                })
+                existing_course_ints.add(fallback_no)
+
+            courses = sorted(courses, key=lambda x: int(x.get("course_no_int", 999)))
+
+        meetings.append({
+            "reunion": f"R{m.group('reunion_no')}",
+            "reunion_no": int(m.group("reunion_no")),
+            "hippodrome": hippodrome,
+            "meeting_time": _p32_norm_space(m.group("meeting_time")),
+            "meeting_status": meeting_status,
+            "declared_courses_count": int(m.group("declared_courses")),
+            "parsed_courses_count": len(courses),
+            "courses": courses,
+            "official_source": "LETROT",
+            "official_source_kind": "LETROT_TODAY_INDEX",
+        })
+
+    courses_count = sum(len(m.get("courses", [])) for m in meetings)
+    declared_courses_total = sum(int(m.get("declared_courses_count", 0) or 0) for m in meetings)
+    course_status_nd_count = sum(
+        1
+        for m in meetings
+        for c in m.get("courses", [])
+        if str(c.get("course_status", "ND")).strip().upper() == "ND"
+    )
+
+    if not meetings:
+        parse_status = "NO_MEETING_PARSED"
+        parse_quality_oui_non = "non"
+        parse_warning = "Aucune r?union LeTrot pars?e."
+    elif courses_count == 0:
+        parse_status = "MEETINGS_ONLY_NO_COURSES"
+        parse_quality_oui_non = "non"
+        parse_warning = "R?unions d?tect?es, mais aucune course pars?e."
+    elif declared_courses_total and courses_count < declared_courses_total:
+        parse_status = "PARTIAL_COURSE_PARSE"
+        parse_quality_oui_non = "non"
+        parse_warning = f"Parsing partiel : {courses_count}/{declared_courses_total} courses d?tect?es."
+    elif course_status_nd_count > 0:
+        parse_status = "PARTIAL_STATUS_PARSE"
+        parse_quality_oui_non = "non"
+        parse_warning = f"Statuts course incomplets : {course_status_nd_count} statut(s) ND."
+    else:
+        parse_status = "OK"
+        parse_quality_oui_non = "oui"
+        parse_warning = "ND"
+
+    return {
+        "ok": bool(meetings),
+        "phase": "letrot_today_index_preview",
+        "preview_version": "letrot_today_index_preview_v0_9_31b2_1_2",
+        "source_url": source_url,
+        "official_source": "LETROT",
+        "official_source_kind": "LETROT_TODAY_INDEX",
+        "checked_at_utc": checked_at,
+        "parse_status": parse_status,
+        "parse_quality_oui_non": parse_quality_oui_non,
+        "parse_warning": parse_warning,
+        "meetings_count": len(meetings),
+        "courses_count": courses_count,
+        "declared_courses_total": declared_courses_total,
+        "course_status_nd_count": course_status_nd_count,
+        "meetings": meetings,
+        "raw_text_chars": len(text),
+        "raw_text_sample": text[:1200],
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "doctrine": (
+            "Index LeTrot lecture seule. "
+            "Ne vaut pas matching ZEturf, ne vaut pas statut partant officiel d?taill?, "
+            "ne vaut pas validation stricte."
+        ),
+    }
+
+
+@app.get("/action/letrot-today-index-preview")
+def action_letrot_today_index_preview():
+    """
+    GPI V0_9_31B2.1
+    Preview lecture seule de l'index LeTrot du jour.
+
+    Ne modifie pas GCS.
+    Ne matche pas ZEturf.
+    Ne r?cup?re pas encore les partants d?taill?s.
+    Ne cr?e jamais de ticket strict.
+    """
+    fetch = _p32_fetch_letrot_today_html()
+
+    if not fetch.get("ok"):
+        return {
+            "ok": False,
+            "phase": "letrot_today_index_preview",
+            "preview_version": "letrot_today_index_preview_v0_9_31b2_1_2",
+            "source_url": fetch.get("source_url", "https://www.letrot.com/courses/aujourd-hui"),
+            "official_source": "LETROT",
+            "official_source_kind": "LETROT_TODAY_INDEX",
+            "checked_at_utc": fetch.get("checked_at_utc", _p32_letrot_now_utc_iso()),
+            "http_status": fetch.get("http_status", "ND"),
+            "content_type": fetch.get("content_type", "ND"),
+            "html_bytes": fetch.get("html_bytes", 0),
+            "parse_status": "FETCH_FAILED",
+            "parse_quality_oui_non": "non",
+            "parse_warning": "Fetch LeTrot ?chou? ou indisponible.",
+            "error": fetch.get("error", "ND"),
+            "meetings_count": 0,
+            "courses_count": 0,
+            "declared_courses_total": 0,
+            "course_status_nd_count": 0,
+            "meetings": [],
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+            "Segment_ROI": "NO_BET",
+            "doctrine": "Fetch LeTrot ?chou? ou indisponible. Donn?e officielle absente => NO_BET strict.",
+        }
+
+    parsed = _p32_extract_letrot_today_index_from_html(fetch.get("html", ""))
+    parsed["http_status"] = fetch.get("http_status", "ND")
+    parsed["content_type"] = fetch.get("content_type", "ND")
+    parsed["html_bytes"] = fetch.get("html_bytes", 0)
+
+    return parsed
+# <<< GPI V0_9_31B2_1 LETROT TODAY INDEX PREVIEW <<<
+
+
 # >>> GPI ACTION CONTINUATION STOP DASHBOARD V0_9_23 >>>
 @app.get("/action/continuation-stop-dashboard")
 def action_continuation_stop_dashboard():
