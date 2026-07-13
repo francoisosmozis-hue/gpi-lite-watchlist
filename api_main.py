@@ -2681,14 +2681,42 @@ def _h5auto_download_file_from_gcs(blob_name, local_path):
 
 
 
-def _h5auto_safe_slug(value):
-    cleaned = "".join(
-        c.lower() if c.isalnum() else "_"
-        for c in str(value or "").strip()
-    )
-    while "__" in cleaned:
-        cleaned = cleaned.replace("__", "_")
-    return cleaned.strip("_") or "nd"
+def _h5auto_safe_slug(value, max_len=180):
+    """
+    GPI V0_9_30B4
+    Slug technique ASCII-only pour chemins locaux et blobs GCS.
+
+    R?gle :
+    - conserve le course_uid officiel dans les payloads JSON ;
+    - supprime les accents uniquement dans les noms techniques ;
+    - ?vite les erreurs PowerShell/GCS sur les caract?res accentu?s.
+    """
+    import hashlib
+    import re
+    import unicodedata
+
+    raw = str(value or "").strip()
+    if not raw:
+        return "nd"
+
+    normalized = unicodedata.normalize("NFKD", raw)
+    ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
+
+    slug = ascii_value.lower()
+    slug = slug.replace("&", " et ")
+    slug = re.sub(r"[^a-z0-9]+", "_", slug)
+    slug = re.sub(r"_+", "_", slug).strip("_")
+
+    if not slug:
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+        slug = f"slug_{digest}"
+
+    if max_len and len(slug) > int(max_len):
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10]
+        keep = max(20, int(max_len) - 11)
+        slug = f"{slug[:keep].rstrip('_')}_{digest}"
+
+    return slug
 
 
 def _h5auto_download_url_to_file(url, local_path, timeout=30):
