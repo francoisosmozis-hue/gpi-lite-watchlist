@@ -13629,6 +13629,323 @@ def action_letrot_course_match_preview():
 # <<< GPI V0_9_31B2_2 LETROT COURSE MATCH PREVIEW <<<
 
 
+
+
+
+# >>> GPI V0_9_31B2_4_1 ZETURF COURSE LEVEL SOURCE AUDIT >>>
+def _p34_bucket_name():
+    import os
+
+    return (
+        os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+        or globals().get("GPI_BUCKET_NAME")
+        or "gpi-lite-watchlist-data"
+    )
+
+
+def _p34_norm_slashes(value):
+    return str(value or "").replace("\\", "/").strip()
+
+
+def _p34_read_text_local_or_gcs(path_or_object, bucket_name=None):
+    """
+    Lecture d?fensive :
+    1. chemin local ;
+    2. gs://bucket/object ;
+    3. objet GCS direct.
+    """
+    from pathlib import Path
+
+    value = _p34_norm_slashes(path_or_object)
+    bucket_name = bucket_name or _p34_bucket_name()
+
+    if not value:
+        return {
+            "ok": False,
+            "source": "none",
+            "path_or_object": value,
+            "error": "EMPTY_PATH_OR_OBJECT",
+            "text": "",
+        }
+
+    # 1. Local exact.
+    try:
+        p = Path(value)
+        if p.exists():
+            return {
+                "ok": True,
+                "source": "local",
+                "path_or_object": value,
+                "local_path": str(p),
+                "error": "ND",
+                "text": p.read_text(encoding="utf-8-sig"),
+            }
+    except Exception as exc:
+        local_error = f"{type(exc).__name__}:{exc}"
+    else:
+        local_error = "LOCAL_NOT_FOUND"
+
+    # 2. GCS.
+    try:
+        from google.cloud import storage
+
+        if value.startswith("gs://"):
+            raw = value[5:]
+            parts = raw.split("/", 1)
+            if len(parts) != 2:
+                raise ValueError("INVALID_GS_URI")
+            bucket_name = parts[0]
+            object_name = parts[1]
+        else:
+            object_name = value.lstrip("/")
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+
+        if not blob.exists():
+            # Fallback si un chemin local data/... est stock? en GCS sous gpi-lite/...
+            fallback_objects = []
+            if object_name.startswith("data/"):
+                fallback_objects.append("gpi-lite/" + object_name)
+                fallback_objects.append("gpi-lite/outputs/" + object_name)
+
+            for fallback in fallback_objects:
+                fb = bucket.blob(fallback)
+                if fb.exists():
+                    blob = fb
+                    object_name = fallback
+                    break
+            else:
+                return {
+                    "ok": False,
+                    "source": "gcs",
+                    "bucket": bucket_name,
+                    "object": object_name,
+                    "path_or_object": value,
+                    "error": f"GCS_OBJECT_NOT_FOUND;local_error={local_error}",
+                    "text": "",
+                }
+
+        return {
+            "ok": True,
+            "source": "gcs",
+            "bucket": bucket_name,
+            "object": object_name,
+            "path_or_object": value,
+            "error": "ND",
+            "text": blob.download_as_text(encoding="utf-8-sig"),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "source": "gcs",
+            "bucket": bucket_name,
+            "path_or_object": value,
+            "error": f"{type(exc).__name__}:{exc};local_error={local_error}",
+            "text": "",
+        }
+
+
+def _p34_read_csv_rows_from_text(text):
+    import csv
+    import io
+
+    if not text:
+        return [], []
+
+    reader = csv.DictReader(io.StringIO(text))
+    rows = list(reader)
+    return reader.fieldnames or [], rows
+
+
+def _p34_extract_course_level_columns(fieldnames):
+    fieldnames = fieldnames or []
+    fieldset = {str(x).strip() for x in fieldnames if str(x).strip()}
+
+    expected_groups = {
+        "course_no": [
+            "course_no",
+            "course_num",
+            "course_number",
+            "race_no",
+            "race_number",
+            "course_index",
+            "num_course",
+            "numero_course",
+        ],
+        "scheduled_time": [
+            "scheduled_time",
+            "start_time",
+            "heure_course",
+            "heure_depart",
+            "race_time",
+            "depart_time",
+            "start_at",
+        ],
+        "race_name": [
+            "race_name",
+            "course_name",
+            "prix",
+            "prix_course",
+            "nom_prix",
+        ],
+        "reunion_no": [
+            "reunion_no",
+            "meeting_no",
+            "reunion",
+            "meeting",
+        ],
+    }
+
+    present = {}
+    missing = []
+
+    for logical, candidates in expected_groups.items():
+        found = [c for c in candidates if c in fieldset]
+        present[logical] = found
+        if not found:
+            missing.append(logical)
+
+    return {
+        "present": present,
+        "missing": missing,
+        "available_logical_fields": [k for k, v in present.items() if v],
+    }
+
+
+def _p34_extract_course_level_source_from_context(context_payload):
+    """
+    Audit source course-level c?t? ZEturf/H5.
+    Ne valide aucune course.
+    """
+    bucket_name = _p34_bucket_name()
+
+    if not isinstance(context_payload, dict):
+        context_payload = {}
+
+    h5_csv_gcs = context_payload.get("h5_odds_csv_gcs") or "ND"
+    h5_csv_local = context_payload.get("np_statut_exact_h5_csv_local") or "ND"
+
+    csv_read = None
+
+    # Priorit? GCS car production Cloud Run ne poss?de pas toujours les fichiers locaux.
+    if h5_csv_gcs and h5_csv_gcs != "ND":
+        csv_read = _p34_read_text_local_or_gcs(h5_csv_gcs, bucket_name=bucket_name)
+
+    if not csv_read or not csv_read.get("ok"):
+        if h5_csv_local and h5_csv_local != "ND":
+            csv_read = _p34_read_text_local_or_gcs(h5_csv_local, bucket_name=bucket_name)
+
+    if not csv_read:
+        csv_read = {
+            "ok": False,
+            "source": "none",
+            "error": "NO_H5_CSV_REFERENCE",
+            "text": "",
+        }
+
+    fieldnames, rows = _p34_read_csv_rows_from_text(csv_read.get("text", ""))
+    column_audit = _p34_extract_course_level_columns(fieldnames)
+
+    first_row = rows[0] if rows else {}
+    source_html_path = first_row.get("source_html_path") or context_payload.get("source_html_path") or "ND"
+
+    html_read = {
+        "ok": False,
+        "source": "none",
+        "error": "NO_SOURCE_HTML_PATH",
+        "text": "",
+    }
+
+    if source_html_path and source_html_path != "ND":
+        html_read = _p34_read_text_local_or_gcs(source_html_path, bucket_name=bucket_name)
+
+    source_status = "SOURCE_AUDIT_OK"
+
+    if not csv_read.get("ok"):
+        source_status = "H5_CSV_UNAVAILABLE"
+    elif not rows:
+        source_status = "H5_CSV_EMPTY"
+    elif column_audit.get("available_logical_fields"):
+        source_status = "COURSE_LEVEL_COLUMNS_PRESENT_IN_H5_CSV"
+    elif html_read.get("ok"):
+        source_status = "H5_CSV_NO_COURSE_LEVEL_COLUMNS_BUT_HTML_AVAILABLE"
+    else:
+        source_status = "H5_CSV_NO_COURSE_LEVEL_COLUMNS_AND_HTML_UNAVAILABLE"
+
+    html_text = html_read.get("text", "") or ""
+
+    return {
+        "course_level_source_audit_version": "zeturf_course_level_source_audit_v0_9_31b2_4_1",
+        "bucket": bucket_name,
+        "course_uid": context_payload.get("course_uid", "ND"),
+        "course_key": context_payload.get("course_key", "ND"),
+        "course_slug": context_payload.get("course_slug", "ND"),
+        "h5_csv_gcs": h5_csv_gcs,
+        "h5_csv_local": h5_csv_local,
+        "h5_csv_read_ok_oui_non": "oui" if csv_read.get("ok") else "non",
+        "h5_csv_read_source": csv_read.get("source", "ND"),
+        "h5_csv_read_error": csv_read.get("error", "ND"),
+        "h5_csv_fieldnames": fieldnames,
+        "h5_csv_rows_count": len(rows),
+        "course_level_columns_present": column_audit.get("present", {}),
+        "course_level_columns_missing": column_audit.get("missing", []),
+        "course_level_available_logical_fields": column_audit.get("available_logical_fields", []),
+        "source_html_path": source_html_path,
+        "source_html_available_oui_non": "oui" if html_read.get("ok") else "non",
+        "source_html_read_source": html_read.get("source", "ND"),
+        "source_html_read_error": html_read.get("error", "ND"),
+        "source_html_chars": len(html_text),
+        "source_html_sample": html_text[:1200],
+        "course_level_source_status": source_status,
+    }
+
+
+@app.get("/action/zeturf-course-level-source-preview")
+def action_zeturf_course_level_source_preview():
+    """
+    GPI V0_9_31B2.4.1
+    Audit lecture seule des sources possibles de m?tadonn?es course-level c?t? ZEturf/H5.
+
+    Ne valide aucune course.
+    Ne modifie pas GCS.
+    N'ouvre pas le strict.
+    """
+    try:
+        context_payload = action_latest_h5_auto_context()
+    except Exception as exc:
+        context_payload = {
+            "ok": False,
+            "phase": "latest_h5_auto_context",
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    audit = _p34_extract_course_level_source_from_context(context_payload)
+
+    return {
+        "ok": True,
+        "phase": "zeturf_course_level_source_preview",
+        "preview_version": "zeturf_course_level_source_preview_v0_9_31b2_4_1",
+        "source_context_phase": context_payload.get("phase", "ND") if isinstance(context_payload, dict) else "ND",
+        "source_context_ok": context_payload.get("ok", "ND") if isinstance(context_payload, dict) else "ND",
+        **audit,
+        "official_join_ok_oui_non": "non",
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "doctrine": (
+            "Audit source course-level ZEturf/H5. "
+            "Une source disponible ne vaut pas jointure officielle. "
+            "Strict ferm? tant que la course pr?cise et les partants/NP officiels d?taill?s ne sont pas valid?s."
+        ),
+    }
+# <<< GPI V0_9_31B2_4_1 ZETURF COURSE LEVEL SOURCE AUDIT <<<
+
+
 # >>> GPI ACTION CONTINUATION STOP DASHBOARD V0_9_23 >>>
 @app.get("/action/continuation-stop-dashboard")
 def action_continuation_stop_dashboard():
