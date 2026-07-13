@@ -2683,13 +2683,13 @@ def _h5auto_download_file_from_gcs(blob_name, local_path):
 
 def _h5auto_safe_slug(value, max_len=180):
     """
-    GPI V0_9_30B4
+    GPI V0_9_30B4.2
     Slug technique ASCII-only pour chemins locaux et blobs GCS.
 
-    R?gle :
-    - conserve le course_uid officiel dans les payloads JSON ;
-    - supprime les accents uniquement dans les noms techniques ;
-    - ?vite les erreurs PowerShell/GCS sur les caract?res accentu?s.
+    Doctrine :
+    - course_uid officiel conserv? dans les JSON ;
+    - chemins techniques toujours ASCII ;
+    - correction prudente des mojibakes fr?quents avant slug.
     """
     import hashlib
     import re
@@ -2699,7 +2699,63 @@ def _h5auto_safe_slug(value, max_len=180):
     if not raw:
         return "nd"
 
-    normalized = unicodedata.normalize("NFKD", raw)
+    def _repair_mojibake(text):
+        text = str(text or "")
+
+        # Cas fr?quent : UTF-8 lu comme latin1/cp1252.
+        # Exemple : B\u00c3\u00a9n\u00c3\u00a9voles => B?n?voles
+        candidates = [text]
+        for enc in ("latin1", "cp1252"):
+            try:
+                repaired = text.encode(enc).decode("utf-8")
+                if repaired and repaired not in candidates:
+                    candidates.append(repaired)
+            except Exception:
+                pass
+
+        # Cas fr?quent console Windows : UTF-8 affich?/recopi? en CP437/CP850.
+        # Exemple observ? : B??n??voles.
+        replacements = {
+            "\u251c\u00ae": "e",  # ??
+            "\u251c\u00a8": "e",  # ??
+            "\u251c\u00aa": "e",  # ??
+            "\u251c\u00a0": "a",  # ? 
+            "\u251c\u00a7": "c",  # ??
+            "\u251c\u00b4": "o",  # ??
+            "\u251c\u00bb": "u",  # ??
+            "\u251c\u00b9": "u",  # ??
+            "\u00da": "e",         # ?
+        }
+
+        for base in list(candidates):
+            fixed = base
+            for bad, good in replacements.items():
+                fixed = fixed.replace(bad, good)
+            if fixed and fixed not in candidates:
+                candidates.append(fixed)
+
+        bad_markers = [
+            "\u00c3",  # ?
+            "\u00c2",  # ?
+            "\u251c",  # ?
+            "\u252c",  # ?
+            "\u00da",  # ?
+            "\ufffd",  # replacement char
+            "?",
+        ]
+
+        def score(candidate):
+            candidate = str(candidate or "")
+            bad = sum(candidate.count(marker) for marker in bad_markers)
+            question = candidate.count("?")
+            letters = sum(1 for ch in candidate if ch.isalpha())
+            return (bad, question, -letters, len(candidate))
+
+        return sorted(candidates, key=score)[0]
+
+    repaired_raw = _repair_mojibake(raw)
+
+    normalized = unicodedata.normalize("NFKD", repaired_raw)
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
 
     slug = ascii_value.lower()

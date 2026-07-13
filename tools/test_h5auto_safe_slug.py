@@ -23,3 +23,14 @@ def test_h5auto_safe_slug_is_ascii_only():
 def test_h5auto_safe_slug_existing_plain_name():
     value = "Prix des Points PMU du Mans_ Pronostics & Cotes"
     assert _h5auto_safe_slug(value) == "prix_des_points_pmu_du_mans_pronostics_et_cotes"
+
+
+def test_h5auto_safe_slug_repairs_latin1_mojibake():
+    value = "13_07_2026 - LE MANS - Prix des B\u00c3\u00a9n\u00c3\u00a9voles_ Pronostics & Cotes"
+    assert _h5auto_safe_slug(value) == "13_07_2026_le_mans_prix_des_benevoles_pronostics_et_cotes"
+
+
+def test_h5auto_safe_slug_repairs_cp437_mojibake():
+    value = "13_07_2026 - LE MANS - Prix des B\u251c\u00aen\u251c\u00aevoles_ Pronostics & Cotes"
+    assert _h5auto_safe_slug(value) == "13_07_2026_le_mans_prix_des_benevoles_pronostics_et_cotes"
+
