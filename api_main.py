@@ -3675,10 +3675,49 @@ def drive_run_h5_auto_brief():
             ).hexdigest()
 
             try:
-                np_statut_fields = _p11_compute_np_statut_gate_for_h5_brief({
-                    "course_uid": course_uid,
-                    "current_snapshot_label": "H5",
-                })
+                # GPI_H5_NP_STATUS_EXACT_H5_CSV_PATCH_V0_9_30B3
+                # Utilise le CSV H5 exact d?j? t?l?charg? pour ce brief.
+                # Fallback conservateur vers la recherche legacy si le CSV exact est illisible.
+                np_statut_fields = None
+
+                try:
+                    import pandas as pd
+
+                    if h5_local and Path(h5_local).exists():
+                        h5_np_rows = pd.read_csv(h5_local)
+                        np_statut_fields = _p11_compute_np_statut_gate_from_rows(
+                            h5_np_rows,
+                            h5_blob or str(h5_local),
+                        )
+                        if isinstance(np_statut_fields, dict):
+                            np_statut_fields["np_statut_exact_h5_csv_oui_non"] = "oui"
+                            np_statut_fields["np_statut_exact_h5_csv_local"] = str(h5_local)
+                            np_statut_fields["np_statut_exact_h5_csv_gcs"] = h5_blob
+                except Exception as exact_exc:
+                    np_statut_fields = {
+                        "np_ok": "ND",
+                        "statut_ok": "ND",
+                        "np_source": f"NP_STATUT_EXACT_H5_CSV_ERROR:{type(exact_exc).__name__}",
+                        "statut_source": f"NP_STATUT_EXACT_H5_CSV_ERROR:{type(exact_exc).__name__}",
+                        "np_count": "ND",
+                        "statut_missing_count": "ND",
+                        "np_statut_rows_count": 0,
+                        "np_statut_source_level": "EXACT_H5_CSV_ERROR",
+                        "np_statut_exact_h5_csv_oui_non": "non",
+                        "np_statut_exact_h5_csv_local": str(h5_local),
+                        "np_statut_exact_h5_csv_gcs": h5_blob,
+                        "np_statut_checked_at_utc": datetime.now(timezone.utc).isoformat(),
+                    }
+
+                if not isinstance(np_statut_fields, dict):
+                    np_statut_fields = _p11_compute_np_statut_gate_for_h5_brief({
+                        "course_uid": course_uid,
+                        "current_snapshot_label": "H5",
+                    })
+                    if isinstance(np_statut_fields, dict):
+                        np_statut_fields["np_statut_exact_h5_csv_oui_non"] = "non"
+                        np_statut_fields["np_statut_fallback_legacy_oui_non"] = "oui"
+
             except Exception as exc:
                 np_statut_fields = {
                     "np_ok": "ND",
@@ -3689,6 +3728,7 @@ def drive_run_h5_auto_brief():
                     "statut_missing_count": "ND",
                     "np_statut_rows_count": 0,
                     "np_statut_source_level": "ERROR",
+                    "np_statut_exact_h5_csv_oui_non": "non",
                     "np_statut_checked_at_utc": datetime.now(timezone.utc).isoformat(),
                 }
 
@@ -3715,6 +3755,10 @@ def drive_run_h5_auto_brief():
                 "statut_missing_count": np_statut_fields.get("statut_missing_count", "ND"),
                 "np_statut_rows_count": np_statut_fields.get("np_statut_rows_count", 0),
                 "np_statut_source_level": np_statut_fields.get("np_statut_source_level", "ND"),
+                "np_statut_exact_h5_csv_oui_non": np_statut_fields.get("np_statut_exact_h5_csv_oui_non", "ND"),
+                "np_statut_exact_h5_csv_local": np_statut_fields.get("np_statut_exact_h5_csv_local", "ND"),
+                "np_statut_exact_h5_csv_gcs": np_statut_fields.get("np_statut_exact_h5_csv_gcs", "ND"),
+                "np_statut_fallback_legacy_oui_non": np_statut_fields.get("np_statut_fallback_legacy_oui_non", "non"),
                 "np_statut_checked_at_utc": np_statut_fields.get("np_statut_checked_at_utc", "ND"),
                 "top_n_numbers": context_payload.get("top_n_numbers", ""),
                 "top_n_instable_numbers": context_payload.get("top_n_instable_numbers", ""),
@@ -3799,6 +3843,10 @@ def drive_run_h5_auto_brief():
                         "statut_missing_count": np_statut_fields.get("statut_missing_count", "ND"),
                         "np_statut_rows_count": np_statut_fields.get("np_statut_rows_count", 0),
                         "np_statut_source_level": np_statut_fields.get("np_statut_source_level", "ND"),
+                        "np_statut_exact_h5_csv_oui_non": np_statut_fields.get("np_statut_exact_h5_csv_oui_non", "ND"),
+                        "np_statut_exact_h5_csv_local": np_statut_fields.get("np_statut_exact_h5_csv_local", "ND"),
+                        "np_statut_exact_h5_csv_gcs": np_statut_fields.get("np_statut_exact_h5_csv_gcs", "ND"),
+                        "np_statut_fallback_legacy_oui_non": np_statut_fields.get("np_statut_fallback_legacy_oui_non", "non"),
                         "decision_before_race_oui_non": decision_before_race_oui_non_effective,
                         "backfill_technical_oui_non": backfill_technical_oui_non,
                         "strict_kpi_excluded_oui_non": strict_kpi_excluded_oui_non,
