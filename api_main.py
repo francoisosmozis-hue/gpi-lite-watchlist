@@ -11396,6 +11396,8 @@ def action_latest_h5_auto_context():
         }
 
     payload["official_runner_status_fields"] = official_fields
+    payload["official_runner_status_contract_version"] = "official_runner_status_contract_v0_9_31b1_3"
+    payload["official_overlay_version"] = "official_source_kind_join_ok_v0_9_31b1_3"
     payload["official_runner_status_available_oui_non"] = official_fields.get(
         "official_runner_status_available_oui_non", "non"
     )
@@ -12215,6 +12217,7 @@ def _p11_compute_np_statut_gate_for_h5_brief(brief):
 # >>> GPI V0_9_31B1 OFFICIAL RUNNER STATUS CONTRACT >>>
 # V0_9_31B1_1_OFFICIAL_SOURCE_KIND
 # V0_9_31B1_2_JOIN_OK_LEVELS
+# V0_9_31B1_3_VERSION_FIELDS
 def _p31_official_status_download_latest():
     """
     Lecture seule.
@@ -12521,6 +12524,8 @@ def _p31_compute_official_np_statut_gate_from_rows(rows, source, diagnostics=Non
         "np_statut_rows_count": int(len(rows)),
         "np_statut_source_level": source_level,
         "np_statut_checked_at_utc": checked_at,
+        "official_runner_status_contract_version": "official_runner_status_contract_v0_9_31b1_3",
+        "official_overlay_version": "official_source_kind_join_ok_v0_9_31b1_3",
         "official_join_ok_oui_non": "oui" if source_level in official_join_ok_levels else "non",
         "official_runner_status_available_oui_non": "oui",
         **diagnostics,
@@ -12553,7 +12558,9 @@ def action_official_runner_status_preview():
     return {
         "ok": True,
         "phase": "official_runner_status_preview",
-        "preview_version": "official_runner_status_contract_v0_9_31b1",
+        "preview_version": "official_runner_status_contract_v0_9_31b1_3",
+        "official_runner_status_contract_version": "official_runner_status_contract_v0_9_31b1_3",
+        "official_overlay_version": "official_source_kind_join_ok_v0_9_31b1_3",
         "course_uid": source_payload.get("course_uid", "ND"),
         "course_slug": source_payload.get("course_slug", "ND"),
         "fields": fields,
