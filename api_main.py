@@ -12583,6 +12583,7 @@ def action_official_runner_status_preview():
 # V0_9_31B2_1_2_PARSE_QUALITY_GUARD
 # V0_9_31B2_1_3_STATUS_EXTRACTION
 # V0_9_31B2_1_4_DEDUPE_OVERPARSE_GUARD
+# V0_9_31B2_1_5_CANONICAL_STATUS_CODES
 def _p32_letrot_now_utc_iso():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
@@ -12743,6 +12744,97 @@ def _p32_extract_course_status_from_window(value):
 
 
 
+
+def _p32_status_text_candidates(value):
+    """
+    G?n?re plusieurs variantes d'un statut :
+    - brut ;
+    - r?paration mojibake fr?quente ;
+    - variante sans accents.
+    """
+    s = _p32_norm_space(value)
+    candidates = []
+
+    if s:
+        candidates.append(s)
+
+    # R?paration mojibake classique UTF-8 lu comme latin-1.
+    try:
+        repaired = s.encode("latin-1", errors="ignore").decode("utf-8", errors="ignore")
+        repaired = _p32_norm_space(repaired)
+        if repaired and repaired not in candidates:
+            candidates.append(repaired)
+    except Exception:
+        pass
+
+    replacements = {
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "? ": "? ",
+        "? ": "?",
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "?": "",
+        "?": "",
+    }
+
+    repaired2 = s
+    for old, new in replacements.items():
+        repaired2 = repaired2.replace(old, new)
+
+    repaired2 = _p32_norm_space(repaired2)
+    if repaired2 and repaired2 not in candidates:
+        candidates.append(repaired2)
+
+    folded = _p32_strip_accents(repaired2 or s).lower()
+    folded = folded.replace("?", "a")
+    folded = _p32_norm_space(folded)
+    if folded and folded not in candidates:
+        candidates.append(folded)
+
+    return candidates
+
+
+def _p32_canonical_status_code(value):
+    """
+    Code stable pour matching et audit.
+    Ne d?pend pas des accents ni de l'affichage PowerShell.
+    """
+    import re
+
+    for candidate in _p32_status_text_candidates(value):
+        folded = _p32_strip_accents(candidate).lower()
+        folded = folded.replace("?", "a")
+        folded = _p32_norm_space(folded)
+
+        if re.search(r"\ben cours\b", folded):
+            return "LIVE"
+
+        if re.search(r"\ba venir\b", folded):
+            return "UPCOMING"
+
+        if re.search(r"\bterminee\b", folded):
+            return "FINISHED"
+
+        if re.search(r"\bprovisoire\b", folded):
+            return "PROVISIONAL"
+
+        if re.search(r"\bannulee\b", folded):
+            return "CANCELLED"
+
+        if re.search(r"\breportee\b", folded):
+            return "POSTPONED"
+
+    return "ND"
+
+
+
 def _p32_extract_letrot_today_index_from_html(html_text):
     """
     Extraction prudente depuis le HTML public LeTrot.
@@ -12820,6 +12912,7 @@ def _p32_extract_letrot_today_index_from_html(html_text):
                 "course_no_int": int(course_no),
                 "scheduled_time": course_time,
                 "course_status": course_status,
+                "course_status_code": _p32_canonical_status_code(course_status),
                 "official_source": "LETROT",
                 "official_source_kind": "LETROT_TODAY_INDEX",
             })
@@ -12855,6 +12948,7 @@ def _p32_extract_letrot_today_index_from_html(html_text):
                     "course_no_int": fallback_no,
                     "scheduled_time": fallback_time,
                     "course_status": fallback_status,
+                    "course_status_code": _p32_canonical_status_code(fallback_status),
                     "official_source": "LETROT",
                     "official_source_kind": "LETROT_TODAY_INDEX_FALLBACK",
                 })
@@ -12890,6 +12984,7 @@ def _p32_extract_letrot_today_index_from_html(html_text):
             "hippodrome": hippodrome,
             "meeting_time": _p32_norm_space(m.group("meeting_time")),
             "meeting_status": meeting_status,
+            "meeting_status_code": _p32_canonical_status_code(meeting_status),
             "declared_courses_count": int(m.group("declared_courses")),
             "parsed_courses_count": len(courses),
             "courses": courses,
@@ -12903,7 +12998,7 @@ def _p32_extract_letrot_today_index_from_html(html_text):
         1
         for m in meetings
         for c in m.get("courses", [])
-        if str(c.get("course_status", "ND")).strip().upper() == "ND"
+        if str(c.get("course_status_code", "ND")).strip().upper() == "ND"
     )
 
     overparsed_meetings_count = sum(
@@ -12917,6 +13012,17 @@ def _p32_extract_letrot_today_index_from_html(html_text):
         for m in meetings
         if int(m.get("parsed_courses_count", 0) or 0) < int(m.get("declared_courses_count", 0) or 0)
     )
+
+    course_status_code_counts = {}
+    meeting_status_code_counts = {}
+
+    for m in meetings:
+        m_code = str(m.get("meeting_status_code", "ND") or "ND")
+        meeting_status_code_counts[m_code] = meeting_status_code_counts.get(m_code, 0) + 1
+
+        for c in m.get("courses", []):
+            c_code = str(c.get("course_status_code", "ND") or "ND")
+            course_status_code_counts[c_code] = course_status_code_counts.get(c_code, 0) + 1
 
     if not meetings:
         parse_status = "NO_MEETING_PARSED"
@@ -12954,7 +13060,7 @@ def _p32_extract_letrot_today_index_from_html(html_text):
     return {
         "ok": bool(meetings),
         "phase": "letrot_today_index_preview",
-        "preview_version": "letrot_today_index_preview_v0_9_31b2_1_4",
+        "preview_version": "letrot_today_index_preview_v0_9_31b2_1_5",
         "source_url": source_url,
         "official_source": "LETROT",
         "official_source_kind": "LETROT_TODAY_INDEX",
@@ -12968,6 +13074,9 @@ def _p32_extract_letrot_today_index_from_html(html_text):
         "course_status_nd_count": course_status_nd_count,
         "overparsed_meetings_count": overparsed_meetings_count,
         "underparsed_meetings_count": underparsed_meetings_count,
+        "status_codes_version": "letrot_status_codes_v0_9_31b2_1_5",
+        "course_status_code_counts": course_status_code_counts,
+        "meeting_status_code_counts": meeting_status_code_counts,
         "meetings": meetings,
         "raw_text_chars": len(text),
         "raw_text_sample": text[:1200],
@@ -13000,7 +13109,7 @@ def action_letrot_today_index_preview():
         return {
             "ok": False,
             "phase": "letrot_today_index_preview",
-            "preview_version": "letrot_today_index_preview_v0_9_31b2_1_4",
+            "preview_version": "letrot_today_index_preview_v0_9_31b2_1_5",
             "source_url": fetch.get("source_url", "https://www.letrot.com/courses/aujourd-hui"),
             "official_source": "LETROT",
             "official_source_kind": "LETROT_TODAY_INDEX",
@@ -13018,6 +13127,9 @@ def action_letrot_today_index_preview():
             "course_status_nd_count": 0,
             "overparsed_meetings_count": 0,
             "underparsed_meetings_count": 0,
+            "status_codes_version": "letrot_status_codes_v0_9_31b2_1_5",
+            "course_status_code_counts": {},
+            "meeting_status_code_counts": {},
             "meetings": [],
             "strict_allowed_oui_non": "non",
             "strict_usable_oui_non": "non",
