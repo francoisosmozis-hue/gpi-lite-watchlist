@@ -12581,6 +12581,8 @@ def action_official_runner_status_preview():
 # >>> GPI V0_9_31B2_1 LETROT TODAY INDEX PREVIEW >>>
 # V0_9_31B2_1_1_REGEX_FIX
 # V0_9_31B2_1_2_PARSE_QUALITY_GUARD
+# V0_9_31B2_1_3_STATUS_EXTRACTION
+# V0_9_31B2_1_4_DEDUPE_OVERPARSE_GUARD
 def _p32_letrot_now_utc_iso():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
@@ -12675,6 +12677,72 @@ def _p32_html_to_text(html_text):
     return s.strip()
 
 
+
+def _p32_strip_accents(value):
+    import unicodedata
+
+    s = "" if value is None else str(value)
+    return "".join(
+        c
+        for c in unicodedata.normalize("NFD", s)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _p32_status_regex_terms():
+    # Variantes accentu?es, non accentu?es et affichages d?grad?s Windows.
+    return [
+        "en cours",
+        "\u00e0 venir",
+        "a venir",
+        "? venir",
+        "termin\u00e9e",
+        "terminee",
+        "termin?e",
+        "provisoire",
+        "annul\u00e9e",
+        "annulee",
+        "annul?e",
+        "report\u00e9e",
+        "reportee",
+        "report?e",
+    ]
+
+
+def _p32_extract_course_status_from_window(value):
+    """
+    Extraction prudente d'un statut course dans une fen?tre texte.
+    Retourne ND si ambigu ou absent.
+    """
+    import re
+
+    raw = _p32_norm_space(value)
+    if not raw:
+        return "ND"
+
+    folded = _p32_strip_accents(raw).lower()
+    folded = folded.replace("?", "a")
+
+    checks = [
+        (r"\ben cours\b", "en cours"),
+        (r"\ba venir\b", "\u00e0 venir"),
+        (r"\bterminee\b", "termin\u00e9e"),
+        (r"\bprovisoire\b", "provisoire"),
+        (r"\bannulee\b", "annul\u00e9e"),
+        (r"\breportee\b", "report\u00e9e"),
+    ]
+
+    found = []
+    for pattern, canonical in checks:
+        if re.search(pattern, folded, flags=re.IGNORECASE):
+            found.append(canonical)
+
+    # Si plusieurs statuts apparaissent dans la m?me fen?tre, on garde le premier
+    # dans l'ordre m?tier ci-dessus. C'est volontairement prudent.
+    return found[0] if found else "ND"
+
+
+
 def _p32_extract_letrot_today_index_from_html(html_text):
     """
     Extraction prudente depuis le HTML public LeTrot.
@@ -12690,18 +12758,7 @@ def _p32_extract_letrot_today_index_from_html(html_text):
     text = _p32_html_to_text(html_text)
     one_line = _p32_norm_space(text)
 
-    status_terms = [
-        "en cours",
-        "? venir",
-        "a venir",
-        "termin?e",
-        "terminee",
-        "provisoire",
-        "annul?e",
-        "annulee",
-        "report?e",
-        "reportee",
-    ]
+    status_terms = _p32_status_regex_terms()
     status_pattern = "|".join(re.escape(term) for term in status_terms)
 
     meeting_re = re.compile(
@@ -12743,15 +12800,15 @@ def _p32_extract_letrot_today_index_from_html(html_text):
             status_before = _p32_norm_space(c.group("status_before")).lower()
             tail = _p32_norm_space(c.group("tail")).lower()
 
-            course_status = status_before
-            if not course_status:
-                for candidate in ["en cours", "? venir", "termin?e", "provisoire", "annul?e", "report?e"]:
-                    if candidate in tail:
-                        course_status = candidate
-                        break
+            window_start = max(0, c.start() - 120)
+            window_end = min(len(segment), c.end() + 260)
+            status_window = segment[window_start:window_end]
 
-            if not course_status:
-                course_status = "ND"
+            course_status = _p32_extract_course_status_from_window(status_before)
+            if course_status == "ND":
+                course_status = _p32_extract_course_status_from_window(tail)
+            if course_status == "ND":
+                course_status = _p32_extract_course_status_from_window(status_window)
 
             key = (course_no, course_time)
             if key in seen_course_keys:
@@ -12790,17 +12847,42 @@ def _p32_extract_letrot_today_index_from_html(html_text):
                 time_matches = list(re.finditer(r"\b\d{1,2}:\d{2}\b", before))
                 fallback_time = time_matches[-1].group(0) if time_matches else "ND"
 
+                status_window = segment[max(0, fc.start() - 160):min(len(segment), fc.end() + 320)]
+                fallback_status = _p32_extract_course_status_from_window(status_window)
+
                 courses.append({
                     "course_no": f"C{fallback_no}",
                     "course_no_int": fallback_no,
                     "scheduled_time": fallback_time,
-                    "course_status": "ND",
+                    "course_status": fallback_status,
                     "official_source": "LETROT",
                     "official_source_kind": "LETROT_TODAY_INDEX_FALLBACK",
                 })
                 existing_course_ints.add(fallback_no)
 
             courses = sorted(courses, key=lambda x: int(x.get("course_no_int", 999)))
+
+        # Guard B2.1.4 : une r?union ne peut pas produire plus de courses que d?clar?.
+        # On conserve la premi?re occurrence de chaque Cx et on ignore les num?ros hors borne.
+        normalized_courses = []
+        seen_course_numbers = set()
+
+        for crs in sorted(courses, key=lambda x: int(x.get("course_no_int", 999))):
+            try:
+                no = int(crs.get("course_no_int", 999))
+            except Exception:
+                continue
+
+            if no < 1 or no > declared_count:
+                continue
+
+            if no in seen_course_numbers:
+                continue
+
+            seen_course_numbers.add(no)
+            normalized_courses.append(crs)
+
+        courses = normalized_courses
 
         meetings.append({
             "reunion": f"R{m.group('reunion_no')}",
@@ -12824,6 +12906,18 @@ def _p32_extract_letrot_today_index_from_html(html_text):
         if str(c.get("course_status", "ND")).strip().upper() == "ND"
     )
 
+    overparsed_meetings_count = sum(
+        1
+        for m in meetings
+        if int(m.get("parsed_courses_count", 0) or 0) > int(m.get("declared_courses_count", 0) or 0)
+    )
+
+    underparsed_meetings_count = sum(
+        1
+        for m in meetings
+        if int(m.get("parsed_courses_count", 0) or 0) < int(m.get("declared_courses_count", 0) or 0)
+    )
+
     if not meetings:
         parse_status = "NO_MEETING_PARSED"
         parse_quality_oui_non = "non"
@@ -12832,10 +12926,22 @@ def _p32_extract_letrot_today_index_from_html(html_text):
         parse_status = "MEETINGS_ONLY_NO_COURSES"
         parse_quality_oui_non = "non"
         parse_warning = "R?unions d?tect?es, mais aucune course pars?e."
+    elif declared_courses_total and courses_count > declared_courses_total:
+        parse_status = "OVERPARSE_COURSE_COUNT"
+        parse_quality_oui_non = "non"
+        parse_warning = f"Parsing excessif : {courses_count}/{declared_courses_total} courses d?tect?es."
+    elif overparsed_meetings_count > 0:
+        parse_status = "OVERPARSE_MEETING_COUNT"
+        parse_quality_oui_non = "non"
+        parse_warning = f"R?union(s) en overparse : {overparsed_meetings_count}."
     elif declared_courses_total and courses_count < declared_courses_total:
         parse_status = "PARTIAL_COURSE_PARSE"
         parse_quality_oui_non = "non"
         parse_warning = f"Parsing partiel : {courses_count}/{declared_courses_total} courses d?tect?es."
+    elif underparsed_meetings_count > 0:
+        parse_status = "UNDERPARSE_MEETING_COUNT"
+        parse_quality_oui_non = "non"
+        parse_warning = f"R?union(s) incompl?te(s) : {underparsed_meetings_count}."
     elif course_status_nd_count > 0:
         parse_status = "PARTIAL_STATUS_PARSE"
         parse_quality_oui_non = "non"
@@ -12848,7 +12954,7 @@ def _p32_extract_letrot_today_index_from_html(html_text):
     return {
         "ok": bool(meetings),
         "phase": "letrot_today_index_preview",
-        "preview_version": "letrot_today_index_preview_v0_9_31b2_1_2",
+        "preview_version": "letrot_today_index_preview_v0_9_31b2_1_4",
         "source_url": source_url,
         "official_source": "LETROT",
         "official_source_kind": "LETROT_TODAY_INDEX",
@@ -12860,6 +12966,8 @@ def _p32_extract_letrot_today_index_from_html(html_text):
         "courses_count": courses_count,
         "declared_courses_total": declared_courses_total,
         "course_status_nd_count": course_status_nd_count,
+        "overparsed_meetings_count": overparsed_meetings_count,
+        "underparsed_meetings_count": underparsed_meetings_count,
         "meetings": meetings,
         "raw_text_chars": len(text),
         "raw_text_sample": text[:1200],
@@ -12892,7 +13000,7 @@ def action_letrot_today_index_preview():
         return {
             "ok": False,
             "phase": "letrot_today_index_preview",
-            "preview_version": "letrot_today_index_preview_v0_9_31b2_1_2",
+            "preview_version": "letrot_today_index_preview_v0_9_31b2_1_4",
             "source_url": fetch.get("source_url", "https://www.letrot.com/courses/aujourd-hui"),
             "official_source": "LETROT",
             "official_source_kind": "LETROT_TODAY_INDEX",
@@ -12908,6 +13016,8 @@ def action_letrot_today_index_preview():
             "courses_count": 0,
             "declared_courses_total": 0,
             "course_status_nd_count": 0,
+            "overparsed_meetings_count": 0,
+            "underparsed_meetings_count": 0,
             "meetings": [],
             "strict_allowed_oui_non": "non",
             "strict_usable_oui_non": "non",
