@@ -13153,6 +13153,7 @@ def action_letrot_today_index_preview():
 # >>> GPI V0_9_31B2_2 LETROT COURSE MATCH PREVIEW >>>
 # V0_9_31B2_2_1_CONTEXT_CAPTURE_FIX
 # V0_9_31B2_2_2_H5_CONTEXT_BOM_FIX
+# V0_9_31B2_3_COURSE_LEVEL_AUDIT_PREVIEW
 def _p33_norm_for_match(value):
     import re
     import unicodedata
@@ -13242,6 +13243,193 @@ def _p33_extract_hippodrome_from_course_uid(course_uid):
         "date_raw": date_raw,
         "extract_status": "OK" if hippodrome_norm and hippodrome_norm != "ND" else "HIPPO_ND",
     }
+
+
+
+def _p33_pick_first_non_empty(payload, keys):
+    if not isinstance(payload, dict):
+        return None, "ND"
+
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        value_s = str(value).strip()
+        if value_s and value_s.upper() != "ND":
+            return value_s, key
+
+    return None, "ND"
+
+
+def _p33_extract_course_level_inputs(context_payload):
+    """
+    Audit des entr?es disponibles pour une jointure course-level.
+    On ne d?duit pas artificiellement le num?ro de course depuis le nom du prix.
+    """
+    fields = {
+        "course_no": [
+            "course_no",
+            "course_num",
+            "course_number",
+            "race_no",
+            "race_number",
+            "course_index",
+            "num_course",
+            "numero_course",
+        ],
+        "scheduled_time": [
+            "scheduled_time",
+            "start_time",
+            "heure_course",
+            "heure_depart",
+            "race_time",
+            "depart_time",
+            "start_at",
+        ],
+        "race_name": [
+            "race_name",
+            "course_name",
+            "prix",
+            "prix_course",
+            "nom_prix",
+        ],
+        "reunion_no": [
+            "reunion_no",
+            "meeting_no",
+            "reunion",
+            "meeting",
+        ],
+    }
+
+    values = {}
+    sources = {}
+    available = []
+    missing = []
+
+    for logical_name, keys in fields.items():
+        value, source = _p33_pick_first_non_empty(context_payload, keys)
+        values[logical_name] = value
+        sources[logical_name] = source
+
+        if value is None:
+            missing.append(logical_name)
+        else:
+            available.append(logical_name)
+
+    return {
+        "values": values,
+        "sources": sources,
+        "available_fields": available,
+        "missing_fields": missing,
+    }
+
+
+def _p33_summarize_candidate_courses(selected_meeting):
+    if not isinstance(selected_meeting, dict):
+        return []
+
+    out = []
+    for course in selected_meeting.get("courses", []) or []:
+        if not isinstance(course, dict):
+            continue
+
+        out.append({
+            "reunion": selected_meeting.get("reunion", "ND"),
+            "hippodrome": selected_meeting.get("hippodrome", "ND"),
+            "course_no": course.get("course_no", "ND"),
+            "course_no_int": course.get("course_no_int", "ND"),
+            "scheduled_time": course.get("scheduled_time", "ND"),
+            "course_status": course.get("course_status", "ND"),
+            "course_status_code": course.get("course_status_code", "ND"),
+            "official_source_kind": course.get("official_source_kind", "ND"),
+        })
+
+    return out
+
+
+def _p33_course_level_audit(context_payload, selected_meeting):
+    inputs = _p33_extract_course_level_inputs(context_payload)
+    candidate_courses = _p33_summarize_candidate_courses(selected_meeting)
+
+    selected_course = None
+    course_match_status = "COURSE_NOT_MATCHED"
+    course_level_input_status = "COURSE_LEVEL_INPUTS_ABSENT"
+    course_match_blocker = "COURSE_NUMBER_AND_TIME_ABSENT_IN_CONTEXT"
+    reason_codes = []
+
+    course_no = inputs["values"].get("course_no")
+    scheduled_time = inputs["values"].get("scheduled_time")
+
+    if not isinstance(selected_meeting, dict) or not selected_meeting:
+        course_level_input_status = "NO_SELECTED_MEETING"
+        course_match_blocker = "NO_SELECTED_MEETING"
+        reason_codes.append("NO_SELECTED_MEETING")
+    elif not candidate_courses:
+        course_level_input_status = "NO_CANDIDATE_COURSES"
+        course_match_blocker = "NO_CANDIDATE_COURSES_IN_SELECTED_MEETING"
+        reason_codes.append("NO_CANDIDATE_COURSES_IN_SELECTED_MEETING")
+    elif course_no:
+        normalized_no = str(course_no).strip().upper()
+        if not normalized_no.startswith("C"):
+            normalized_no = f"C{normalized_no}"
+
+        matches = [
+            c for c in candidate_courses
+            if str(c.get("course_no", "")).strip().upper() == normalized_no
+        ]
+
+        if len(matches) == 1:
+            selected_course = matches[0]
+            course_match_status = "MATCH_OK_COURSE_LEVEL_PREVIEW"
+            course_level_input_status = "COURSE_LEVEL_INPUTS_PRESENT"
+            course_match_blocker = "ND"
+            reason_codes.append("COURSE_NO_MATCH_PREVIEW")
+        elif len(matches) > 1:
+            course_level_input_status = "COURSE_LEVEL_INPUTS_PRESENT"
+            course_match_blocker = "COURSE_NO_AMBIGUOUS"
+            reason_codes.append("COURSE_NO_AMBIGUOUS")
+        else:
+            course_level_input_status = "COURSE_LEVEL_INPUTS_PRESENT"
+            course_match_blocker = "COURSE_NO_NOT_FOUND_IN_LETROT_MEETING"
+            reason_codes.append("COURSE_NO_NOT_FOUND_IN_LETROT_MEETING")
+    elif scheduled_time:
+        matches = [
+            c for c in candidate_courses
+            if str(c.get("scheduled_time", "")).strip() == str(scheduled_time).strip()
+        ]
+
+        if len(matches) == 1:
+            selected_course = matches[0]
+            course_match_status = "MATCH_OK_COURSE_LEVEL_PREVIEW"
+            course_level_input_status = "COURSE_LEVEL_INPUTS_PRESENT"
+            course_match_blocker = "ND"
+            reason_codes.append("SCHEDULED_TIME_MATCH_PREVIEW")
+        elif len(matches) > 1:
+            course_level_input_status = "COURSE_LEVEL_INPUTS_PRESENT"
+            course_match_blocker = "SCHEDULED_TIME_AMBIGUOUS"
+            reason_codes.append("SCHEDULED_TIME_AMBIGUOUS")
+        else:
+            course_level_input_status = "COURSE_LEVEL_INPUTS_PRESENT"
+            course_match_blocker = "SCHEDULED_TIME_NOT_FOUND_IN_LETROT_MEETING"
+            reason_codes.append("SCHEDULED_TIME_NOT_FOUND_IN_LETROT_MEETING")
+    else:
+        reason_codes.append("COURSE_NUMBER_AND_TIME_ABSENT_IN_CONTEXT")
+
+    return {
+        "course_level_audit_version": "course_level_audit_preview_v0_9_31b2_3",
+        "course_level_input_status": course_level_input_status,
+        "course_level_available_fields": inputs.get("available_fields", []),
+        "course_level_missing_fields": inputs.get("missing_fields", []),
+        "course_level_input_values": inputs.get("values", {}),
+        "course_level_input_sources": inputs.get("sources", {}),
+        "course_match_status": course_match_status,
+        "course_match_blocker": course_match_blocker,
+        "course_match_reason_codes": reason_codes,
+        "candidate_courses_count": len(candidate_courses),
+        "candidate_courses": candidate_courses,
+        "selected_course": selected_course,
+    }
+
 
 
 def _p33_match_zeturf_context_to_letrot_index(context_payload, letrot_payload):
@@ -13343,13 +13531,28 @@ def _p33_match_zeturf_context_to_letrot_index(context_payload, letrot_payload):
         selected = None
         reason_codes = ["NO_HIPPODROME_MATCH_IN_LETROT_INDEX"]
 
-    # Important : preview seulement. Pas de course-level join => join strict non.
+    course_level_audit = _p33_course_level_audit(
+        context_payload if isinstance(context_payload, dict) else {},
+        selected,
+    )
+
+    # Si un futur contexte fournit course_no ou scheduled_time, la route pourra signaler
+    # un match course-level en preview. Mais cela n'ouvre toujours pas le strict.
+    if (
+        meeting_match_status == "MATCH_OK"
+        and course_level_audit.get("course_match_status") == "MATCH_OK_COURSE_LEVEL_PREVIEW"
+    ):
+        course_match_status = "MATCH_OK_COURSE_LEVEL_PREVIEW"
+        reason_codes = list(reason_codes) + course_level_audit.get("course_match_reason_codes", [])
+
+    # Important : preview seulement. M?me un match course-level preview ne vaut pas
+    # contr?le NP officiel d?taill?. Join strict non.
     official_join_ok_oui_non = "non"
 
     return {
         "ok": True,
         "phase": "letrot_course_match_preview",
-        "preview_version": "letrot_course_match_preview_v0_9_31b2_2_1",
+        "preview_version": "letrot_course_match_preview_v0_9_31b2_3",
         "checked_at_utc": checked_at,
         "source_context_phase": context_payload.get("phase", "ND") if isinstance(context_payload, dict) else "ND",
         "source_letrot_phase": letrot_payload.get("phase", "ND") if isinstance(letrot_payload, dict) else "ND",
@@ -13366,6 +13569,17 @@ def _p33_match_zeturf_context_to_letrot_index(context_payload, letrot_payload):
         "reason_codes": reason_codes,
         "candidate_count": len(candidates),
         "selected_meeting": selected,
+        "course_level_audit_version": course_level_audit.get("course_level_audit_version"),
+        "course_level_input_status": course_level_audit.get("course_level_input_status"),
+        "course_level_available_fields": course_level_audit.get("course_level_available_fields"),
+        "course_level_missing_fields": course_level_audit.get("course_level_missing_fields"),
+        "course_level_input_values": course_level_audit.get("course_level_input_values"),
+        "course_level_input_sources": course_level_audit.get("course_level_input_sources"),
+        "course_match_blocker": course_level_audit.get("course_match_blocker"),
+        "course_match_reason_codes": course_level_audit.get("course_match_reason_codes"),
+        "candidate_courses_count": course_level_audit.get("candidate_courses_count"),
+        "candidate_courses": course_level_audit.get("candidate_courses"),
+        "selected_course": course_level_audit.get("selected_course"),
         "candidates": candidates[:10],
         "official_source": "LETROT",
         "official_source_kind": "LETROT_TODAY_INDEX_MATCH_PREVIEW",
