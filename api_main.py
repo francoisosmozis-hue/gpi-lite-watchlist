@@ -11381,6 +11381,53 @@ def action_latest_h5_auto_context():
         "Ne vaut pas validation stricte sans NP/statut officiels LeTrot ou France Galop."
     )
 
+
+    try:
+        official_fields = _p31_compute_official_np_statut_gate_for_context(payload)
+    except Exception as exc:
+        official_fields = {
+            "np_ok": "ND",
+            "statut_ok": "ND",
+            "np_source": f"OFFICIAL_STATUS_GATE_ERROR:{type(exc).__name__}:{exc}",
+            "statut_source": f"OFFICIAL_STATUS_GATE_ERROR:{type(exc).__name__}:{exc}",
+            "np_statut_source_level": "OFFICIAL_STATUS_GATE_ERROR",
+            "official_runner_status_available_oui_non": "non",
+            "official_join_ok_oui_non": "non",
+        }
+
+    payload["official_runner_status_fields"] = official_fields
+    payload["official_runner_status_available_oui_non"] = official_fields.get(
+        "official_runner_status_available_oui_non", "non"
+    )
+    payload["official_join_ok_oui_non"] = official_fields.get(
+        "official_join_ok_oui_non", "non"
+    )
+
+    if official_fields.get("np_statut_source_level") == "OFFICIAL_H5":
+        for key in [
+            "np_ok",
+            "statut_ok",
+            "np_source",
+            "statut_source",
+            "official_source",
+            "np_count",
+            "statut_missing_count",
+            "unknown_is_np_count",
+            "np_statut_rows_count",
+            "np_statut_source_level",
+            "np_statut_checked_at_utc",
+        ]:
+            if key in official_fields:
+                payload[key] = official_fields.get(key)
+        payload["official_runner_status_override_oui_non"] = "oui"
+    else:
+        payload["official_runner_status_override_oui_non"] = "non"
+
+    # Verrou doctrine : m?me avec NP/statut OK, cette fa?ade ne valide jamais un ticket strict.
+    payload["strict_allowed_oui_non"] = "non"
+    payload["strict_usable_oui_non"] = "non"
+    payload["ticket_strict"] = "NO_BET"
+
     return payload
 
 @app.get("/action/h5-decision-preview")
@@ -12151,6 +12198,317 @@ def _p11_compute_np_statut_gate_for_h5_brief(brief):
     rows, source = _p11_find_h5_np_statut_rows_for_course(course_uid)
     return _p11_compute_np_statut_gate_from_rows(rows, source)
 
+
+
+
+
+
+# >>> GPI V0_9_31B1 OFFICIAL RUNNER STATUS CONTRACT >>>
+def _p31_official_status_download_latest():
+    """
+    Lecture seule.
+    Tente de r?cup?rer le contrat officiel simul? depuis GCS si disponible.
+    Ne cr?e jamais de ticket strict.
+    """
+    from pathlib import Path
+
+    blob = "gpi-lite/outputs/official_runner_status_latest.csv"
+    local_path = Path("data/output/official_runner_status_latest.csv")
+
+    result = {
+        "ok": False,
+        "reason": "DOWNLOAD_NOT_ATTEMPTED",
+        "blob": blob,
+        "local_path": str(local_path),
+        "gcs_uri": f"gs://gpi-lite-watchlist-data/{blob}",
+    }
+
+    try:
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        downloader = globals().get("_h5auto_download_file_from_gcs")
+        if callable(downloader):
+            result = downloader(blob, local_path)
+        else:
+            result = {
+                "ok": False,
+                "reason": "H5AUTO_DOWNLOADER_NOT_AVAILABLE",
+                "blob": blob,
+                "local_path": str(local_path),
+                "gcs_uri": f"gs://gpi-lite-watchlist-data/{blob}",
+            }
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "reason": f"DOWNLOAD_ERROR:{type(exc).__name__}:{exc}",
+            "blob": blob,
+            "local_path": str(local_path),
+            "gcs_uri": f"gs://gpi-lite-watchlist-data/{blob}",
+        }
+
+    return result
+
+
+def _p31_find_official_np_statut_rows_for_course(course_uid):
+    """
+    Contrat local officiel/simul? V0_9_31B1.
+
+    Source attendue :
+    data/output/official_runner_status_latest.csv
+
+    Colonnes minimales :
+    course_uid, numero, cheval, statut, is_np,
+    official_source, statut_source, np_statut_confidence, checked_at_utc
+    """
+    from pathlib import Path
+    import pandas as pd
+
+    wanted = _p11_norm_text(course_uid)
+    if not wanted or wanted == "nd":
+        return None, "COURSE_UID_ND", {
+            "download_official_status": {"ok": False, "reason": "COURSE_UID_ND"},
+        }
+
+    download_status = _p31_official_status_download_latest()
+
+    candidates = [
+        Path("data/output/official_runner_status_latest.csv"),
+        Path("data/output/official_runner_status.csv"),
+        Path("data/input/official_runner_status_latest.csv"),
+    ]
+
+    required = [
+        "course_uid",
+        "numero",
+        "cheval",
+        "statut",
+        "is_np",
+        "official_source",
+        "statut_source",
+        "np_statut_confidence",
+        "checked_at_utc",
+    ]
+
+    inspected = []
+
+    for csv_path in candidates:
+        if not csv_path.exists():
+            inspected.append({
+                "path": str(csv_path),
+                "exists": False,
+            })
+            continue
+
+        try:
+            df = pd.read_csv(csv_path)
+        except Exception as exc:
+            inspected.append({
+                "path": str(csv_path),
+                "exists": True,
+                "read_ok": False,
+                "reason": f"CSV_READ_ERROR:{type(exc).__name__}:{exc}",
+            })
+            continue
+
+        cols = {str(col).strip().lower(): col for col in df.columns}
+        missing = [col for col in required if col not in cols]
+
+        inspected.append({
+            "path": str(csv_path),
+            "exists": True,
+            "read_ok": True,
+            "rows": int(len(df)),
+            "missing_columns": missing,
+        })
+
+        if missing:
+            continue
+
+        cu_col = cols["course_uid"]
+        rows = df[df[cu_col].astype(str).map(_p11_norm_text) == wanted].copy()
+
+        if not rows.empty:
+            return rows, str(csv_path), {
+                "download_official_status": download_status,
+                "official_status_inspected_files": inspected,
+            }
+
+    return None, "OFFICIAL_SOURCE_ABSENT_FOR_COURSE", {
+        "download_official_status": download_status,
+        "official_status_inspected_files": inspected,
+    }
+
+
+def _p31_compute_official_np_statut_gate_from_rows(rows, source, diagnostics=None):
+    import pandas as pd
+    from datetime import datetime, timezone
+
+    checked_at = datetime.now(timezone.utc).isoformat()
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+
+    if rows is None or getattr(rows, "empty", True):
+        return {
+            "np_ok": "ND",
+            "statut_ok": "ND",
+            "np_source": source or "OFFICIAL_SOURCE_ABSENT_FOR_COURSE",
+            "statut_source": source or "OFFICIAL_SOURCE_ABSENT_FOR_COURSE",
+            "official_source": "ND",
+            "np_count": "ND",
+            "statut_missing_count": "ND",
+            "unknown_is_np_count": "ND",
+            "np_statut_rows_count": 0,
+            "np_statut_source_level": "OFFICIAL_SOURCE_ABSENT",
+            "np_statut_checked_at_utc": checked_at,
+            "official_join_ok_oui_non": "non",
+            "official_runner_status_available_oui_non": "non",
+            **diagnostics,
+        }
+
+    columns = {str(col).strip().lower(): col for col in rows.columns}
+    required_columns = [
+        "course_uid",
+        "numero",
+        "cheval",
+        "statut",
+        "is_np",
+        "official_source",
+        "statut_source",
+        "np_statut_confidence",
+        "checked_at_utc",
+    ]
+    missing_columns = [col for col in required_columns if col not in columns]
+
+    if missing_columns:
+        return {
+            "np_ok": "ND",
+            "statut_ok": "ND",
+            "np_source": "OFFICIAL_STATUS_FIELDS_MISSING",
+            "statut_source": "OFFICIAL_STATUS_FIELDS_MISSING",
+            "official_source": "ND",
+            "missing_np_statut_columns": missing_columns,
+            "np_count": "ND",
+            "statut_missing_count": "ND",
+            "unknown_is_np_count": "ND",
+            "np_statut_rows_count": int(len(rows)),
+            "np_statut_source_level": "OFFICIAL_STATUS_FIELDS_MISSING",
+            "np_statut_checked_at_utc": checked_at,
+            "official_join_ok_oui_non": "non",
+            "official_runner_status_available_oui_non": "non",
+            **diagnostics,
+        }
+
+    statut_col = columns["statut"]
+    is_np_col = columns["is_np"]
+    official_source_col = columns["official_source"]
+    confidence_col = columns["np_statut_confidence"]
+
+    statut_raw = rows[statut_col].astype(str).str.strip()
+    statut = statut_raw.str.upper()
+
+    is_np_raw = rows[is_np_col].astype(str).str.strip()
+    is_np_upper = is_np_raw.str.upper()
+    is_np_num = pd.to_numeric(rows[is_np_col], errors="coerce")
+
+    statut_missing_count = int(statut.isin(["", "NAN", "NONE", "ND"]).sum())
+    unknown_is_np_count = int(is_np_upper.isin(["", "NAN", "NONE", "ND"]).sum())
+
+    np_by_flag_num = int((is_np_num.fillna(0) == 1).sum())
+    np_by_flag_txt = int(is_np_upper.isin(["1", "OUI", "YES", "TRUE", "VRAI"]).sum())
+    np_by_statut = int(statut.isin(["NP", "NON_PARTANT", "NON-PARTANT", "NON PARTANT"]).sum())
+    np_count = max(np_by_flag_num, np_by_flag_txt, np_by_statut)
+
+    valid_status = statut.isin([
+        "PARTANT",
+        "PARTANTS",
+        "OK",
+        "NP",
+        "NON_PARTANT",
+        "NON-PARTANT",
+        "NON PARTANT",
+    ])
+
+    official_sources = sorted(
+        set(
+            str(v).strip()
+            for v in rows[official_source_col].dropna().tolist()
+            if str(v).strip()
+        )
+    )
+
+    confidence_values = sorted(
+        set(
+            str(v).strip()
+            for v in rows[confidence_col].dropna().tolist()
+            if str(v).strip()
+        )
+    )
+
+    if statut_missing_count > 0 or unknown_is_np_count > 0 or not bool(valid_status.all()):
+        statut_ok = "KO"
+        source_level = "OFFICIAL_STATUS_INCOMPLETE_OR_INVALID"
+    else:
+        statut_ok = "OK"
+        source_level = "OFFICIAL_H5"
+
+    np_ok = "KO" if np_count > 0 else ("OK" if statut_ok == "OK" else "ND")
+
+    return {
+        "np_ok": np_ok,
+        "statut_ok": statut_ok,
+        "np_source": source,
+        "statut_source": source,
+        "official_source": "|".join(official_sources) if official_sources else "ND",
+        "official_confidence_values": "|".join(confidence_values) if confidence_values else "ND",
+        "np_count": np_count,
+        "statut_missing_count": statut_missing_count,
+        "unknown_is_np_count": unknown_is_np_count,
+        "np_statut_rows_count": int(len(rows)),
+        "np_statut_source_level": source_level,
+        "np_statut_checked_at_utc": checked_at,
+        "official_join_ok_oui_non": "oui" if source_level == "OFFICIAL_H5" else "non",
+        "official_runner_status_available_oui_non": "oui",
+        **diagnostics,
+    }
+
+
+def _p31_compute_official_np_statut_gate_for_context(context):
+    if not isinstance(context, dict):
+        context = {}
+
+    course_uid = context.get("course_uid", "ND")
+    rows, source, diagnostics = _p31_find_official_np_statut_rows_for_course(course_uid)
+    return _p31_compute_official_np_statut_gate_from_rows(rows, source, diagnostics)
+
+
+@app.get("/action/official-runner-status-preview")
+def action_official_runner_status_preview():
+    """
+    V0_9_31B1 preview lecture seule.
+    Ne scrape pas.
+    Ne modifie pas GCS.
+    Ne cr?e jamais de ticket strict.
+    """
+    source_payload = action_latest_h5_auto_context()
+    if not isinstance(source_payload, dict):
+        source_payload = {}
+
+    fields = _p31_compute_official_np_statut_gate_for_context(source_payload)
+
+    return {
+        "ok": True,
+        "phase": "official_runner_status_preview",
+        "preview_version": "official_runner_status_contract_v0_9_31b1",
+        "course_uid": source_payload.get("course_uid", "ND"),
+        "course_slug": source_payload.get("course_slug", "ND"),
+        "fields": fields,
+        "VERDICT": "NO_BET",
+        "Ticket_exact_ou_NO_BET": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "doctrine": "Preview NP/statut officiel simul?. Ne vaut pas ticket strict.",
+    }
+# <<< GPI V0_9_31B1 OFFICIAL RUNNER STATUS CONTRACT <<<
 
 
 # >>> GPI ACTION CONTINUATION STOP DASHBOARD V0_9_23 >>>
