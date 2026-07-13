@@ -11277,6 +11277,112 @@ def action_cloud_ready_shadow_audit():
         "doctrine": "Lecture seule. Aucun ticket strict cree.",
     }
 
+
+
+
+@app.get("/action/latest-h5-auto-context")
+def action_latest_h5_auto_context():
+    """
+    GPI V0_9_31A
+    Facade lecture seule du dernier contexte H5 auto.
+
+    Ne modifie pas GCS.
+    Ne cr?e jamais de ticket strict.
+    Ne remplace pas les statuts officiels LeTrot / France Galop.
+    """
+    from pathlib import Path
+    from datetime import datetime, timezone
+    import json
+
+    blob = "gpi-lite/outputs/latest_h5_auto_context.json"
+    local_path = Path("data/output/latest_h5_auto_context.json")
+
+    download_latest = {
+        "ok": False,
+        "reason": "DOWNLOAD_NOT_ATTEMPTED",
+        "blob": blob,
+        "local_path": str(local_path),
+        "gcs_uri": f"gs://gpi-lite-watchlist-data/{blob}",
+    }
+
+    try:
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        downloader = globals().get("_h5auto_download_file_from_gcs")
+        if callable(downloader):
+            download_latest = downloader(blob, local_path)
+        else:
+            download_latest = {
+                "ok": False,
+                "reason": "H5AUTO_DOWNLOADER_NOT_AVAILABLE",
+                "blob": blob,
+                "local_path": str(local_path),
+                "gcs_uri": f"gs://gpi-lite-watchlist-data/{blob}",
+            }
+    except Exception as exc:
+        download_latest = {
+            "ok": False,
+            "reason": f"DOWNLOAD_ERROR:{type(exc).__name__}:{exc}",
+            "blob": blob,
+            "local_path": str(local_path),
+            "gcs_uri": f"gs://gpi-lite-watchlist-data/{blob}",
+        }
+
+    payload = None
+
+    try:
+        if local_path.exists():
+            payload = json.loads(local_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {
+            "ok": False,
+            "phase": "latest_h5_auto_context",
+            "reason": f"LOCAL_JSON_READ_ERROR:{type(exc).__name__}:{exc}",
+            "download_latest": download_latest,
+            "source": "local_after_download",
+            "gcs_uri": f"gs://gpi-lite-watchlist-data/{blob}",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+            "facade_version": "action_latest_h5_auto_context_v0_9_31a",
+            "action_route": "/action/latest-h5-auto-context",
+        }
+
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "phase": "latest_h5_auto_context",
+            "reason": "LATEST_H5_AUTO_CONTEXT_NOT_FOUND_OR_INVALID",
+            "download_latest": download_latest,
+            "source": "cloud_storage",
+            "gcs_uri": f"gs://gpi-lite-watchlist-data/{blob}",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+            "facade_version": "action_latest_h5_auto_context_v0_9_31a",
+            "action_route": "/action/latest-h5-auto-context",
+        }
+
+    # Doctrine de s?curit? : cette facade ne peut jamais ouvrir le strict.
+    payload["strict_allowed_oui_non"] = "non"
+    payload["strict_usable_oui_non"] = "non"
+    payload["ticket_strict"] = "NO_BET"
+
+    payload.setdefault("ok", True)
+    payload["phase"] = "latest_h5_auto_context"
+    payload["source"] = "cloud_storage"
+    payload["gcs_uri"] = f"gs://gpi-lite-watchlist-data/{blob}"
+    payload["download_latest"] = download_latest
+    payload["facade_version"] = "action_latest_h5_auto_context_v0_9_31a"
+    payload["action_route"] = "/action/latest-h5-auto-context"
+    payload["generated_at_action_utc"] = datetime.now(timezone.utc).isoformat()
+    payload["doctrine"] = (
+        "Lecture seule du contexte H5 auto. "
+        "Ne vaut pas validation stricte sans NP/statut officiels LeTrot ou France Galop."
+    )
+
+    return payload
+
 @app.get("/action/h5-decision-preview")
 def action_h5_decision_preview():
     """P9.1 preview route. Security-first H-5 decision engine."""
