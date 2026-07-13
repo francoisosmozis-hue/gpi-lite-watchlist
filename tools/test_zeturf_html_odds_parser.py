@@ -62,6 +62,12 @@ def main() -> None:
         assert rows[2].cote_sp_min == 3.0
         assert rows[2].cote_sp_max == 5.2
 
+        for row in rows:
+            assert row.statut == "ND"
+            assert row.is_np == "ND"
+            assert row.statut_source == "ZETURF_HTML_STATUS_NOT_FOUND"
+            assert row.np_statut_confidence == "ND"
+
         write_odds_csv(rows, csv_path)
         write_odds_json(rows, json_path)
 
@@ -70,6 +76,11 @@ def main() -> None:
 
     print("OK test_zeturf_html_odds_parser")
 
+
+
+
+def test_zeturf_html_odds_parser_pytest():
+    main()
 
 if __name__ == "__main__":
     main()

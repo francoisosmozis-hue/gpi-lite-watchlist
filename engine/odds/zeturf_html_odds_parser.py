@@ -11,7 +11,7 @@ import re
 from typing import Iterable, Any
 
 
-PARSER_VERSION = "odds_html_parser_v0_1"
+PARSER_VERSION = "odds_html_parser_v0_2_np_status_guard"
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,10 @@ class OddsRunnerRow:
     cote_sg: float | None
     cote_sp_min: float | None
     cote_sp_max: float | None
+    statut: str
+    is_np: str
+    statut_source: str
+    np_statut_confidence: str
     source_html_path: str
     parser_version: str
     confidence: str
@@ -196,6 +200,10 @@ def _parse_cotes_infos_rows(
                 cote_sg=cote_sg,
                 cote_sp_min=cote_sp_min,
                 cote_sp_max=cote_sp_max,
+                statut="ND",
+                is_np="ND",
+                statut_source="ZETURF_HTML_STATUS_NOT_FOUND",
+                np_statut_confidence="ND",
                 source_html_path=str(source_html_path),
                 parser_version=PARSER_VERSION,
                 confidence="COTESINFOS_JSON" if cheval != "ND" else "COTESINFOS_JSON_NAME_ND",
@@ -257,6 +265,10 @@ def _parse_line_to_row(
         cote_sg=cote_sg,
         cote_sp_min=cote_sp_min,
         cote_sp_max=cote_sp_max,
+        statut="ND",
+        is_np="ND",
+        statut_source="ZETURF_HTML_STATUS_NOT_FOUND",
+        np_statut_confidence="ND",
         source_html_path=str(source_html_path),
         parser_version=PARSER_VERSION,
         confidence="TEXT_PATTERN",
@@ -327,6 +339,10 @@ def write_odds_csv(rows: list[OddsRunnerRow], output_path: str | Path) -> Path:
         "cote_sg",
         "cote_sp_min",
         "cote_sp_max",
+        "statut",
+        "is_np",
+        "statut_source",
+        "np_statut_confidence",
         "source_html_path",
         "parser_version",
         "confidence",

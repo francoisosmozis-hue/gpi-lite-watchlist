@@ -3797,6 +3797,7 @@ def drive_run_h5_auto_brief():
                         "statut_source": np_statut_fields.get("statut_source", "ND"),
                         "np_count": np_statut_fields.get("np_count", "ND"),
                         "statut_missing_count": np_statut_fields.get("statut_missing_count", "ND"),
+                        "np_statut_rows_count": np_statut_fields.get("np_statut_rows_count", 0),
                         "np_statut_source_level": np_statut_fields.get("np_statut_source_level", "ND"),
                         "decision_before_race_oui_non": decision_before_race_oui_non_effective,
                         "backfill_technical_oui_non": backfill_technical_oui_non,
@@ -11674,10 +11675,22 @@ def action_h5_business_validation():
     if np_ok == "KO":
         hard_blocks.append("NP_DETECTED")
 
+    if np_ok == "ND":
+        hard_blocks.append("NP_STATUS_NOT_VALIDATED")
+
     if statut_ok == "KO":
         hard_blocks.append("STATUT_INVALID_OR_MISSING")
 
-    if source_level in {"LEGACY_BRIEF_NO_P11_FIELDS", "H5_SOURCE_ABSENT", "ND"}:
+    if statut_ok == "ND":
+        hard_blocks.append("STATUT_NOT_VALIDATED")
+
+    if source_level in {
+        "LEGACY_BRIEF_NO_P11_FIELDS",
+        "H5_SOURCE_ABSENT",
+        "H5_STATUS_FIELDS_MISSING",
+        "ZETURF_H5_ODDS_STATUS_FIELDS_PRESENT_UNVERIFIED",
+        "ND",
+    }:
         hard_blocks.append("NP_STATUT_NOT_VALIDATED_FROM_TRUE_H5")
 
     if source_payload.get("strict_allowed_oui_non") != "non":
@@ -11815,11 +11828,56 @@ def _p11_compute_np_statut_gate_from_rows(rows, source):
             "np_statut_checked_at_utc": checked_at,
         }
 
-    statut = rows["statut"].astype(str).str.strip().str.upper()
-    is_np = pd.to_numeric(rows["is_np"], errors="coerce")
+    columns = {str(col).strip().lower(): col for col in rows.columns}
+    required_columns = ["statut", "is_np"]
+    missing_columns = [col for col in required_columns if col not in columns]
+
+    if missing_columns:
+        return {
+            "np_ok": "ND",
+            "statut_ok": "ND",
+            "np_source": "ZETURF_H5_ODDS_STATUS_FIELDS_MISSING",
+            "statut_source": "ZETURF_H5_ODDS_STATUS_FIELDS_MISSING",
+            "np_source_detail": source,
+            "statut_source_detail": source,
+            "missing_np_statut_columns": missing_columns,
+            "np_count": "ND",
+            "statut_missing_count": "ND",
+            "np_statut_rows_count": int(len(rows)),
+            "np_statut_source_level": "H5_STATUS_FIELDS_MISSING",
+            "np_statut_checked_at_utc": checked_at,
+        }
+
+    statut_col = columns["statut"]
+    is_np_col = columns["is_np"]
+
+    statut_raw = rows[statut_col].astype(str).str.strip()
+    statut = statut_raw.str.upper()
+    is_np_raw = rows[is_np_col].astype(str).str.strip()
+    is_np_upper = is_np_raw.str.upper()
+    is_np = pd.to_numeric(rows[is_np_col], errors="coerce")
 
     statut_missing_count = int(statut.isin(["", "NAN", "NONE", "ND"]).sum())
     unknown_is_np_count = int(is_np.isna().sum())
+
+    all_statut_nd = bool(statut.isin(["", "NAN", "NONE", "ND"]).all())
+    all_is_np_nd = bool(is_np_upper.isin(["", "NAN", "NONE", "ND"]).all())
+
+    if all_statut_nd and all_is_np_nd:
+        return {
+            "np_ok": "ND",
+            "statut_ok": "ND",
+            "np_source": "ZETURF_H5_ODDS_STATUS_FIELDS_PRESENT_BUT_ND",
+            "statut_source": "ZETURF_H5_ODDS_STATUS_FIELDS_PRESENT_BUT_ND",
+            "np_source_detail": source,
+            "statut_source_detail": source,
+            "np_count": "ND",
+            "statut_missing_count": statut_missing_count,
+            "unknown_is_np_count": unknown_is_np_count,
+            "np_statut_rows_count": int(len(rows)),
+            "np_statut_source_level": "ZETURF_H5_ODDS_STATUS_FIELDS_PRESENT_UNVERIFIED",
+            "np_statut_checked_at_utc": checked_at,
+        }
 
     np_by_flag = int((is_np.fillna(0) == 1).sum())
     np_by_statut = int(statut.isin(["NP", "NON_PARTANT", "NON-PARTANT", "NON PARTANT"]).sum())
@@ -11840,8 +11898,9 @@ def _p11_compute_np_statut_gate_from_rows(rows, source):
         "statut_source": source,
         "np_count": np_count,
         "statut_missing_count": statut_missing_count,
+        "unknown_is_np_count": unknown_is_np_count,
         "np_statut_rows_count": int(len(rows)),
-        "np_statut_source_level": "H5_EXACT_COURSE_UID",
+        "np_statut_source_level": "ZETURF_H5_ODDS_STATUS_FIELDS_PRESENT",
         "np_statut_checked_at_utc": checked_at,
     }
 
