@@ -1,9 +1,106 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+# V0_9_31B2_4_2B_HTML_GCS_PERSISTENCE
+def _p342b_bucket_name() -> str:
+    import os
+
+    return (
+        os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+        or "gpi-lite-watchlist-data"
+    )
+
+
+def _p342b_safe_gcs_object_from_html(html_path: str) -> str:
+    """
+    Objet GCS stable pour les HTML ZEturf bruts.
+    On utilise uniquement le nom du fichier pour ?viter de d?pendre d'un chemin Windows.
+    """
+    p = Path(str(html_path))
+    return f"gpi-lite/raw/zeturf_snapshots/html/{p.name}"
+
+
+def _p342b_upload_html_source_to_gcs(html_path: str) -> dict:
+    """
+    Upload best-effort.
+    ?chec local = non bloquant pour conserver la compatibilit? du pipeline.
+    """
+    p = Path(str(html_path))
+
+    if not p.exists():
+        return {
+            "html_gcs_path": "ND",
+            "html_gcs_uri": "ND",
+            "html_gcs_upload_ok": "non",
+            "html_gcs_upload_error": "LOCAL_HTML_NOT_FOUND",
+        }
+
+    try:
+        from google.cloud import storage
+
+        bucket_name = _p342b_bucket_name()
+        object_name = _p342b_safe_gcs_object_from_html(str(p))
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+        blob.upload_from_filename(str(p), content_type="text/html")
+
+        return {
+            "html_gcs_path": object_name,
+            "html_gcs_uri": f"gs://{bucket_name}/{object_name}",
+            "html_gcs_upload_ok": "oui",
+            "html_gcs_upload_error": "ND",
+        }
+    except Exception as exc:
+        return {
+            "html_gcs_path": "ND",
+            "html_gcs_uri": "ND",
+            "html_gcs_upload_ok": "non",
+            "html_gcs_upload_error": f"{type(exc).__name__}:{exc}",
+        }
+
+
+def _p342b_apply_html_gcs_info(rows, html_info: dict):
+    """
+    OddsRow est frozen=True.
+    On utilise dataclasses.replace pour enrichir les lignes sans casser l'immuabilit?.
+    """
+    from dataclasses import replace
+
+    out = []
+    for row in rows:
+        try:
+            out.append(
+                replace(
+                    row,
+                    html_gcs_path=html_info.get("html_gcs_path", "ND"),
+                    html_gcs_uri=html_info.get("html_gcs_uri", "ND"),
+                    html_gcs_upload_ok=html_info.get("html_gcs_upload_ok", "non"),
+                    html_gcs_upload_error=html_info.get("html_gcs_upload_error", "ND"),
+                )
+            )
+        except Exception:
+            # Fallback compatible si row n'est pas une dataclass.
+            try:
+                setattr(row, "html_gcs_path", html_info.get("html_gcs_path", "ND"))
+                setattr(row, "html_gcs_uri", html_info.get("html_gcs_uri", "ND"))
+                setattr(row, "html_gcs_upload_ok", html_info.get("html_gcs_upload_ok", "non"))
+                setattr(row, "html_gcs_upload_error", html_info.get("html_gcs_upload_error", "ND"))
+            except Exception:
+                pass
+            out.append(row)
+
+    return out
+
+
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from engine.odds.zeturf_html_odds_parser import (
@@ -58,6 +155,9 @@ def parse_snapshot(
         course_uid=course_uid,
         snapshot_label=snapshot_label,
     )
+
+    html_gcs_info = _p342b_upload_html_source_to_gcs(html_path)
+    rows = _p342b_apply_html_gcs_info(rows, html_gcs_info)
 
     csv_path = write_odds_csv(rows, f"{prefix}_odds.csv")
     json_path = write_odds_json(rows, f"{prefix}_odds.json")

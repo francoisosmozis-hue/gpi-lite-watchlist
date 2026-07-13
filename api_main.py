@@ -13633,6 +13633,7 @@ def action_letrot_course_match_preview():
 
 
 # >>> GPI V0_9_31B2_4_1 ZETURF COURSE LEVEL SOURCE AUDIT >>>
+# V0_9_31B2_4_2B_HTML_GCS_READ_PRIORITY
 def _p34_bucket_name():
     import os
 
@@ -13851,7 +13852,14 @@ def _p34_extract_course_level_source_from_context(context_payload):
     column_audit = _p34_extract_course_level_columns(fieldnames)
 
     first_row = rows[0] if rows else {}
-    source_html_path = first_row.get("source_html_path") or context_payload.get("source_html_path") or "ND"
+    source_html_path = (
+        first_row.get("html_gcs_path")
+        or first_row.get("html_gcs_uri")
+        or first_row.get("source_html_path")
+        or context_payload.get("html_gcs_path")
+        or context_payload.get("source_html_path")
+        or "ND"
+    )
 
     html_read = {
         "ok": False,

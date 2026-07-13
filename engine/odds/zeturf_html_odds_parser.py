@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+# V0_9_31B2_4_2B_HTML_GCS_FIELDS
+from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -32,6 +33,10 @@ class OddsRunnerRow:
     confidence: str
     raw_fragment_hash: str
     extracted_at_utc: str
+    html_gcs_path: str = "ND"
+    html_gcs_uri: str = "ND"
+    html_gcs_upload_ok: str = "non"
+    html_gcs_upload_error: str = "ND"
 
 
 def _hash_text(value: str) -> str:
@@ -348,6 +353,10 @@ def write_odds_csv(rows: list[OddsRunnerRow], output_path: str | Path) -> Path:
         "confidence",
         "raw_fragment_hash",
         "extracted_at_utc",
+        "html_gcs_path",
+        "html_gcs_uri",
+        "html_gcs_upload_ok",
+        "html_gcs_upload_error",
     ]
 
     with output.open("w", encoding="utf-8", newline="") as handle:
