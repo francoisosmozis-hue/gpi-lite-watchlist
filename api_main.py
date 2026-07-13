@@ -3254,22 +3254,53 @@ def drive_run_h5_auto_capture():
             continue
 
         try:
+            html_blob = f"gpi-lite/raw/zeturf_snapshots/html/{slug}.html"
+            odds_csv_blob = f"gpi-lite/outputs/odds/{slug}_odds.csv"
+            odds_json_blob = f"gpi-lite/outputs/odds/{slug}_odds.json"
+
+            # V0_9_31B2_4_2C_CLOUD_CAPTURE_HTML_GCS
+            # Le HTML doit etre uploade avant write_odds_csv afin que le CSV contienne html_gcs_*.
+            upload_html = _h5auto_upload_file_to_gcs(html_path, html_blob)
+
             odds_rows = extract_odds_from_html(
                 html_path=html_path,
                 course_uid=course_uid,
                 snapshot_label=capture_label,
             )
 
+            try:
+                from dataclasses import replace as _p342c_replace
+
+                _html_upload_ok = "oui" if upload_html.get("ok") else "non"
+                _html_gcs_path = html_blob if upload_html.get("ok") else "ND"
+                _html_gcs_uri = upload_html.get("gcs_uri") if upload_html.get("ok") else "ND"
+                _html_upload_error = "ND" if upload_html.get("ok") else str(
+                    upload_html.get("error")
+                    or upload_html.get("reason")
+                    or "HTML_GCS_UPLOAD_FAILED"
+                )
+
+                odds_rows = [
+                    _p342c_replace(
+                        row,
+                        html_gcs_path=_html_gcs_path,
+                        html_gcs_uri=_html_gcs_uri,
+                        html_gcs_upload_ok=_html_upload_ok,
+                        html_gcs_upload_error=_html_upload_error,
+                    )
+                    for row in odds_rows
+                ]
+            except Exception as enrich_exc:
+                # Non bloquant : le strict reste ferme, mais on conserve l'erreur dans la capture.
+                html_gcs_enrich_error = f"{type(enrich_exc).__name__}:{enrich_exc}"
+            else:
+                html_gcs_enrich_error = "ND"
+
             write_odds_csv(odds_rows, odds_csv_path)
             write_odds_json(odds_rows, odds_json_path)
 
             odds_rows_total += len(odds_rows)
 
-            html_blob = f"gpi-lite/raw/zeturf_snapshots/html/{slug}.html"
-            odds_csv_blob = f"gpi-lite/outputs/odds/{slug}_odds.csv"
-            odds_json_blob = f"gpi-lite/outputs/odds/{slug}_odds.json"
-
-            upload_html = _h5auto_upload_file_to_gcs(html_path, html_blob)
             upload_odds_csv = _h5auto_upload_file_to_gcs(odds_csv_path, odds_csv_blob)
             upload_odds_json = _h5auto_upload_file_to_gcs(odds_json_path, odds_json_blob)
 
@@ -13634,6 +13665,7 @@ def action_letrot_course_match_preview():
 
 # >>> GPI V0_9_31B2_4_1 ZETURF COURSE LEVEL SOURCE AUDIT >>>
 # V0_9_31B2_4_2B_HTML_GCS_READ_PRIORITY
+# V0_9_31B2_4_2C_CLOUD_CAPTURE_HTML_GCS
 def _p34_bucket_name():
     import os
 
