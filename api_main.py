@@ -11403,13 +11403,22 @@ def action_latest_h5_auto_context():
         "official_join_ok_oui_non", "non"
     )
 
-    if official_fields.get("np_statut_source_level") == "OFFICIAL_H5":
+    if official_fields.get("np_statut_source_level") in {
+        "OFFICIAL_H5",
+        "OFFICIAL_H5_SIMULATED_CONTRACT",
+        "OFFICIAL_H5_LETROT",
+        "OFFICIAL_H5_FRANCE_GALOP",
+        "OFFICIAL_H5_MIXED_OFFICIAL_SOURCE",
+        "OFFICIAL_H5_SOURCE_UNCLASSIFIED",
+    }:
         for key in [
             "np_ok",
             "statut_ok",
             "np_source",
             "statut_source",
             "official_source",
+            "official_contract_type",
+            "official_source_kind",
             "np_count",
             "statut_missing_count",
             "unknown_is_np_count",
@@ -12204,6 +12213,7 @@ def _p11_compute_np_statut_gate_for_h5_brief(brief):
 
 
 # >>> GPI V0_9_31B1 OFFICIAL RUNNER STATUS CONTRACT >>>
+# V0_9_31B1_1_OFFICIAL_SOURCE_KIND
 def _p31_official_status_download_latest():
     """
     Lecture seule.
@@ -12442,12 +12452,47 @@ def _p31_compute_official_np_statut_gate_from_rows(rows, source, diagnostics=Non
         )
     )
 
+    official_sources_upper = [
+        str(v).strip().upper()
+        for v in official_sources
+        if str(v).strip()
+    ]
+
+    is_simulated_contract = any("SIMULATED_CONTRACT" in v for v in official_sources_upper)
+    is_letrot = any(("LETROT" in v or "LE_TROT" in v or "LE TROT" in v) for v in official_sources_upper)
+    is_france_galop = any(("FRANCE_GALOP" in v or "FRANCE GALOP" in v or "FRANCEGALOP" in v) for v in official_sources_upper)
+
+    if is_simulated_contract:
+        official_contract_type = "SIMULATED"
+        official_source_kind = "SIMULATED_CONTRACT"
+        ok_source_level = "OFFICIAL_H5_SIMULATED_CONTRACT"
+    elif is_letrot and not is_france_galop:
+        official_contract_type = "REAL_OFFICIAL"
+        official_source_kind = "LETROT"
+        ok_source_level = "OFFICIAL_H5_LETROT"
+    elif is_france_galop and not is_letrot:
+        official_contract_type = "REAL_OFFICIAL"
+        official_source_kind = "FRANCE_GALOP"
+        ok_source_level = "OFFICIAL_H5_FRANCE_GALOP"
+    elif is_letrot and is_france_galop:
+        official_contract_type = "REAL_OFFICIAL_MIXED"
+        official_source_kind = "LETROT|FRANCE_GALOP"
+        ok_source_level = "OFFICIAL_H5_MIXED_OFFICIAL_SOURCE"
+    elif official_sources_upper:
+        official_contract_type = "UNKNOWN"
+        official_source_kind = "UNKNOWN_OFFICIAL_CONTRACT"
+        ok_source_level = "OFFICIAL_H5_SOURCE_UNCLASSIFIED"
+    else:
+        official_contract_type = "ND"
+        official_source_kind = "ND"
+        ok_source_level = "OFFICIAL_SOURCE_ABSENT"
+
     if statut_missing_count > 0 or unknown_is_np_count > 0 or not bool(valid_status.all()):
         statut_ok = "KO"
         source_level = "OFFICIAL_STATUS_INCOMPLETE_OR_INVALID"
     else:
         statut_ok = "OK"
-        source_level = "OFFICIAL_H5"
+        source_level = ok_source_level
 
     np_ok = "KO" if np_count > 0 else ("OK" if statut_ok == "OK" else "ND")
 
@@ -12457,6 +12502,8 @@ def _p31_compute_official_np_statut_gate_from_rows(rows, source, diagnostics=Non
         "np_source": source,
         "statut_source": source,
         "official_source": "|".join(official_sources) if official_sources else "ND",
+        "official_contract_type": official_contract_type,
+        "official_source_kind": official_source_kind,
         "official_confidence_values": "|".join(confidence_values) if confidence_values else "ND",
         "np_count": np_count,
         "statut_missing_count": statut_missing_count,
