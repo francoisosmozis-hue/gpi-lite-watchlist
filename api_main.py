@@ -11332,7 +11332,7 @@ def action_latest_h5_auto_context():
 
     try:
         if local_path.exists():
-            payload = json.loads(local_path.read_text(encoding="utf-8"))
+            payload = json.loads(local_path.read_text(encoding="utf-8-sig"))
     except Exception as exc:
         return {
             "ok": False,
@@ -13145,6 +13145,274 @@ def action_letrot_today_index_preview():
 
     return parsed
 # <<< GPI V0_9_31B2_1 LETROT TODAY INDEX PREVIEW <<<
+
+
+
+
+
+# >>> GPI V0_9_31B2_2 LETROT COURSE MATCH PREVIEW >>>
+# V0_9_31B2_2_1_CONTEXT_CAPTURE_FIX
+# V0_9_31B2_2_2_H5_CONTEXT_BOM_FIX
+def _p33_norm_for_match(value):
+    import re
+    import unicodedata
+
+    s = "" if value is None else str(value)
+    s = _p32_norm_space(s)
+
+    # R?paration mojibake fr?quente.
+    try:
+        repaired = s.encode("latin-1", errors="ignore").decode("utf-8", errors="ignore")
+        if repaired:
+            s = repaired
+    except Exception:
+        pass
+
+    replacements = {
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "? ": "? ",
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "??": "?",
+        "?": "",
+        "?": "",
+        "_": " ",
+        "-": " ",
+        "'": " ",
+        "?": " ",
+    }
+
+    for old, new in replacements.items():
+        s = s.replace(old, new)
+
+    s = "".join(
+        c
+        for c in unicodedata.normalize("NFD", s)
+        if unicodedata.category(c) != "Mn"
+    )
+
+    s = s.upper()
+    s = re.sub(r"[^A-Z0-9 ]+", " ", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def _p33_extract_hippodrome_from_course_uid(course_uid):
+    """
+    Extrait prudemment l'hippodrome depuis un course_uid de type :
+    13_07_2026 - BEAUMONT DE LOMAGNE - Prix du Lions Club_ Pronostics & Cotes
+    """
+    import re
+
+    uid = _p32_norm_space(course_uid)
+
+    if not uid or uid == "ND":
+        return {
+            "hippodrome_raw": "ND",
+            "hippodrome_norm": "ND",
+            "date_raw": "ND",
+            "extract_status": "NO_COURSE_UID",
+        }
+
+    date_raw = "ND"
+    m_date = re.search(r"\b(\d{2})[_/-](\d{2})[_/-](\d{4})\b", uid)
+    if m_date:
+        date_raw = f"{m_date.group(3)}-{m_date.group(2)}-{m_date.group(1)}"
+
+    parts = [p.strip() for p in uid.split(" - ") if p.strip()]
+
+    if len(parts) >= 2:
+        hippodrome_raw = parts[1]
+    else:
+        # Fallback faible : retirer date en t?te et texte apr?s second tiret si possible.
+        tmp = re.sub(r"^\s*\d{2}[_/-]\d{2}[_/-]\d{4}\s*[-?]\s*", "", uid)
+        hippodrome_raw = tmp.split(" - ")[0].strip() if tmp else "ND"
+
+    hippodrome_norm = _p33_norm_for_match(hippodrome_raw)
+
+    return {
+        "hippodrome_raw": hippodrome_raw or "ND",
+        "hippodrome_norm": hippodrome_norm or "ND",
+        "date_raw": date_raw,
+        "extract_status": "OK" if hippodrome_norm and hippodrome_norm != "ND" else "HIPPO_ND",
+    }
+
+
+def _p33_match_zeturf_context_to_letrot_index(context_payload, letrot_payload):
+    """
+    Preview de jointure ZEturf ? LeTrot.
+    Lecture seule.
+    Ne cr?e aucun statut officiel exploitable strict.
+    """
+    checked_at = _p32_letrot_now_utc_iso()
+
+    course_uid = (
+        context_payload.get("course_uid")
+        or context_payload.get("latest_course_uid")
+        or context_payload.get("course")
+        or "ND"
+    )
+
+    z = _p33_extract_hippodrome_from_course_uid(course_uid)
+
+    meetings = letrot_payload.get("meetings", []) if isinstance(letrot_payload, dict) else []
+
+    candidates = []
+    for m in meetings:
+        h_raw = m.get("hippodrome", "ND")
+        h_norm = _p33_norm_for_match(h_raw)
+
+        score = 0.0
+        reasons = []
+
+        if z["hippodrome_norm"] != "ND" and h_norm == z["hippodrome_norm"]:
+            score = 1.0
+            reasons.append("HIPPO_EXACT")
+        elif z["hippodrome_norm"] != "ND" and (
+            z["hippodrome_norm"] in h_norm or h_norm in z["hippodrome_norm"]
+        ):
+            score = 0.82
+            reasons.append("HIPPO_CONTAINS")
+        else:
+            score = 0.0
+
+        if score > 0:
+            candidates.append({
+                "score": score,
+                "reason_codes": reasons,
+                "reunion": m.get("reunion", "ND"),
+                "reunion_no": m.get("reunion_no", "ND"),
+                "hippodrome": h_raw,
+                "hippodrome_norm": h_norm,
+                "meeting_time": m.get("meeting_time", "ND"),
+                "meeting_status": m.get("meeting_status", "ND"),
+                "meeting_status_code": m.get("meeting_status_code", "ND"),
+                "declared_courses_count": m.get("declared_courses_count", 0),
+                "parsed_courses_count": m.get("parsed_courses_count", 0),
+                "courses": m.get("courses", []),
+            })
+
+    candidates = sorted(candidates, key=lambda x: float(x.get("score", 0)), reverse=True)
+
+    if not isinstance(context_payload, dict) or not context_payload:
+        match_status = "SOURCE_UNAVAILABLE"
+        meeting_match_status = "NO_CONTEXT"
+        course_match_status = "NO_CONTEXT"
+        match_score = 0.0
+        selected = None
+        reason_codes = ["LATEST_H5_CONTEXT_UNAVAILABLE"]
+    elif not isinstance(letrot_payload, dict) or not letrot_payload.get("ok"):
+        match_status = "SOURCE_UNAVAILABLE"
+        meeting_match_status = "NO_LETROT_INDEX"
+        course_match_status = "NO_LETROT_INDEX"
+        match_score = 0.0
+        selected = None
+        reason_codes = ["LETROT_INDEX_UNAVAILABLE"]
+    elif z.get("extract_status") != "OK":
+        match_status = "NO_MATCH"
+        meeting_match_status = "HIPPO_EXTRACTION_FAILED"
+        course_match_status = "COURSE_NOT_MATCHED"
+        match_score = 0.0
+        selected = None
+        reason_codes = ["ZETURF_HIPPODROME_EXTRACTION_FAILED"]
+    elif len(candidates) == 1 and candidates[0].get("score", 0) >= 0.80:
+        match_status = "MATCH_OK_MEETING_ONLY"
+        meeting_match_status = "MATCH_OK"
+        course_match_status = "COURSE_NOT_MATCHED"
+        match_score = candidates[0]["score"]
+        selected = candidates[0]
+        reason_codes = candidates[0].get("reason_codes", []) + ["COURSE_NUMBER_ABSENT_IN_CONTEXT"]
+    elif len(candidates) > 1:
+        match_status = "MATCH_AMBIGUOUS"
+        meeting_match_status = "MATCH_AMBIGUOUS"
+        course_match_status = "COURSE_NOT_MATCHED"
+        match_score = candidates[0].get("score", 0) if candidates else 0.0
+        selected = candidates[0]
+        reason_codes = ["MULTIPLE_LETROT_MEETING_CANDIDATES"]
+    else:
+        match_status = "NO_MATCH"
+        meeting_match_status = "NO_MATCH"
+        course_match_status = "COURSE_NOT_MATCHED"
+        match_score = 0.0
+        selected = None
+        reason_codes = ["NO_HIPPODROME_MATCH_IN_LETROT_INDEX"]
+
+    # Important : preview seulement. Pas de course-level join => join strict non.
+    official_join_ok_oui_non = "non"
+
+    return {
+        "ok": True,
+        "phase": "letrot_course_match_preview",
+        "preview_version": "letrot_course_match_preview_v0_9_31b2_2_1",
+        "checked_at_utc": checked_at,
+        "source_context_phase": context_payload.get("phase", "ND") if isinstance(context_payload, dict) else "ND",
+        "source_letrot_phase": letrot_payload.get("phase", "ND") if isinstance(letrot_payload, dict) else "ND",
+        "source_letrot_preview_version": letrot_payload.get("preview_version", "ND") if isinstance(letrot_payload, dict) else "ND",
+        "course_uid": course_uid,
+        "zeturf_hippodrome_raw": z.get("hippodrome_raw", "ND"),
+        "zeturf_hippodrome_norm": z.get("hippodrome_norm", "ND"),
+        "zeturf_date": z.get("date_raw", "ND"),
+        "hippodrome_extract_status": z.get("extract_status", "ND"),
+        "match_status": match_status,
+        "meeting_match_status": meeting_match_status,
+        "course_match_status": course_match_status,
+        "match_score": match_score,
+        "reason_codes": reason_codes,
+        "candidate_count": len(candidates),
+        "selected_meeting": selected,
+        "candidates": candidates[:10],
+        "official_source": "LETROT",
+        "official_source_kind": "LETROT_TODAY_INDEX_MATCH_PREVIEW",
+        "official_join_ok_oui_non": official_join_ok_oui_non,
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "doctrine": (
+            "Preview de matching ZEturf ? LeTrot. "
+            "Jointure r?union possible, mais course pr?cise non valid?e ? ce stade. "
+            "Ne vaut pas contr?le NP officiel d?taill?. Strict ferm?."
+        ),
+    }
+
+
+@app.get("/action/letrot-course-match-preview")
+def action_letrot_course_match_preview():
+    """
+    GPI V0_9_31B2.2.1
+    Preview de matching latest_h5_auto_context ? LeTrot today index.
+
+    Lecture seule.
+    Pas d'?criture GCS.
+    Pas de NP officiel d?taill?.
+    Pas de ticket strict.
+    """
+    try:
+        context_payload = action_latest_h5_auto_context()
+    except Exception as exc:
+        context_payload = {
+            "ok": False,
+            "phase": "latest_h5_auto_context",
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    try:
+        letrot_payload = action_letrot_today_index_preview()
+    except Exception as exc:
+        letrot_payload = {
+            "ok": False,
+            "phase": "letrot_today_index_preview",
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    return _p33_match_zeturf_context_to_letrot_index(context_payload, letrot_payload)
+# <<< GPI V0_9_31B2_2 LETROT COURSE MATCH PREVIEW <<<
 
 
 # >>> GPI ACTION CONTINUATION STOP DASHBOARD V0_9_23 >>>
