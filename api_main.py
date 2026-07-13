@@ -12214,6 +12214,7 @@ def _p11_compute_np_statut_gate_for_h5_brief(brief):
 
 # >>> GPI V0_9_31B1 OFFICIAL RUNNER STATUS CONTRACT >>>
 # V0_9_31B1_1_OFFICIAL_SOURCE_KIND
+# V0_9_31B1_2_JOIN_OK_LEVELS
 def _p31_official_status_download_latest():
     """
     Lecture seule.
@@ -12496,6 +12497,15 @@ def _p31_compute_official_np_statut_gate_from_rows(rows, source, diagnostics=Non
 
     np_ok = "KO" if np_count > 0 else ("OK" if statut_ok == "OK" else "ND")
 
+    official_join_ok_levels = {
+        "OFFICIAL_H5",
+        "OFFICIAL_H5_SIMULATED_CONTRACT",
+        "OFFICIAL_H5_LETROT",
+        "OFFICIAL_H5_FRANCE_GALOP",
+        "OFFICIAL_H5_MIXED_OFFICIAL_SOURCE",
+        "OFFICIAL_H5_SOURCE_UNCLASSIFIED",
+    }
+
     return {
         "np_ok": np_ok,
         "statut_ok": statut_ok,
@@ -12511,7 +12521,7 @@ def _p31_compute_official_np_statut_gate_from_rows(rows, source, diagnostics=Non
         "np_statut_rows_count": int(len(rows)),
         "np_statut_source_level": source_level,
         "np_statut_checked_at_utc": checked_at,
-        "official_join_ok_oui_non": "oui" if source_level == "OFFICIAL_H5" else "non",
+        "official_join_ok_oui_non": "oui" if source_level in official_join_ok_levels else "non",
         "official_runner_status_available_oui_non": "oui",
         **diagnostics,
     }
