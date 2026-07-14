@@ -13801,6 +13801,131 @@ def _p35_extract_course_uid_parts(course_uid):
     return out
 
 
+
+# V0_9_31B2_5_3_ZETURF_SCOPED_SCHEDULED_TIME_EXTRACTOR
+def _p353_extract_scoped_zeturf_scheduled_time(html_text, source_html_path="", reunion_no="ND", course_no="ND", race_name="ND"):
+    import re
+
+    html_text = str(html_text or "")
+    source_html_path = str(source_html_path or "")
+    search_space = html_text + "\n" + source_html_path
+
+    out = {
+        "extractor_version": "zeturf_scoped_scheduled_time_extractor_v0_9_31b2_5_3",
+        "status": "ND",
+        "scheduled_time": "ND",
+        "reunion_no": str(reunion_no or "ND"),
+        "course_no": str(course_no or "ND"),
+        "source": "ND",
+        "reason_codes": [],
+        "candidate_times": [],
+        "rejected_global_time": "ND",
+    }
+
+    r = _p35_to_int_or_none(reunion_no)
+    c = _p35_to_int_or_none(course_no)
+
+    if not html_text:
+        out["reason_codes"].append("HTML_ABSENT")
+        return out
+
+    if r is None or c is None:
+        out["reason_codes"].append("RC_ABSENT_FOR_SCOPED_TIME")
+        return out
+
+    time_regexes = [
+        r'"heureDepart"\s*:\s*"(?P<h>\d{1,2})[:h](?P<m>\d{2})"',
+        r'"heure"\s*:\s*"(?P<h>\d{1,2})[:h](?P<m>\d{2})"',
+        r'"dateDepart"[^"]*"\s*:\s*"[^"]*T(?P<h>\d{1,2}):(?P<m>\d{2})',
+        r"\b(?P<h>\d{1,2})h(?P<m>\d{2})\b",
+        r"\b(?P<h>\d{1,2}):(?P<m>\d{2})\b",
+    ]
+
+    def norm_time(match):
+        return f"{int(match.group('h')):02d}:{int(match.group('m')):02d}"
+
+    def add_candidate(time_value, source, reason, distance="ND", window_sample=""):
+        if not time_value:
+            return
+        out["candidate_times"].append({
+            "time": time_value,
+            "source": source,
+            "reason": reason,
+            "distance": distance,
+            "sample": _p35_clean_text(window_sample)[:220],
+        })
+
+    # 1) Patterns forts : numReunion + numCourse dans le meme bloc que l'heure.
+    strong_patterns = [
+        rf'"numReunion"\s*:\s*"?{r}"?.{{0,500}}?"numCourse"\s*:\s*"?{c}"?.{{0,700}}?(?P<time>"heureDepart"\s*:\s*"\d{{1,2}}[:h]\d{{2}}"|"heure"\s*:\s*"\d{{1,2}}[:h]\d{{2}}"|"dateDepart"[^"]*"\s*:\s*"[^"]*T\d{{1,2}}:\d{{2}})',
+        rf'"numCourse"\s*:\s*"?{c}"?.{{0,500}}?"numReunion"\s*:\s*"?{r}"?.{{0,700}}?(?P<time>"heureDepart"\s*:\s*"\d{{1,2}}[:h]\d{{2}}"|"heure"\s*:\s*"\d{{1,2}}[:h]\d{{2}}"|"dateDepart"[^"]*"\s*:\s*"[^"]*T\d{{1,2}}:\d{{2}})',
+    ]
+
+    for pat in strong_patterns:
+        for m in re.finditer(pat, search_space, flags=re.I | re.S):
+            chunk = m.group(0)
+            for treg in time_regexes[:3]:
+                tm = re.search(treg, chunk, flags=re.I | re.S)
+                if tm:
+                    add_candidate(norm_time(tm), "HTML_JSON_RC_STRONG_SCOPE", "RC_AND_TIME_IN_SAME_JSON_BLOCK", 0, chunk)
+                    break
+
+    # 2) Fenetres autour de R2C5 / R 2 C 5 / /R2C5.
+    rc_patterns = [
+        rf"R\s*{r}\s*C\s*{c}\b",
+        rf"/R{r}C{c}(?:[-_/]|[A-Za-z0-9])",
+        rf'"reunion"\s*:\s*"?R?{r}"?.{{0,120}}?"course"\s*:\s*"?C?{c}"?',
+    ]
+
+    for rc_pat in rc_patterns:
+        for rc_match in re.finditer(rc_pat, search_space, flags=re.I | re.S):
+            center = rc_match.start()
+            start = max(0, center - 450)
+            end = min(len(search_space), center + 450)
+            window = search_space[start:end]
+
+            for treg in time_regexes:
+                for tm in re.finditer(treg, window, flags=re.I | re.S):
+                    distance = abs((start + tm.start()) - center)
+                    # Distance prudente : si trop loin, on ne valide pas l'heure.
+                    if distance <= 280:
+                        add_candidate(norm_time(tm), "HTML_RC_NEARBY_WINDOW", "TIME_NEAR_CURRENT_RC", distance, window)
+
+    # 3) Ne plus accepter une heure globale non scopee.
+    global_first_time = None
+    for treg in time_regexes:
+        tm = re.search(treg, search_space, flags=re.I | re.S)
+        if tm:
+            global_first_time = norm_time(tm)
+            break
+
+    if global_first_time:
+        out["rejected_global_time"] = global_first_time
+
+    # 4) Decision : seulement les candidats scopes sont acceptables.
+    if out["candidate_times"]:
+        # Choix prudent : candidat le plus proche de la zone RC.
+        sorted_candidates = sorted(
+            out["candidate_times"],
+            key=lambda x: 999999 if x.get("distance") == "ND" else int(x.get("distance") or 999999)
+        )
+        chosen = sorted_candidates[0]
+        out["scheduled_time"] = chosen.get("time", "ND")
+        out["status"] = "OK_SCOPED"
+        out["source"] = chosen.get("source", "ND")
+        out["reason_codes"].append(chosen.get("reason", "SCOPED_TIME_FOUND"))
+        return out
+
+    if global_first_time:
+        out["status"] = "REJECTED_UNSCOPED_GLOBAL_TIME"
+        out["reason_codes"].append("ZETURF_TIME_GLOBAL_UNSCOPED_REJECTED")
+        return out
+
+    out["status"] = "ND"
+    out["reason_codes"].append("ZETURF_SCOPED_TIME_NOT_FOUND")
+    return out
+
+
 def _p35_extract_zeturf_course_level_from_html(html_text, source_html_path="", course_uid=""):
     import re
 
@@ -13849,19 +13974,22 @@ def _p35_extract_zeturf_course_level_from_html(html_text, source_html_path="", c
             result["sources"].append("HTML_RC_PATTERN")
             break
 
-    time_patterns = [
-        r'"heureDepart"\s*:\s*"(?P<h>\d{1,2})[:h](?P<m>\d{2})"',
-        r'"heure"\s*:\s*"(?P<h>\d{1,2})[:h](?P<m>\d{2})"',
-        r'"dateDepart"[^"]*"\s*:\s*"[^"]*T(?P<h>\d{1,2}):(?P<m>\d{2})',
-        r"\b(?P<h>\d{1,2})h(?P<m>\d{2})\b",
-    ]
+    scoped_time = _p353_extract_scoped_zeturf_scheduled_time(
+        html_text=html_text,
+        source_html_path=source_html_path,
+        reunion_no=result.get("reunion_no", "ND"),
+        course_no=result.get("course_no", "ND"),
+        race_name=result.get("race_name", "ND"),
+    )
 
-    for pat in time_patterns:
-        m = re.search(pat, search_space, flags=re.I | re.S)
-        if m:
-            result["scheduled_time"] = f"{int(m.group('h')):02d}:{int(m.group('m')):02d}"
-            result["sources"].append("HTML_TIME_PATTERN")
-            break
+    result["scheduled_time_extract"] = scoped_time
+
+    if scoped_time.get("status") == "OK_SCOPED" and scoped_time.get("scheduled_time") != "ND":
+        result["scheduled_time"] = scoped_time.get("scheduled_time", "ND")
+        result["sources"].append(scoped_time.get("source", "HTML_TIME_SCOPED"))
+    else:
+        result["scheduled_time"] = "ND"
+        result["reason_codes"].extend(scoped_time.get("reason_codes", []))
 
     title_norm = _p35_norm_for_match(title)
 
