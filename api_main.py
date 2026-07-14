@@ -16472,6 +16472,160 @@ def _p382_extract_runners_from_html_table(text):
 
 
 # V0_9_31B2_8_3_FIX2_ADD_DETAIL_URL_DISCOVERY_ROUTE
+
+# V0_9_31B2_8_4_LETROT_RAW_HTML_AUDIT_CONTRACT
+@app.get("/action/letrot-raw-html-audit-preview", dependencies=[Depends(require_api_key)])
+def action_letrot_raw_html_audit_preview():
+    """
+    GPI V0_9_31B2.8.4
+    Audit lecture seule du HTML brut LeTrot disponible c?t? backend.
+
+    Ne scrape pas les partants.
+    Ne construit pas d?URL artificielle.
+    N??crit aucun fichier officiel.
+    Strict toujours ferm?.
+    """
+    from datetime import datetime, timezone
+    import re
+
+    checked_at_utc = datetime.now(timezone.utc).isoformat()
+
+    fetch_payload = {}
+    fetch_error = "ND"
+
+    # On tente les fonctions de fetch existantes sans supposer leur nom exact.
+    fetch_fn_candidates = [
+        "_p32_fetch_letrot_today_html",
+        "_p32_letrot_fetch_today_html",
+        "_p32_fetch_letrot_today_index",
+        "_p32_fetch_letrot_html",
+    ]
+
+    for fn_name in fetch_fn_candidates:
+        fn = globals().get(fn_name)
+        if callable(fn):
+            try:
+                candidate = fn()
+                if isinstance(candidate, dict):
+                    fetch_payload = candidate
+                    fetch_error = "ND"
+                    break
+            except Exception as exc:
+                fetch_error = f"{fn_name}:{type(exc).__name__}:{exc}"
+
+    # Fallback : lire le contrat public d?j? expos? par l?index preview.
+    letrot_index = {}
+    try:
+        letrot_index = action_letrot_today_index_preview()
+    except Exception as exc:
+        letrot_index = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    raw_html = ""
+
+    if isinstance(fetch_payload, dict):
+        for key in [
+            "html",
+            "raw_html",
+            "html_text",
+            "text",
+            "content",
+            "body",
+            "response_text",
+        ]:
+            value = fetch_payload.get(key)
+            if isinstance(value, str) and value.strip():
+                raw_html = value
+                break
+
+    if not raw_html and isinstance(letrot_index, dict):
+        for key in [
+            "raw_html",
+            "html",
+            "html_text",
+            "raw_text",
+            "text",
+            "raw_text_sample",
+        ]:
+            value = letrot_index.get(key)
+            if isinstance(value, str) and value.strip():
+                raw_html = value
+                break
+
+    hrefs = []
+    href_count_total = 0
+
+    if raw_html:
+        href_re = re.compile(
+            r'<a\b[^>]*?href=["\'](?P<href>[^"\']+)["\'][^>]*>(?P<label>.*?)</a>',
+            flags=re.I | re.S,
+        )
+
+        for m in href_re.finditer(raw_html):
+            href_count_total += 1
+
+            if len(hrefs) >= 50:
+                continue
+
+            label_html = m.group("label") or ""
+            label = re.sub(r"<[^>]+>", " ", label_html)
+            label = re.sub(r"\s+", " ", label).strip()
+
+            hrefs.append({
+                "href": m.group("href"),
+                "label": label,
+            })
+
+    plausible_course_hrefs = []
+
+    for item in hrefs:
+        href_l = str(item.get("href", "")).lower()
+        label_l = str(item.get("label", "")).lower()
+
+        if (
+            "course" in href_l
+            or "courses" in href_l
+            or "reunion" in href_l
+            or "partant" in href_l
+            or "programme" in href_l
+            or "prix" in label_l
+            or "course" in label_l
+        ):
+            plausible_course_hrefs.append(item)
+
+    fetch_payload_keys = sorted(list(fetch_payload.keys())) if isinstance(fetch_payload, dict) else []
+    letrot_index_keys = sorted(list(letrot_index.keys())) if isinstance(letrot_index, dict) else []
+
+    return {
+        "ok": True,
+        "phase": "letrot_raw_html_audit_preview",
+        "preview_version": "letrot_raw_html_audit_preview_v0_9_31b2_8_4",
+        "checked_at_utc": checked_at_utc,
+        "fetch_function_candidates_checked": fetch_fn_candidates,
+        "fetch_payload_available_oui_non": "oui" if bool(fetch_payload) else "non",
+        "fetch_payload_keys": fetch_payload_keys,
+        "fetch_error": fetch_error,
+        "letrot_index_ok": letrot_index.get("ok", False) if isinstance(letrot_index, dict) else False,
+        "letrot_index_keys": letrot_index_keys,
+        "raw_html_available_oui_non": "oui" if bool(raw_html) else "non",
+        "raw_html_chars": len(raw_html),
+        "href_count_total": href_count_total,
+        "href_sample": hrefs[:20],
+        "plausible_course_href_count": len(plausible_course_hrefs),
+        "plausible_course_href_sample": plausible_course_hrefs[:20],
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "doctrine": (
+            "Audit HTML LeTrot lecture seule. Aucun partant invent?. "
+            "Aucun fichier officiel ?crit. Strict ferm?."
+        ),
+    }
+
+
 @app.get("/action/letrot-detail-url-discovery-preview", dependencies=[Depends(require_api_key)])
 def action_letrot_detail_url_discovery_preview():
     """
