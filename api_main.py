@@ -17870,7 +17870,7 @@ def action_official_runner_status_letrot_detail_capture():
 
     capture_rows_course_identity_enrichment = {
         "ok": False,
-        "version": "capture_rows_course_identity_enrichment_v0_9_31b2_8_10_fix2aa",
+        "version": "capture_rows_course_identity_enrichment_v0_9_31b2_8_10_fix2a",
         "reason": "NOT_APPLIED_VALIDATION_KO",
         "strict_allowed_oui_non": "non",
         "ticket_strict": "NO_BET",
