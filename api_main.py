@@ -16470,6 +16470,201 @@ def _p382_extract_runners_from_html_table(text):
     }
 
 
+
+# V0_9_31B2_8_3_FIX2_ADD_DETAIL_URL_DISCOVERY_ROUTE
+@app.get("/action/letrot-detail-url-discovery-preview", dependencies=[Depends(require_api_key)])
+def action_letrot_detail_url_discovery_preview():
+    """
+    GPI V0_9_31B2.8.3-FIX2
+    Diagnostic d?URLs d?tail LeTrot observ?es.
+
+    Lecture seule.
+    Ne construit pas d?URL artificielle.
+    Ne scrape pas de partants.
+    Strict toujours ferm?.
+    """
+    from datetime import datetime, timezone
+
+    checked_at_utc = datetime.now(timezone.utc).isoformat()
+
+    try:
+        source_preview = action_zeturf_course_level_source_preview()
+    except Exception as exc:
+        source_preview = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    candidate = {}
+
+    if isinstance(source_preview, dict):
+        compare = source_preview.get("zeturf_letrot_course_compare", {})
+        if isinstance(compare, dict):
+            for key in ["selected_course", "best_candidate", "candidate", "matched_candidate"]:
+                value = compare.get(key)
+                if isinstance(value, dict) and value:
+                    candidate = value
+                    break
+
+            if not candidate:
+                scored = (
+                    compare.get("scored_candidates")
+                    or compare.get("candidates")
+                    or compare.get("candidate_courses")
+                    or []
+                )
+                if isinstance(scored, list) and scored:
+                    first = scored[0]
+                    if isinstance(first, dict):
+                        maybe = first.get("candidate", first)
+                        if isinstance(maybe, dict):
+                            candidate = maybe
+
+    try:
+        letrot_index = action_letrot_today_index_preview()
+    except Exception as exc:
+        letrot_index = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    observed_urls = []
+    observed_url_count_from_candidates = 0
+
+    # 1) Priorit? aux champs detail_url d?j? inject?s par B2.8.3-FIX1 dans les candidates.
+    if isinstance(letrot_index, dict):
+        for meeting in letrot_index.get("meetings", []) or []:
+            if not isinstance(meeting, dict):
+                continue
+
+            for course in meeting.get("courses", []) or []:
+                if not isinstance(course, dict):
+                    continue
+
+                detail_url = course.get("detail_url", "ND")
+                if detail_url not in (None, "", "ND"):
+                    observed_url_count_from_candidates += 1
+                    observed_urls.append({
+                        "source": "letrot_today_index.meetings.courses.detail_url",
+                        "course_no": course.get("course_no", "ND"),
+                        "course_no_int": course.get("course_no_int", "ND"),
+                        "scheduled_time": course.get("scheduled_time", "ND"),
+                        "detail_url": detail_url,
+                        "detail_path": course.get("detail_path", "ND"),
+                        "detail_label": course.get("detail_label", "ND"),
+                        "detail_url_match_status": course.get("detail_url_match_status", "ND"),
+                        "detail_url_match_score": course.get("detail_url_match_score", 0),
+                        "detail_url_match_reason_codes": course.get("detail_url_match_reason_codes", []),
+                        "observed_href_count": course.get("observed_href_count", 0),
+                    })
+
+    # 2) Fallback : si la route expose un HTML brut, utiliser le helper B2.8.3 existant si pr?sent.
+    raw_html = ""
+    if isinstance(letrot_index, dict):
+        raw_html = (
+            letrot_index.get("raw_html")
+            or letrot_index.get("html")
+            or letrot_index.get("raw_text")
+            or ""
+        )
+
+    if raw_html:
+        try:
+            href_items = _p383_extract_observed_detail_urls_from_letrot_html(raw_html)
+        except Exception as exc:
+            href_items = []
+            raw_html_extract_error = f"{type(exc).__name__}:{exc}"
+        else:
+            raw_html_extract_error = "ND"
+
+        for item in href_items:
+            if isinstance(item, dict):
+                observed_urls.append({
+                    "source": "raw_html.href",
+                    "detail_url": item.get("url", "ND"),
+                    "detail_path": item.get("path", "ND"),
+                    "detail_label": item.get("label", "ND"),
+                    "href": item.get("href", "ND"),
+                })
+    else:
+        raw_html_extract_error = "RAW_HTML_ABSENT"
+
+    matched_detail_url = {
+        "ok": False,
+        "reason": "NO_OBSERVED_DETAIL_URL_MATCH_COURSE",
+        "detail_url": "ND",
+        "detail_path": "ND",
+        "detail_label": "ND",
+        "detail_match_score": 0,
+        "detail_match_reason_codes": [],
+    }
+
+    # 3) Si candidate a d?j? un detail_url, c?est le meilleur signal.
+    if isinstance(candidate, dict) and candidate.get("detail_url") not in (None, "", "ND"):
+        matched_detail_url = {
+            "ok": True,
+            "reason": "CANDIDATE_DETAIL_URL_PRESENT",
+            "detail_url": candidate.get("detail_url", "ND"),
+            "detail_path": candidate.get("detail_path", "ND"),
+            "detail_label": candidate.get("detail_label", "ND"),
+            "detail_match_score": candidate.get("detail_url_match_score", 0),
+            "detail_match_reason_codes": candidate.get("detail_url_match_reason_codes", []),
+        }
+    else:
+        # 4) Sinon, chercher dans observed_urls selon course_no candidate.
+        try:
+            candidate_course_no = _p37_to_int_or_none(
+                candidate.get("course_no_int")
+                or candidate.get("course_no")
+                or candidate.get("num_course")
+            )
+        except Exception:
+            candidate_course_no = None
+
+        if candidate_course_no is not None:
+            for item in observed_urls:
+                item_no = _p37_to_int_or_none(
+                    item.get("course_no_int")
+                    or item.get("course_no")
+                )
+                if item_no == candidate_course_no and item.get("detail_url") not in (None, "", "ND"):
+                    matched_detail_url = {
+                        "ok": True,
+                        "reason": "OBSERVED_DETAIL_URL_MATCHED_BY_COURSE_NO",
+                        "detail_url": item.get("detail_url", "ND"),
+                        "detail_path": item.get("detail_path", "ND"),
+                        "detail_label": item.get("detail_label", "ND"),
+                        "detail_match_score": item.get("detail_url_match_score", 0),
+                        "detail_match_reason_codes": item.get("detail_url_match_reason_codes", []),
+                    }
+                    break
+
+    return {
+        "ok": True,
+        "phase": "letrot_detail_url_discovery_preview",
+        "preview_version": "letrot_detail_url_discovery_preview_v0_9_31b2_8_3_fix2",
+        "checked_at_utc": checked_at_utc,
+        "source_preview_ok": source_preview.get("ok", False) if isinstance(source_preview, dict) else False,
+        "candidate": candidate,
+        "letrot_index_ok": letrot_index.get("ok", False) if isinstance(letrot_index, dict) else False,
+        "letrot_index_has_raw_html_oui_non": "oui" if raw_html else "non",
+        "letrot_index_raw_html_chars": len(raw_html),
+        "raw_html_extract_error": raw_html_extract_error,
+        "observed_url_count_from_candidates": observed_url_count_from_candidates,
+        "observed_detail_url_count": len(observed_urls),
+        "observed_detail_urls_sample": observed_urls[:20],
+        "matched_detail_url": matched_detail_url,
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "doctrine": (
+            "Discovery URL d?tail LeTrot observ?e uniquement. "
+            "Aucune URL artificielle. Aucun partant invent?. Strict ferm?."
+        ),
+    }
+
+
 @app.post("/action/official-runner-status-letrot-detail-capture", dependencies=[Depends(require_api_key)])
 def action_official_runner_status_letrot_detail_capture():
     """
