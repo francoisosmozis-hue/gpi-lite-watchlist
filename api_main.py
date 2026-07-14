@@ -9263,7 +9263,7 @@ def scheduler_run_due_h5():
         "ticket_strict": "NO_BET",
     }
 
-    return {
+    b211_response_payload = {
         "ok": True,
         "h5_run_ok": h5_run_ok,
         "run_status": run_status,
@@ -9344,6 +9344,53 @@ def scheduler_run_due_h5():
             "/action/h5-report",
         ],
     }
+
+    try:
+        # GPI_H5_SCHEDULER_STRUCTURED_OBSERVABILITY_PATCH_V0_9_31B2_11
+        # One bounded JSON event per scheduler cycle.
+        # Logging is fail-open and never changes the API response.
+        b211_scheduler_event = {
+            "severity": "INFO",
+            "message": "GPI_H5_SCHEDULER_AUDIT",
+            "event": "gpi_h5_scheduler_cycle",
+            "observability_version": "GPI_H5_SCHEDULER_STRUCTURED_LOG_V0_9_31B2_11",
+            "scheduler_run_id": b210_run_id,
+            "scheduler_version": b210_scheduler_version,
+            "run_status": run_status,
+            "h5_run_ok": h5_run_ok,
+            "stability_ok": b210_stability_ok,
+            "stage_ok": b210_stage_ok,
+            "stage_error_count": len(b210_stage_errors),
+            "latest_course_uid_consistent_oui_non": (
+                b210_latest_course_uid_consistent_oui_non
+            ),
+            "p31_non_recursive_guard_preserved_oui_non": "oui",
+            "p31_reader_version_expected": (
+                "p31_reuse_b2_official_reader_v0_9_31b2_9_fix1"
+            ),
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+            "duration_ms": b210_duration_ms,
+            "new_artifact_oui_non": new_artifact_oui_non,
+            "capture_count": capture_count,
+            "briefs_created": briefs_created,
+            "movement_rows_total": movement_rows_total,
+        }
+
+        print(
+            json.dumps(
+                b211_scheduler_event,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+    except Exception:
+        pass
+
+    return b211_response_payload
 
 
 # ============================================================
