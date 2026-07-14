@@ -16138,6 +16138,145 @@ def _p38_write_csv_rows_utf8sig(path_obj, rows):
     return str(path_obj)
 
 
+# V0_9_31B2_8_10_FIX2_ENRICH_CAPTURE_ROWS_COURSE_IDENTITY
+def _p3810_fix2_enrich_capture_rows_course_identity(rows, context_payload, selected_course):
+    """
+    Ajoute l'identit? course manquante aux lignes captur?es avant ?criture CSV.
+
+    Priorit? :
+    1. selected_course si disponible ;
+    2. context_payload ;
+    3. ND.
+
+    S?curit? :
+    - ne remplace jamais une valeur d?j? pr?sente et non ND ;
+    - ne force pas un course_uid contextuel si selected_course porte un course_uid conflictuel ;
+    - n'ouvre jamais le strict.
+    """
+
+    def _missing(value):
+        return value is None or str(value).strip() in {"", "ND", "None", "null"}
+
+    def _clean(value):
+        if _missing(value):
+            return "ND"
+        return str(value).strip()
+
+    def _pick(*values):
+        for value in values:
+            if not _missing(value):
+                return _clean(value)
+        return "ND"
+
+    if not isinstance(context_payload, dict):
+        context_payload = {}
+
+    if not isinstance(selected_course, dict):
+        selected_course = {}
+
+    context_course_uid = _pick(context_payload.get("course_uid"))
+    selected_course_uid = _pick(
+        selected_course.get("course_uid"),
+        selected_course.get("course_key"),
+        selected_course.get("uid"),
+    )
+
+    context_uid_norm = _p37_norm_text(context_course_uid)
+    selected_uid_norm = _p37_norm_text(selected_course_uid)
+
+    selected_has_conflicting_uid = (
+        selected_uid_norm
+        and selected_uid_norm != "nd"
+        and context_uid_norm
+        and context_uid_norm != "nd"
+        and selected_uid_norm != context_uid_norm
+    )
+
+    safe_course_uid = "ND" if selected_has_conflicting_uid else _pick(
+        selected_course_uid,
+        context_course_uid,
+    )
+
+    safe_reunion_no = _pick(
+        selected_course.get("reunion_no"),
+        selected_course.get("reunion"),
+        selected_course.get("num_reunion"),
+        selected_course.get("r"),
+        context_payload.get("reunion_no"),
+    )
+
+    safe_course_no = _pick(
+        selected_course.get("course_no"),
+        selected_course.get("course_no_int"),
+        selected_course.get("num_course"),
+        selected_course.get("c"),
+        context_payload.get("course_no"),
+    )
+
+    safe_scheduled_time = _pick(
+        selected_course.get("scheduled_time"),
+        selected_course.get("course_time"),
+        selected_course.get("start_time"),
+        selected_course.get("heure_depart"),
+        selected_course.get("heure"),
+        context_payload.get("scheduled_time"),
+    )
+
+    safe_race_name = _pick(
+        selected_course.get("race_name"),
+        selected_course.get("course_name"),
+        selected_course.get("prix"),
+        selected_course.get("detail_label"),
+        context_payload.get("race_name"),
+    )
+
+    enriched = []
+
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+
+        r = dict(row)
+
+        if _missing(r.get("course_uid")):
+            r["course_uid"] = safe_course_uid
+
+        if _missing(r.get("reunion_no")):
+            r["reunion_no"] = safe_reunion_no
+
+        if _missing(r.get("course_no")):
+            r["course_no"] = safe_course_no
+
+        if _missing(r.get("scheduled_time")):
+            r["scheduled_time"] = safe_scheduled_time
+
+        if _missing(r.get("race_name")):
+            r["race_name"] = safe_race_name
+
+        enriched.append(r)
+
+    filled_count = sum(
+        1 for r in enriched
+        if not _missing(r.get("course_uid"))
+    )
+
+    return {
+        "ok": True,
+        "version": "capture_rows_course_identity_enrichment_v0_9_31b2_8_10_fix2",
+        "rows": enriched,
+        "rows_total": len(enriched),
+        "rows_with_course_uid": filled_count,
+        "selected_has_conflicting_uid": "oui" if selected_has_conflicting_uid else "non",
+        "safe_course_uid": safe_course_uid,
+        "safe_reunion_no": safe_reunion_no,
+        "safe_course_no": safe_course_no,
+        "safe_scheduled_time": safe_scheduled_time,
+        "safe_race_name": safe_race_name,
+        "strict_allowed_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
+
 # V0_9_31B2_8_10_GUARD_OFFICIAL_LATEST_OVERWRITE
 def _p3810_guard_official_latest_upload(local_path, blob_name):
     """
@@ -16157,7 +16296,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "ok": True,
             "reason": "NOT_OFFICIAL_RUNNER_STATUS_LATEST",
             "target_blob": target,
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2",
         }
 
     path = Path(local_path)
@@ -16167,7 +16306,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "reason": "CAPTURE_REJECTED_LOCAL_CSV_ABSENT",
             "target_blob": target,
             "local_path": str(path),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2",
         }
 
     try:
@@ -16181,7 +16320,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "reason": f"CAPTURE_REJECTED_LOCAL_CSV_READ_ERROR:{type(exc).__name__}:{exc}",
             "target_blob": target,
             "local_path": str(path),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2",
         }
 
     try:
@@ -16192,7 +16331,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "reason": f"CAPTURE_REJECTED_LOCAL_CSV_PARSE_ERROR:{type(exc).__name__}:{exc}",
             "target_blob": target,
             "local_path": str(path),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2",
         }
 
     rows = csv_payload.get("rows", []) if isinstance(csv_payload, dict) else []
@@ -16205,7 +16344,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "target_blob": target,
             "local_path": str(path),
             "fieldnames": fieldnames,
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2",
         }
 
     try:
@@ -16217,7 +16356,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "target_blob": target,
             "local_path": str(path),
             "rows_total": len(rows),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2",
         }
 
     if not isinstance(active_context, dict) or not active_context.get("ok"):
@@ -16228,7 +16367,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "local_path": str(path),
             "rows_total": len(rows),
             "active_context_ok": active_context.get("ok", "ND") if isinstance(active_context, dict) else "CONTEXT_NOT_DICT",
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2",
         }
 
     matched = []
@@ -16304,7 +16443,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "active_context_fields": active_fields,
             "csv_fieldnames": fieldnames,
             "rejected_sample": rejected_sample,
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2",
             "strict_allowed_oui_non": "non",
             "ticket_strict": "NO_BET",
         }
@@ -16318,7 +16457,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
         "rows_matched_active_context": len(matched),
         "active_context_fields": active_fields,
         "matched_sample": matched[:5],
-        "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
+        "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2",
     }
 
 
@@ -16332,7 +16471,7 @@ def _p38_upload_file_to_gcs(local_path, blob_name, content_type="text/csv"):
         guard = {
             "ok": False,
             "reason": "OFFICIAL_LATEST_GUARD_NOT_DICT",
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2",
         }
 
     if not guard.get("ok"):
@@ -17778,6 +17917,7 @@ def action_official_runner_status_letrot_detail_capture():
         "normalized_runner_count": len(normalized_rows),
         "runner_row_filter_audit": runner_row_filter_audit,
         "validation": validation,
+        "capture_rows_course_identity_enrichment": capture_rows_course_identity_enrichment,
         "capture_status": capture_status,
         "local_paths": local_paths,
         "uploads": uploads,
@@ -17904,9 +18044,24 @@ def action_official_runner_status_letrot_capture():
         "course_scoped": "ND",
     }
 
+    capture_rows_course_identity_enrichment = {
+        "ok": False,
+        "version": "capture_rows_course_identity_enrichment_v0_9_31b2_8_10_fix2",
+        "reason": "NOT_APPLIED_VALIDATION_KO",
+        "strict_allowed_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
     if validation.get("ok"):
         capture_status = "OFFICIAL_RUNNER_STATUS_CAPTURED"
         reason_codes.extend(validation.get("reason_codes", []))
+
+        capture_rows_course_identity_enrichment = _p3810_fix2_enrich_capture_rows_course_identity(
+            normalized_rows,
+            context_payload,
+            selected_course,
+        )
+        normalized_rows = capture_rows_course_identity_enrichment.get("rows", normalized_rows)
 
         slug = context_payload.get("course_slug")
         if not slug:
@@ -17963,6 +18118,7 @@ def action_official_runner_status_letrot_capture():
         "normalized_runner_count": len(normalized_rows),
         "runner_row_filter_audit": runner_row_filter_audit,
         "validation": validation,
+        "capture_rows_course_identity_enrichment": capture_rows_course_identity_enrichment,
         "capture_status": capture_status,
         "reason_codes": reason_codes,
         "local_paths": local_paths,
