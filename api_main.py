@@ -8865,6 +8865,19 @@ def action_h5_history_status():
 def scheduler_run_due_h5():
     from datetime import datetime
     from zoneinfo import ZoneInfo
+    import time as _b210_time
+    import uuid as _b210_uuid
+
+    # GPI_H5_SCHEDULER_STABILITY_AUDIT_PATCH_V0_9_31B2_10
+    # Diagnostic uniquement. Ne modifie ni le plan, ni la capture, ni le brief.
+    # Ne cr?e jamais de ticket strict.
+    b210_scheduler_version = "SCHEDULER_RUN_DUE_H5_V0_9_31B2_10"
+    b210_started_monotonic = _b210_time.monotonic()
+    b210_started_utc = datetime.now(ZoneInfo("UTC")).replace(microsecond=0)
+    b210_run_id = (
+        f"B210-{b210_started_utc.strftime('%Y%m%dT%H%M%SZ')}-"
+        f"{_b210_uuid.uuid4().hex[:8]}"
+    )
 
     now_paris = datetime.now(ZoneInfo("Europe/Paris")).replace(microsecond=0)
 
@@ -9133,12 +9146,131 @@ def scheduler_run_due_h5():
         run_status = "H5_RUN_IDLE_NO_PLAN_NO_CAPTURE"
         new_artifact_oui_non = "non"
 
+    # GPI_H5_SCHEDULER_STABILITY_AUDIT_PATCH_V0_9_31B2_10
+    # Contr?le les ?tapes du scheduler et la coh?rence du latest.
+    # Aucun appel r?seau suppl?mentaire et aucune ?criture suppl?mentaire.
+    b210_status_ok = (
+        isinstance(status_payload, dict)
+        and status_payload.get("ok") is True
+    )
+
+    b210_stage_ok = {
+        "plan": bool(plan_ok),
+        "url_resolver": bool(resolver_ok),
+        "capture": bool(capture_ok),
+        "brief": bool(brief_ok),
+        "status_after": bool(b210_status_ok),
+    }
+
+    b210_stage_payloads = {
+        "plan": plan_payload,
+        "url_resolver": resolver_payload,
+        "capture": capture_payload,
+        "brief": brief_payload,
+        "status_after": status_payload,
+    }
+
+    b210_stage_errors = []
+
+    for b210_stage_name, b210_stage_is_ok in b210_stage_ok.items():
+        if b210_stage_is_ok:
+            continue
+
+        b210_stage_payload = b210_stage_payloads.get(b210_stage_name, {})
+
+        if isinstance(b210_stage_payload, dict):
+            b210_stage_error = str(
+                b210_stage_payload.get("error", "")
+                or b210_stage_payload.get("reason", "")
+                or "STAGE_NOT_OK"
+            ).strip()
+        else:
+            b210_stage_error = "PAYLOAD_NOT_DICT"
+
+        b210_stage_errors.append({
+            "stage": b210_stage_name,
+            "error": b210_stage_error,
+        })
+
+    b210_status_course_uid = str(
+        pick(status_payload, "latest_course_uid", "")
+        or ""
+    ).strip()
+
+    b210_brief_course_uid_normalized = " ".join(
+        latest_brief_course_uid.casefold().split()
+    )
+
+    b210_status_course_uid_normalized = " ".join(
+        b210_status_course_uid.casefold().split()
+    )
+
+    if (
+        b210_brief_course_uid_normalized
+        and b210_status_course_uid_normalized
+    ):
+        b210_latest_course_uid_consistent_oui_non = (
+            "oui"
+            if b210_brief_course_uid_normalized
+            == b210_status_course_uid_normalized
+            else "non"
+        )
+    else:
+        b210_latest_course_uid_consistent_oui_non = "ND"
+
+    b210_completed_utc = datetime.now(
+        ZoneInfo("UTC")
+    ).replace(microsecond=0)
+
+    b210_duration_ms = int(
+        round(
+            (_b210_time.monotonic() - b210_started_monotonic)
+            * 1000
+        )
+    )
+
+    b210_stability_ok = (
+        all(b210_stage_ok.values())
+        and run_status != "H5_RUN_ERROR"
+        and b210_latest_course_uid_consistent_oui_non != "non"
+    )
+
+    b210_stability_audit = {
+        "audit_version": "B2_10_STABILITY_AUDIT_V1",
+        "scheduler_run_id": b210_run_id,
+        "scheduler_version": b210_scheduler_version,
+        "started_at_utc": b210_started_utc.isoformat(),
+        "completed_at_utc": b210_completed_utc.isoformat(),
+        "duration_ms": b210_duration_ms,
+        "route": "/scheduler/run-due-h5",
+        "method": "POST",
+        "stability_ok": b210_stability_ok,
+        "stage_ok": b210_stage_ok,
+        "stage_error_count": len(b210_stage_errors),
+        "stage_errors": b210_stage_errors,
+        "run_status": run_status,
+        "latest_brief_course_uid": latest_brief_course_uid,
+        "status_latest_course_uid": b210_status_course_uid,
+        "latest_course_uid_consistent_oui_non": (
+            b210_latest_course_uid_consistent_oui_non
+        ),
+        "p31_non_recursive_guard_preserved_oui_non": "oui",
+        "p31_reader_version_expected": (
+            "p31_reuse_b2_official_reader_v0_9_31b2_9_fix1"
+        ),
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
     return {
         "ok": True,
         "h5_run_ok": h5_run_ok,
         "run_status": run_status,
         "route": "/scheduler/run-due-h5",
-        "scheduler_version": "SCHEDULER_RUN_DUE_H5_V0_9_29A3",
+        "scheduler_version": b210_scheduler_version,
+        "scheduler_run_id": b210_run_id,
+        "stability_audit": b210_stability_audit,
         "history_archive_ok": history_archive_ok,
         "history_archive_count": len(history_items),
         "history_archive_paths": history_archive_paths,
