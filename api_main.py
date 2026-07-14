@@ -15599,6 +15599,83 @@ def _p371_build_official_status_source_diagnostics(rows, context_payload):
     }
 
 
+
+# V0_9_31B2_7_2_FORCE_ENRICHED_H5_CONTEXT
+def _p372_force_enriched_course_context(payload):
+    """
+    Garantit que les champs course-level sont presents dans le contexte utilise
+    par official-runner-status-course-level-preview.
+
+    Ne peut jamais ouvrir le strict.
+    """
+    if not isinstance(payload, dict):
+        payload = {}
+
+    # 1) Appliquer les overlays existants si disponibles.
+    try:
+        fallback_overlay = _p361_read_course_scoped_h5_context_for_overlay(payload)
+        if isinstance(fallback_overlay, dict) and isinstance(fallback_overlay.get("merged_payload"), dict):
+            payload = fallback_overlay["merged_payload"]
+    except Exception as exc:
+        payload["course_level_context_force_overlay_error"] = f"FALLBACK_OVERLAY_ERROR:{type(exc).__name__}:{exc}"
+
+    try:
+        payload = _p361_apply_course_level_context_overlay(payload)
+    except Exception as exc:
+        payload["course_level_context_force_overlay_error"] = f"TOPLEVEL_OVERLAY_ERROR:{type(exc).__name__}:{exc}"
+
+    required = ["reunion_no", "course_no", "scheduled_time", "race_name"]
+    missing = [k for k in required if payload.get(k) in (None, "", "ND")]
+
+    # 2) Si encore incomplet, relire la source-preview valid?e.
+    if missing:
+        try:
+            source_preview = action_zeturf_course_level_source_preview()
+        except Exception as exc:
+            source_preview = {
+                "ok": False,
+                "error": f"{type(exc).__name__}:{exc}",
+            }
+
+        if isinstance(source_preview, dict) and source_preview.get("ok"):
+            zeturf_meta = source_preview.get("zeturf_html_course_level", {})
+            if isinstance(zeturf_meta, dict):
+                mapping = {
+                    "reunion_no": zeturf_meta.get("reunion_no", "ND"),
+                    "course_no": zeturf_meta.get("course_no", "ND"),
+                    "scheduled_time": zeturf_meta.get("scheduled_time", "ND"),
+                    "race_name": zeturf_meta.get("race_name", "ND"),
+                }
+
+                for key, value in mapping.items():
+                    if value not in (None, "", "ND") and payload.get(key) in (None, "", "ND"):
+                        payload[key] = value
+
+                payload["course_level_context_force_source_preview_used_oui_non"] = "oui"
+                payload["course_level_context_force_source_preview_official_join_ok_oui_non"] = source_preview.get("official_join_ok_oui_non", "ND")
+                payload["course_level_context_force_source_preview_match_status"] = (
+                    source_preview.get("zeturf_letrot_course_compare", {}) or {}
+                ).get("match_status", "ND")
+                payload["course_level_context_force_source_preview_time_guard_status"] = (
+                    source_preview.get("zeturf_scheduled_time_guard", {}) or {}
+                ).get("status", "ND")
+        else:
+            payload["course_level_context_force_source_preview_used_oui_non"] = "non"
+            payload["course_level_context_force_source_preview_error"] = source_preview.get("error", "SOURCE_PREVIEW_UNAVAILABLE") if isinstance(source_preview, dict) else "SOURCE_PREVIEW_NOT_DICT"
+
+    final_missing = [k for k in required if payload.get(k) in (None, "", "ND")]
+
+    payload["course_level_context_force_version"] = "force_enriched_h5_context_v0_9_31b2_7_2"
+    payload["course_level_context_force_missing_fields"] = final_missing
+    payload["course_level_context_force_ok_oui_non"] = "oui" if not final_missing else "non"
+
+    payload["strict_allowed_oui_non"] = "non"
+    payload["strict_usable_oui_non"] = "non"
+    payload["ticket_strict"] = "NO_BET"
+
+    return payload
+
+
 @app.get("/action/official-runner-status-course-level-preview", dependencies=[Depends(require_api_key)])
 def action_official_runner_status_course_level_preview():
     """
@@ -15636,6 +15713,9 @@ def action_official_runner_status_course_level_preview():
             "ticket_strict": "NO_BET",
         }
 
+    # V0_9_31B2_7_2_FORCE_ENRICHED_H5_CONTEXT
+    context_payload = _p372_force_enriched_course_context(context_payload)
+
     context_course_fields = {
         "course_uid": context_payload.get("course_uid", "ND"),
         "reunion_no": context_payload.get("reunion_no", "ND"),
@@ -15644,6 +15724,9 @@ def action_official_runner_status_course_level_preview():
         "race_name": context_payload.get("race_name", "ND"),
         "course_level_context_sync_status": context_payload.get("course_level_context_sync_status", "ND"),
         "course_level_official_join_ok_oui_non": context_payload.get("course_level_official_join_ok_oui_non", "ND"),
+        "course_level_context_force_ok_oui_non": context_payload.get("course_level_context_force_ok_oui_non", "ND"),
+        "course_level_context_force_missing_fields": context_payload.get("course_level_context_force_missing_fields", []),
+        "course_level_context_force_source_preview_used_oui_non": context_payload.get("course_level_context_force_source_preview_used_oui_non", "ND"),
     }
 
     read_result = _p37_read_text_local_or_gcs(
