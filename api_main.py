@@ -15406,31 +15406,28 @@ def _p37_norm_csv_key(key):
 
 def _p37_detect_csv_dialect(raw):
     """
-    Detecte un dialecte CSV simple.
-    Priorite au separateur ; si l'en-tete contient ; et pas de vraie virgule separatrice.
+    Detecte un separateur CSV simple sans modifier csv.excel globalement.
+    Retourne uniquement delimiter + source.
     """
     import csv
 
-    first_line = str(raw or "").splitlines()[0] if str(raw or "").splitlines() else ""
+    raw_s = str(raw or "")
+    lines = raw_s.splitlines()
+    first_line = lines[0] if lines else ""
 
     if ";" in first_line and first_line.count(";") >= first_line.count(","):
-        dialect = csv.excel
-        dialect.delimiter = ";"
-        return dialect, "semicolon"
+        return ";", "semicolon"
 
     if "\t" in first_line:
-        dialect = csv.excel
-        dialect.delimiter = "\t"
-        return dialect, "tab"
+        return "\t", "tab"
 
     try:
-        sample = str(raw or "")[:4096]
-        dialect = csv.Sniffer().sniff(sample, delimiters=";,    ")
-        return dialect, f"sniffer:{repr(getattr(dialect, 'delimiter', 'ND'))}"
+        sample = raw_s[:4096]
+        sniffed = csv.Sniffer().sniff(sample, delimiters=";,\t")
+        delimiter = getattr(sniffed, "delimiter", ",") or ","
+        return delimiter, f"sniffer:{repr(delimiter)}"
     except Exception:
-        dialect = csv.excel
-        dialect.delimiter = ","
-        return dialect, "fallback_comma"
+        return ",", "fallback_comma"
 
 
 def _p37_csv_rows_from_text(text):
@@ -15447,7 +15444,7 @@ def _p37_csv_rows_from_text(text):
             "fieldnames": [],
             "rows": [],
             "raw_fieldnames": [],
-            "reader_version": "delimiter_safe_official_status_csv_reader_v0_9_31b2_8_9_fix2",
+            "reader_version": "delimiter_safe_official_status_csv_reader_v0_9_31b2_8_9_fix3",
             "dialect_source": "empty_text",
             "delimiter": "ND",
         }
@@ -15457,10 +15454,9 @@ def _p37_csv_rows_from_text(text):
     raw = raw.replace("\ufeff", "")
     raw = raw.replace("\u00ef\u00bb\u00bf", "")
 
-    dialect, dialect_source = _p37_detect_csv_dialect(raw)
-    delimiter = getattr(dialect, "delimiter", ",")
+    delimiter, dialect_source = _p37_detect_csv_dialect(raw)
 
-    reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
+    reader = csv.DictReader(io.StringIO(raw), dialect="excel", delimiter=delimiter)
     raw_fieldnames = list(reader.fieldnames or [])
     fieldnames = [_p37_norm_csv_key(x) for x in raw_fieldnames]
 
@@ -15482,7 +15478,7 @@ def _p37_csv_rows_from_text(text):
         "fieldnames": fieldnames,
         "rows": rows,
         "raw_fieldnames": raw_fieldnames,
-        "reader_version": "delimiter_safe_official_status_csv_reader_v0_9_31b2_8_9_fix2",
+        "reader_version": "delimiter_safe_official_status_csv_reader_v0_9_31b2_8_9_fix3",
         "dialect_source": dialect_source,
         "delimiter": delimiter,
     }
