@@ -15391,22 +15391,51 @@ def _p37_bool_np(value):
     return "ND"
 
 
-# V0_9_31B2_8_9_BOM_SAFE_OFFICIAL_STATUS_CSV_READER
+# V0_9_31B2_8_9_FIX2_DELIMITER_SAFE_OFFICIAL_STATUS_CSV_READER
 def _p37_norm_csv_key(key):
     """
     Normalise les noms de colonnes CSV officiels.
-    Corrige BOM UTF-8 normal et BOM mojibake observe en lecture GCS.
+    Corrige BOM UTF-8 normal et BOM mojibake sans dependre de l'affichage console.
     """
     txt = "" if key is None else str(key)
     txt = txt.lstrip("\ufeff")
     txt = txt.replace("\ufeff", "")
-    txt = txt.replace("???", "")
+    txt = txt.replace("\u00ef\u00bb\u00bf", "")
     return txt.strip()
+
+
+def _p37_detect_csv_dialect(raw):
+    """
+    Detecte un dialecte CSV simple.
+    Priorite au separateur ; si l'en-tete contient ; et pas de vraie virgule separatrice.
+    """
+    import csv
+
+    first_line = str(raw or "").splitlines()[0] if str(raw or "").splitlines() else ""
+
+    if ";" in first_line and first_line.count(";") >= first_line.count(","):
+        dialect = csv.excel
+        dialect.delimiter = ";"
+        return dialect, "semicolon"
+
+    if "\t" in first_line:
+        dialect = csv.excel
+        dialect.delimiter = "\t"
+        return dialect, "tab"
+
+    try:
+        sample = str(raw or "")[:4096]
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,    ")
+        return dialect, f"sniffer:{repr(getattr(dialect, 'delimiter', 'ND'))}"
+    except Exception:
+        dialect = csv.excel
+        dialect.delimiter = ","
+        return dialect, "fallback_comma"
 
 
 def _p37_csv_rows_from_text(text):
     """
-    Lecture CSV officielle BOM-safe.
+    Lecture CSV officielle BOM-safe + delimiter-safe.
     Retourne fieldnames et rows avec cles normalisees.
     Ne modifie pas les valeurs metier.
     """
@@ -15414,13 +15443,24 @@ def _p37_csv_rows_from_text(text):
     import io
 
     if not text:
-        return [], []
+        return {
+            "fieldnames": [],
+            "rows": [],
+            "raw_fieldnames": [],
+            "reader_version": "delimiter_safe_official_status_csv_reader_v0_9_31b2_8_9_fix2",
+            "dialect_source": "empty_text",
+            "delimiter": "ND",
+        }
 
     raw = str(text or "")
     raw = raw.lstrip("\ufeff")
-    raw = raw.replace("???", "")
+    raw = raw.replace("\ufeff", "")
+    raw = raw.replace("\u00ef\u00bb\u00bf", "")
 
-    reader = csv.DictReader(io.StringIO(raw))
+    dialect, dialect_source = _p37_detect_csv_dialect(raw)
+    delimiter = getattr(dialect, "delimiter", ",")
+
+    reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
     raw_fieldnames = list(reader.fieldnames or [])
     fieldnames = [_p37_norm_csv_key(x) for x in raw_fieldnames]
 
@@ -15442,8 +15482,11 @@ def _p37_csv_rows_from_text(text):
         "fieldnames": fieldnames,
         "rows": rows,
         "raw_fieldnames": raw_fieldnames,
-        "reader_version": "bom_safe_official_status_csv_reader_v0_9_31b2_8_9_fix1",
+        "reader_version": "delimiter_safe_official_status_csv_reader_v0_9_31b2_8_9_fix2",
+        "dialect_source": dialect_source,
+        "delimiter": delimiter,
     }
+
 
 def _p37_read_text_local_or_gcs(local_candidates, gcs_candidates, bucket_name=None):
     import os
