@@ -15391,38 +15391,54 @@ def _p37_bool_np(value):
     return "ND"
 
 
+# V0_9_31B2_8_9_BOM_SAFE_OFFICIAL_STATUS_CSV_READER
+def _p37_norm_csv_key(key):
+    """
+    Normalise les noms de colonnes CSV officiels.
+    Corrige BOM UTF-8 normal et BOM mojibake observe en lecture GCS.
+    """
+    txt = "" if key is None else str(key)
+    txt = txt.lstrip("\ufeff")
+    txt = txt.replace("\ufeff", "")
+    txt = txt.replace("???", "")
+    return txt.strip()
+
+
 def _p37_csv_rows_from_text(text):
+    """
+    Lecture CSV officielle BOM-safe.
+    Retourne fieldnames et rows avec cles normalisees.
+    Ne modifie pas les valeurs metier.
+    """
     import csv
     import io
 
+    if not text:
+        return [], []
+
     raw = str(text or "")
-    if not raw.strip():
-        return {
-            "ok": False,
-            "reason": "CSV_EMPTY",
-            "fieldnames": [],
-            "rows": [],
-        }
+    raw = raw.lstrip("\ufeff")
+    raw = raw.replace("???", "")
 
-    sample = raw[:4096]
+    reader = csv.DictReader(io.StringIO(raw))
+    raw_fieldnames = list(reader.fieldnames or [])
+    fieldnames = [_p37_norm_csv_key(x) for x in raw_fieldnames]
 
-    try:
-        dialect = csv.Sniffer().sniff(sample, delimiters=";,|\t,")
-    except Exception:
-        dialect = csv.excel
-        dialect.delimiter = ";"
+    rows = []
+    for row in reader:
+        if not isinstance(row, dict):
+            continue
 
-    reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
-    rows = list(reader)
-    fieldnames = list(reader.fieldnames or [])
+        clean_row = {}
+        for k, v in row.items():
+            clean_key = _p37_norm_csv_key(k)
+            if not clean_key:
+                continue
+            clean_row[clean_key] = v
 
-    return {
-        "ok": True,
-        "reason": "CSV_READ",
-        "fieldnames": fieldnames,
-        "rows": rows,
-    }
+        rows.append(clean_row)
 
+    return fieldnames, rows
 
 def _p37_read_text_local_or_gcs(local_candidates, gcs_candidates, bucket_name=None):
     import os
