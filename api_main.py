@@ -15438,7 +15438,12 @@ def _p37_csv_rows_from_text(text):
 
         rows.append(clean_row)
 
-    return fieldnames, rows
+    return {
+        "fieldnames": fieldnames,
+        "rows": rows,
+        "raw_fieldnames": raw_fieldnames,
+        "reader_version": "bom_safe_official_status_csv_reader_v0_9_31b2_8_9_fix1",
+    }
 
 def _p37_read_text_local_or_gcs(local_candidates, gcs_candidates, bucket_name=None):
     import os
