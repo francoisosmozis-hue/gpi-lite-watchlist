@@ -16626,6 +16626,231 @@ def action_letrot_raw_html_audit_preview():
     }
 
 
+
+# V0_9_31B2_8_5_FEED_RAW_HTML_HREFS_TO_DISCOVERY
+def _p385_fetch_letrot_raw_html_for_discovery():
+    """
+    R?cup?re le HTML brut LeTrot d?j? accessible backend.
+    Lecture seule.
+    """
+    fetch_fn_candidates = [
+        "_p32_fetch_letrot_today_html",
+        "_p32_letrot_fetch_today_html",
+        "_p32_fetch_letrot_today_index",
+        "_p32_fetch_letrot_html",
+    ]
+
+    errors = []
+
+    for fn_name in fetch_fn_candidates:
+        fn = globals().get(fn_name)
+
+        if not callable(fn):
+            errors.append(f"{fn_name}:NOT_CALLABLE")
+            continue
+
+        try:
+            payload = fn()
+        except Exception as exc:
+            errors.append(f"{fn_name}:{type(exc).__name__}:{exc}")
+            continue
+
+        if not isinstance(payload, dict):
+            errors.append(f"{fn_name}:PAYLOAD_NOT_DICT")
+            continue
+
+        for key in ["html", "raw_html", "html_text", "text", "content", "body", "response_text"]:
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return {
+                    "ok": True,
+                    "source_function": fn_name,
+                    "source_key": key,
+                    "raw_html": value,
+                    "raw_html_chars": len(value),
+                    "errors": errors,
+                }
+
+        errors.append(f"{fn_name}:NO_HTML_KEY")
+
+    return {
+        "ok": False,
+        "source_function": "ND",
+        "source_key": "ND",
+        "raw_html": "",
+        "raw_html_chars": 0,
+        "errors": errors,
+    }
+
+
+def _p385_extract_letrot_course_hrefs_from_raw_html(raw_html):
+    """
+    Extrait les hrefs /courses/YYYY-MM-DD/<meeting_id>/<course_no> observ?s.
+    Ne construit pas d?URL artificielle hors conversion chemin relatif letrot.com.
+    """
+    import re
+    from html import unescape
+
+    raw = str(raw_html or "")
+    out = []
+    seen = set()
+
+    a_re = re.compile(
+        r'<a\b[^>]*?href=["\'](?P<href>/courses/\d{4}-\d{2}-\d{2}/\d+/\d+)["\'][^>]*>(?P<label>.*?)</a>',
+        flags=re.I | re.S,
+    )
+
+    for m in a_re.finditer(raw):
+        href = unescape(m.group("href") or "").strip()
+        label_html = m.group("label") or ""
+        label = re.sub(r"<[^>]+>", " ", label_html)
+        label = re.sub(r"\s+", " ", unescape(label)).strip()
+
+        if not href or href in seen:
+            continue
+
+        seen.add(href)
+
+        parts = href.strip("/").split("/")
+        # courses / YYYY-MM-DD / meeting_id / course_no
+        date = parts[1] if len(parts) >= 4 else "ND"
+        meeting_id = parts[2] if len(parts) >= 4 else "ND"
+        course_no = parts[3] if len(parts) >= 4 else "ND"
+
+        time_match = re.search(r"\b(?P<hour>\d{1,2})[:h](?P<minute>\d{2})\b", label)
+        scheduled_time = "ND"
+        if time_match:
+            scheduled_time = f"{int(time_match.group('hour')):02d}:{time_match.group('minute')}"
+
+        out.append({
+            "href": href,
+            "path": href,
+            "url": "https://www.letrot.com" + href,
+            "date": date,
+            "meeting_id": meeting_id,
+            "course_no": course_no,
+            "course_no_int": _p37_to_int_or_none(course_no),
+            "scheduled_time": scheduled_time,
+            "label": label,
+        })
+
+    return out
+
+
+def _p385_match_course_href_by_course_no_and_time(candidate, hrefs):
+    """
+    Match prudent :
+    - course_no exact obligatoire ;
+    - scheduled_time exact fortement prioritaire ;
+    - si plusieurs Cx existent sans heure exacte, refus.
+    """
+    if not isinstance(candidate, dict):
+        candidate = {}
+
+    if not isinstance(hrefs, list):
+        hrefs = []
+
+    c_course_no = _p37_to_int_or_none(
+        candidate.get("course_no_int")
+        or candidate.get("course_no")
+        or candidate.get("num_course")
+    )
+
+    c_time = str(candidate.get("scheduled_time") or "ND").strip()
+
+    scored = []
+
+    for item in hrefs:
+        if not isinstance(item, dict):
+            continue
+
+        i_course_no = _p37_to_int_or_none(item.get("course_no_int") or item.get("course_no"))
+        i_time = str(item.get("scheduled_time") or "ND").strip()
+
+        score = 0
+        reasons = []
+
+        if c_course_no is not None and i_course_no == c_course_no:
+            score += 5
+            reasons.append("COURSE_NO_MATCH")
+        else:
+            continue
+
+        if c_time not in ("", "ND") and i_time == c_time:
+            score += 8
+            reasons.append("SCHEDULED_TIME_MATCH")
+
+        if score > 0:
+            scored.append({
+                "score": score,
+                "reason_codes": reasons,
+                "item": item,
+            })
+
+    if not scored:
+        return {
+            "ok": False,
+            "reason": "NO_RAW_HTML_HREF_MATCH_COURSE",
+            "detail_url": "ND",
+            "detail_path": "ND",
+            "detail_label": "ND",
+            "detail_match_score": 0,
+            "detail_match_reason_codes": [],
+            "scored_hrefs_sample": [],
+        }
+
+    scored = sorted(scored, key=lambda x: x.get("score", 0), reverse=True)
+    best = scored[0]
+    best_score = best.get("score", 0)
+
+    # S?curit? : sans match heure, plusieurs C7 possibles => refus.
+    best_reasons = best.get("reason_codes", [])
+    if "SCHEDULED_TIME_MATCH" not in best_reasons:
+        same_score_count = sum(1 for x in scored if x.get("score", 0) == best_score)
+        if same_score_count > 1:
+            return {
+                "ok": False,
+                "reason": "AMBIGUOUS_COURSE_NO_ONLY_HREF_MATCH",
+                "detail_url": "ND",
+                "detail_path": "ND",
+                "detail_label": "ND",
+                "detail_match_score": best_score,
+                "detail_match_reason_codes": best_reasons,
+                "scored_hrefs_sample": [
+                    {
+                        "score": x.get("score", 0),
+                        "reason_codes": x.get("reason_codes", []),
+                        "url": (x.get("item", {}) or {}).get("url", "ND"),
+                        "label": (x.get("item", {}) or {}).get("label", "ND"),
+                    }
+                    for x in scored[:10]
+                ],
+            }
+
+    item = best.get("item", {}) or {}
+
+    return {
+        "ok": True,
+        "reason": "RAW_HTML_HREF_MATCHED_BY_COURSE_NO_AND_TIME",
+        "detail_url": item.get("url", "ND"),
+        "detail_path": item.get("path", "ND"),
+        "detail_label": item.get("label", "ND"),
+        "detail_match_score": best_score,
+        "detail_match_reason_codes": best_reasons,
+        "scored_hrefs_sample": [
+            {
+                "score": x.get("score", 0),
+                "reason_codes": x.get("reason_codes", []),
+                "url": (x.get("item", {}) or {}).get("url", "ND"),
+                "label": (x.get("item", {}) or {}).get("label", "ND"),
+                "course_no": (x.get("item", {}) or {}).get("course_no", "ND"),
+                "scheduled_time": (x.get("item", {}) or {}).get("scheduled_time", "ND"),
+            }
+            for x in scored[:10]
+        ],
+    }
+
+
 @app.get("/action/letrot-detail-url-discovery-preview", dependencies=[Depends(require_api_key)])
 def action_letrot_detail_url_discovery_preview():
     """
@@ -16753,6 +16978,38 @@ def action_letrot_detail_url_discovery_preview():
         "detail_match_reason_codes": [],
     }
 
+    # V0_9_31B2_8_5_FEED_RAW_HTML_HREFS_TO_DISCOVERY
+    raw_html_fetch_for_discovery = _p385_fetch_letrot_raw_html_for_discovery()
+    raw_html_course_hrefs = []
+
+    if raw_html_fetch_for_discovery.get("ok"):
+        raw_html_course_hrefs = _p385_extract_letrot_course_hrefs_from_raw_html(
+            raw_html_fetch_for_discovery.get("raw_html", "")
+        )
+
+        raw_match = _p385_match_course_href_by_course_no_and_time(candidate, raw_html_course_hrefs)
+
+        if raw_match.get("ok"):
+            matched_detail_url = raw_match
+
+            if isinstance(candidate, dict):
+                candidate["detail_url"] = raw_match.get("detail_url", "ND")
+                candidate["detail_path"] = raw_match.get("detail_path", "ND")
+                candidate["detail_label"] = raw_match.get("detail_label", "ND")
+                candidate["detail_url_match_status"] = raw_match.get("reason", "ND")
+                candidate["detail_url_match_score"] = raw_match.get("detail_match_score", 0)
+                candidate["detail_url_match_reason_codes"] = raw_match.get("detail_match_reason_codes", [])
+
+            observed_urls.append({
+                "source": "raw_html_href_course_no_time_match",
+                "detail_url": raw_match.get("detail_url", "ND"),
+                "detail_path": raw_match.get("detail_path", "ND"),
+                "detail_label": raw_match.get("detail_label", "ND"),
+                "detail_url_match_status": raw_match.get("reason", "ND"),
+                "detail_url_match_score": raw_match.get("detail_match_score", 0),
+                "detail_url_match_reason_codes": raw_match.get("detail_match_reason_codes", []),
+            })
+
     # 3) Si candidate a d?j? un detail_url, c?est le meilleur signal.
     if isinstance(candidate, dict) and candidate.get("detail_url") not in (None, "", "ND"):
         matched_detail_url = {
@@ -16804,6 +17061,15 @@ def action_letrot_detail_url_discovery_preview():
         "letrot_index_has_raw_html_oui_non": "oui" if raw_html else "non",
         "letrot_index_raw_html_chars": len(raw_html),
         "raw_html_extract_error": raw_html_extract_error,
+        "raw_html_fetch_for_discovery": {
+            "ok": raw_html_fetch_for_discovery.get("ok", False),
+            "source_function": raw_html_fetch_for_discovery.get("source_function", "ND"),
+            "source_key": raw_html_fetch_for_discovery.get("source_key", "ND"),
+            "raw_html_chars": raw_html_fetch_for_discovery.get("raw_html_chars", 0),
+            "errors": raw_html_fetch_for_discovery.get("errors", []),
+        },
+        "raw_html_course_href_count": len(raw_html_course_hrefs),
+        "raw_html_course_hrefs_sample": raw_html_course_hrefs[:20],
         "observed_url_count_from_candidates": observed_url_count_from_candidates,
         "observed_detail_url_count": len(observed_urls),
         "observed_detail_urls_sample": observed_urls[:20],
