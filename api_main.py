@@ -16262,7 +16262,7 @@ def _p3810_fix2_enrich_capture_rows_course_identity(rows, context_payload, selec
 
     return {
         "ok": True,
-        "version": "capture_rows_course_identity_enrichment_v0_9_31b2_8_10_fix2a",
+        "version": "capture_rows_course_identity_enrichment_v0_9_31b2_8_10_fix2b",
         "rows": enriched,
         "rows_total": len(enriched),
         "rows_with_course_uid": filled_count,
@@ -16296,7 +16296,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "ok": True,
             "reason": "NOT_OFFICIAL_RUNNER_STATUS_LATEST",
             "target_blob": target,
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2a",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2b",
         }
 
     path = Path(local_path)
@@ -16306,7 +16306,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "reason": "CAPTURE_REJECTED_LOCAL_CSV_ABSENT",
             "target_blob": target,
             "local_path": str(path),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2a",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2b",
         }
 
     try:
@@ -16320,7 +16320,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "reason": f"CAPTURE_REJECTED_LOCAL_CSV_READ_ERROR:{type(exc).__name__}:{exc}",
             "target_blob": target,
             "local_path": str(path),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2a",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2b",
         }
 
     try:
@@ -16331,7 +16331,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "reason": f"CAPTURE_REJECTED_LOCAL_CSV_PARSE_ERROR:{type(exc).__name__}:{exc}",
             "target_blob": target,
             "local_path": str(path),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2a",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2b",
         }
 
     rows = csv_payload.get("rows", []) if isinstance(csv_payload, dict) else []
@@ -16344,7 +16344,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "target_blob": target,
             "local_path": str(path),
             "fieldnames": fieldnames,
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2a",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2b",
         }
 
     try:
@@ -16356,7 +16356,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "target_blob": target,
             "local_path": str(path),
             "rows_total": len(rows),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2a",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2b",
         }
 
     if not isinstance(active_context, dict) or not active_context.get("ok"):
@@ -16367,7 +16367,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "local_path": str(path),
             "rows_total": len(rows),
             "active_context_ok": active_context.get("ok", "ND") if isinstance(active_context, dict) else "CONTEXT_NOT_DICT",
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2a",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2b",
         }
 
     matched = []
@@ -16443,7 +16443,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "active_context_fields": active_fields,
             "csv_fieldnames": fieldnames,
             "rejected_sample": rejected_sample,
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2a",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2b",
             "strict_allowed_oui_non": "non",
             "ticket_strict": "NO_BET",
         }
@@ -16457,7 +16457,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
         "rows_matched_active_context": len(matched),
         "active_context_fields": active_fields,
         "matched_sample": matched[:5],
-        "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2a",
+        "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2b",
     }
 
 
@@ -16471,7 +16471,7 @@ def _p38_upload_file_to_gcs(local_path, blob_name, content_type="text/csv"):
         guard = {
             "ok": False,
             "reason": "OFFICIAL_LATEST_GUARD_NOT_DICT",
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2a",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix2b",
         }
 
     if not guard.get("ok"):
@@ -17751,6 +17751,54 @@ def action_official_runner_status_letrot_detail_capture():
         "race_name": (base_capture.get("context_course_fields", {}) or {}).get("race_name", "ND"),
     }
 
+    # V0_9_31B2_8_10_FIX2B_HYDRATE_DETAIL_CAPTURE_CONTEXT
+    detail_context_hydration = {
+        "ok": False,
+        "version": "detail_capture_context_hydration_v0_9_31b2_8_10_fix2b",
+        "reason": "NOT_APPLIED",
+        "strict_allowed_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
+    try:
+        if context_payload.get("course_uid") in (None, "", "ND"):
+            latest_ctx = action_latest_h5_auto_context()
+            if isinstance(latest_ctx, dict) and latest_ctx.get("ok"):
+                for key in ["course_uid", "course_slug", "runners_count", "reunion_no", "course_no", "scheduled_time", "race_name"]:
+                    value = latest_ctx.get(key)
+                    if value not in (None, "", "ND") and context_payload.get(key) in (None, "", "ND"):
+                        context_payload[key] = value
+
+                detail_context_hydration = {
+                    "ok": True,
+                    "version": "detail_capture_context_hydration_v0_9_31b2_8_10_fix2b",
+                    "reason": "HYDRATED_FROM_LATEST_H5_AUTO_CONTEXT",
+                    "course_uid": context_payload.get("course_uid", "ND"),
+                    "course_slug": context_payload.get("course_slug", "ND"),
+                    "runners_count": context_payload.get("runners_count", "ND"),
+                    "strict_allowed_oui_non": "non",
+                    "ticket_strict": "NO_BET",
+                }
+            else:
+                detail_context_hydration = {
+                    "ok": False,
+                    "version": "detail_capture_context_hydration_v0_9_31b2_8_10_fix2b",
+                    "reason": "LATEST_H5_AUTO_CONTEXT_UNAVAILABLE",
+                    "strict_allowed_oui_non": "non",
+                    "ticket_strict": "NO_BET",
+                }
+
+        context_payload = _p372_force_enriched_course_context(context_payload)
+
+    except Exception as exc:
+        detail_context_hydration = {
+            "ok": False,
+            "version": "detail_capture_context_hydration_v0_9_31b2_8_10_fix2b",
+            "reason": f"HYDRATION_ERROR:{type(exc).__name__}:{exc}",
+            "strict_allowed_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
     selected_course = base_capture.get("selected_course", {}) or {}
     if not isinstance(selected_course, dict):
         selected_course = {}
@@ -17870,7 +17918,7 @@ def action_official_runner_status_letrot_detail_capture():
 
     capture_rows_course_identity_enrichment = {
         "ok": False,
-        "version": "capture_rows_course_identity_enrichment_v0_9_31b2_8_10_fix2a",
+        "version": "capture_rows_course_identity_enrichment_v0_9_31b2_8_10_fix2b",
         "reason": "NOT_APPLIED_VALIDATION_KO",
         "strict_allowed_oui_non": "non",
         "ticket_strict": "NO_BET",
@@ -17916,6 +17964,7 @@ def action_official_runner_status_letrot_detail_capture():
         "checked_at_utc": checked_at_utc,
         "course_uid": context_payload.get("course_uid", "ND"),
         "context_course_fields": context_payload,
+        "detail_context_hydration": detail_context_hydration,
         "base_capture_status": base_capture.get("capture_status", "ND"),
         "base_selected_course_found_oui_non": base_capture.get("selected_course_found_oui_non", "ND"),
         "base_selected_course_source": base_capture.get("selected_course_source", "ND"),
@@ -18061,7 +18110,7 @@ def action_official_runner_status_letrot_capture():
 
     capture_rows_course_identity_enrichment = {
         "ok": False,
-        "version": "capture_rows_course_identity_enrichment_v0_9_31b2_8_10_fix2a",
+        "version": "capture_rows_course_identity_enrichment_v0_9_31b2_8_10_fix2b",
         "reason": "NOT_APPLIED_VALIDATION_KO",
         "strict_allowed_oui_non": "non",
         "ticket_strict": "NO_BET",
