@@ -3156,7 +3156,11 @@ def drive_run_h5_url_resolver():
 
 
 @app.post("/drive/run/h5-auto-capture", dependencies=[Depends(require_api_key)])
-def drive_run_h5_auto_capture():
+def drive_run_h5_auto_capture(
+    force_technical_capture: str = "non",
+    force_course_uid_contains: str = "",
+    force_capture_label: str = "",
+):
     """
     Capture HTML ZEturf pour les snapshots H10/H5 dus.
     Aucun ticket strict.
@@ -3174,6 +3178,15 @@ def drive_run_h5_auto_capture():
     paris_tz = ZoneInfo("Europe/Paris")
     now = datetime.now(paris_tz).replace(microsecond=0)
     now_iso = now.isoformat()
+
+    # V0_9_31B2_4_2D_FORCE_TECHNICAL_CAPTURE
+    force_technical_capture_oui_non = (
+        "oui"
+        if str(force_technical_capture or "").strip().lower() in {"oui", "yes", "true", "1"}
+        else "non"
+    )
+    force_course_uid_contains_norm = str(force_course_uid_contains or "").strip().lower()
+    force_capture_label_norm = str(force_capture_label or "").strip().upper()
 
     resolved_path = Path("data/output/h5_auto_plan_resolved.csv")
 
@@ -3218,7 +3231,30 @@ def drive_run_h5_auto_capture():
             })
             continue
 
-        if not _h5auto_is_due_capture(row, now_iso):
+        if force_technical_capture_oui_non == "oui":
+            if force_course_uid_contains_norm and force_course_uid_contains_norm not in course_uid.lower():
+                skipped.append({
+                    "course_uid": course_uid,
+                    "capture_label": capture_label,
+                    "reason": "FORCE_FILTER_COURSE_NOT_MATCHED",
+                    "force_course_uid_contains": force_course_uid_contains,
+                    "status": status,
+                })
+                continue
+
+            if force_capture_label_norm and capture_label.upper() != force_capture_label_norm:
+                skipped.append({
+                    "course_uid": course_uid,
+                    "capture_label": capture_label,
+                    "reason": "FORCE_FILTER_CAPTURE_LABEL_NOT_MATCHED",
+                    "force_capture_label": force_capture_label,
+                    "status": status,
+                })
+                continue
+
+        is_due_capture = _h5auto_is_due_capture(row, now_iso)
+
+        if not is_due_capture and force_technical_capture_oui_non != "oui":
             skipped.append({
                 "course_uid": course_uid,
                 "capture_label": capture_label,
@@ -3259,6 +3295,7 @@ def drive_run_h5_auto_capture():
             odds_json_blob = f"gpi-lite/outputs/odds/{slug}_odds.json"
 
             # V0_9_31B2_4_2C_CLOUD_CAPTURE_HTML_GCS
+# V0_9_31B2_4_2D_FORCE_TECHNICAL_CAPTURE
             # Le HTML doit etre uploade avant write_odds_csv afin que le CSV contienne html_gcs_*.
             upload_html = _h5auto_upload_file_to_gcs(html_path, html_blob)
 
@@ -3317,6 +3354,18 @@ def drive_run_h5_auto_capture():
                 "upload_html_ok": upload_html.get("ok"),
                 "upload_odds_csv_ok": upload_odds_csv.get("ok"),
                 "upload_odds_json_ok": upload_odds_json.get("ok"),
+                "html_gcs_enrich_error": html_gcs_enrich_error,
+                "capture_due_oui_non": "oui" if is_due_capture else "non",
+                "force_technical_capture_oui_non": force_technical_capture_oui_non,
+                "backfill_technical_oui_non": "oui" if force_technical_capture_oui_non == "oui" else "non",
+                "strict_kpi_excluded_oui_non": "oui" if force_technical_capture_oui_non == "oui" else "non",
+                "strict_kpi_exclusion_reason": (
+                    "FORCE_TECHNICAL_CAPTURE_NOT_PRE_RACE"
+                    if force_technical_capture_oui_non == "oui"
+                    else "ND"
+                ),
+                "strict_allowed_oui_non": "non",
+                "strict_usable_oui_non": "non",
                 "ticket_strict": "NO_BET",
             })
 
@@ -3329,6 +3378,17 @@ def drive_run_h5_auto_capture():
                 "url": url,
                 "html_size": html_capture.get("html_size"),
                 "odds_rows": 0,
+                "capture_due_oui_non": "oui" if is_due_capture else "non",
+                "force_technical_capture_oui_non": force_technical_capture_oui_non,
+                "backfill_technical_oui_non": "oui" if force_technical_capture_oui_non == "oui" else "non",
+                "strict_kpi_excluded_oui_non": "oui" if force_technical_capture_oui_non == "oui" else "non",
+                "strict_kpi_exclusion_reason": (
+                    "FORCE_TECHNICAL_CAPTURE_NOT_PRE_RACE"
+                    if force_technical_capture_oui_non == "oui"
+                    else "ND"
+                ),
+                "strict_allowed_oui_non": "non",
+                "strict_usable_oui_non": "non",
                 "ticket_strict": "NO_BET",
             })
 
@@ -3384,6 +3444,16 @@ def drive_run_h5_auto_capture():
         "capture_error_count": len([c for c in captures if not c.get("ok")]),
         "skipped_count": len(skipped),
         "odds_rows_total": odds_rows_total,
+        "force_technical_capture_oui_non": force_technical_capture_oui_non,
+        "force_course_uid_contains": force_course_uid_contains,
+        "force_capture_label": force_capture_label,
+        "backfill_technical_oui_non": "oui" if force_technical_capture_oui_non == "oui" else "non",
+        "strict_kpi_excluded_oui_non": "oui" if force_technical_capture_oui_non == "oui" else "non",
+        "strict_kpi_exclusion_reason": (
+            "FORCE_TECHNICAL_CAPTURE_NOT_PRE_RACE"
+            if force_technical_capture_oui_non == "oui"
+            else "ND"
+        ),
         "captures_sample": captures[:10],
         "skipped_sample": skipped[:10],
         "strict_allowed_oui_non": "non",
