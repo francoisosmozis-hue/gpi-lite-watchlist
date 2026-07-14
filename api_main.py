@@ -17085,6 +17085,53 @@ def action_letrot_detail_url_discovery_preview():
     }
 
 
+
+# V0_9_31B2_8_6_FEED_DISCOVERED_DETAIL_URL_INTO_CAPTURE
+def _p386_apply_discovered_detail_url_to_selected_course(selected_course):
+    """
+    Injecte dans selected_course une detail_url observ?e par la discovery.
+    Ne construit aucune URL.
+    """
+    if not isinstance(selected_course, dict):
+        selected_course = {}
+
+    detail_url_discovery = {}
+
+    try:
+        detail_url_discovery = action_letrot_detail_url_discovery_preview()
+    except Exception as exc:
+        detail_url_discovery = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    matched = {}
+    if isinstance(detail_url_discovery, dict):
+        matched = detail_url_discovery.get("matched_detail_url", {}) or {}
+
+    applied = False
+    reason = "NO_DISCOVERED_DETAIL_URL_APPLIED"
+
+    if isinstance(matched, dict) and matched.get("ok") and matched.get("detail_url") not in (None, "", "ND"):
+        selected_course["detail_url"] = matched.get("detail_url", "ND")
+        selected_course["detail_path"] = matched.get("detail_path", "ND")
+        selected_course["detail_label"] = matched.get("detail_label", "ND")
+        selected_course["detail_url_match_status"] = matched.get("reason", "ND")
+        selected_course["detail_url_match_score"] = matched.get("detail_match_score", 0)
+        selected_course["detail_url_match_reason_codes"] = matched.get("detail_match_reason_codes", [])
+        selected_course["detail_url_source"] = "letrot_detail_url_discovery_preview"
+        applied = True
+        reason = "DISCOVERED_DETAIL_URL_APPLIED"
+
+    return {
+        "selected_course": selected_course,
+        "detail_url_discovery": detail_url_discovery,
+        "matched_detail_url": matched,
+        "applied_oui_non": "oui" if applied else "non",
+        "reason": reason,
+    }
+
+
 @app.post("/action/official-runner-status-letrot-detail-capture", dependencies=[Depends(require_api_key)])
 def action_official_runner_status_letrot_detail_capture():
     """
@@ -17122,6 +17169,13 @@ def action_official_runner_status_letrot_detail_capture():
     }
 
     selected_course = base_capture.get("selected_course", {}) or {}
+    if not isinstance(selected_course, dict):
+        selected_course = {}
+
+    # V0_9_31B2_8_6_FEED_DISCOVERED_DETAIL_URL_INTO_CAPTURE
+    discovered_detail_url_application = _p386_apply_discovered_detail_url_to_selected_course(selected_course)
+    selected_course = discovered_detail_url_application.get("selected_course", selected_course)
+
     if not isinstance(selected_course, dict):
         selected_course = {}
 
@@ -17263,6 +17317,7 @@ def action_official_runner_status_letrot_detail_capture():
         "base_selected_course_found_oui_non": base_capture.get("selected_course_found_oui_non", "ND"),
         "base_selected_course_source": base_capture.get("selected_course_source", "ND"),
         "selected_course": selected_course,
+        "discovered_detail_url_application": discovered_detail_url_application,
         "possible_detail_urls": possible_urls,
         "possible_detail_url_count": len(possible_urls),
         "detail_fetch": detail_fetch,
