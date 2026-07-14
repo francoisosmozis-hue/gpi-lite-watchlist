@@ -12395,7 +12395,7 @@ def _p31_find_official_np_statut_rows_for_course(course_uid):
     if not wanted or wanted == "nd":
         return None, "COURSE_UID_ND", {
             "download_official_status": {"ok": False, "reason": "COURSE_UID_ND"},
-            "reader_version": "p31_reuse_b2_official_reader_v0_9_31b2_9",
+            "reader_version": "p31_reuse_b2_official_reader_v0_9_31b2_9_fix1",
             "strict_allowed_oui_non": "non",
             "ticket_strict": "NO_BET",
         }
@@ -12416,7 +12416,7 @@ def _p31_find_official_np_statut_rows_for_course(course_uid):
     )
 
     diagnostics = {
-        "reader_version": "p31_reuse_b2_official_reader_v0_9_31b2_9",
+        "reader_version": "p31_reuse_b2_official_reader_v0_9_31b2_9_fix1",
         "download_official_status": download_status,
         "official_status_read_result": {
             "ok": read_result.get("ok", False) if isinstance(read_result, dict) else False,
@@ -12446,16 +12446,18 @@ def _p31_find_official_np_statut_rows_for_course(course_uid):
     rows = csv_payload.get("rows", []) if isinstance(csv_payload, dict) else []
     fieldnames = csv_payload.get("fieldnames", []) if isinstance(csv_payload, dict) else []
 
+    # V0_9_31B2_9_FIX1_NON_RECURSIVE_P31_READER
+    # Ne jamais appeler _p372_force_enriched_course_context ici :
+    # action_latest_h5_auto_context -> _p31 -> _p372 peut creer une recursion indirecte.
+    # Le match officiel se fait par course_uid exact, suffisant depuis B2.8.10-fix2b.
     context_payload = {
         "course_uid": course_uid,
         "strict_allowed_oui_non": "non",
         "ticket_strict": "NO_BET",
     }
 
-    try:
-        context_payload = _p372_force_enriched_course_context(context_payload)
-    except Exception as exc:
-        diagnostics["p31_context_force_error"] = f"{type(exc).__name__}:{exc}"
+    diagnostics["p31_context_force_skipped_oui_non"] = "oui"
+    diagnostics["p31_context_force_skip_reason"] = "NON_RECURSIVE_P31_READER_B2_9_FIX1"
 
     try:
         column_audit = _p37_classify_official_runner_status_columns(fieldnames)
