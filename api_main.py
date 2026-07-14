@@ -15676,6 +15676,434 @@ def _p372_force_enriched_course_context(payload):
     return payload
 
 
+
+# V0_9_31B2_8_LETROT_RUNNER_STATUS_CAPTURE
+def _p38_pick_any(obj, keys, default="ND"):
+    if not isinstance(obj, dict):
+        return default
+
+    lower = {str(k).strip().lower(): k for k in obj.keys()}
+
+    for key in keys:
+        lk = str(key).strip().lower()
+        if lk in lower:
+            value = obj.get(lower[lk])
+            if value not in (None, ""):
+                return value
+
+    return default
+
+
+def _p38_to_np_oui_non(value, statut="ND"):
+    raw = _p37_norm_text(value)
+    statut_norm = _p37_norm_text(statut)
+
+    if raw in {"oui", "yes", "true", "1", "np", "non partant", "nonpartant"}:
+        return "oui"
+
+    if raw in {"non", "no", "false", "0", "partant", "p"}:
+        return "non"
+
+    if statut_norm in {"np", "non partant", "nonpartant", "forfait", "non partant officiel"}:
+        return "oui"
+
+    if statut_norm in {"partant", "partant officiel", "ok", "running", "en course"}:
+        return "non"
+
+    return "ND"
+
+
+def _p38_extract_runner_list_from_payload(payload):
+    """
+    Cherche une liste de partants dans un objet LeTrot d?j? disponible.
+
+    Cette fonction ne scrape pas et n'invente rien.
+    Elle accepte uniquement des listes d?j? structur?es.
+    """
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "reason": "PAYLOAD_NOT_DICT",
+            "source_key": "ND",
+            "raw_runners": [],
+        }
+
+    candidate_keys = [
+        "runners",
+        "runner_status",
+        "partants",
+        "participants",
+        "chevaux",
+        "starters",
+        "horses",
+        "engages",
+        "entries",
+        "declares",
+    ]
+
+    for key in candidate_keys:
+        value = _p38_pick_any(payload, [key], None)
+        if isinstance(value, list) and value:
+            return {
+                "ok": True,
+                "reason": "STRUCTURED_RUNNER_LIST_FOUND",
+                "source_key": key,
+                "raw_runners": value,
+            }
+
+    # Cherche un niveau imbriqu? simple.
+    for parent_key in ["course", "selected_course", "details", "payload", "data"]:
+        parent = _p38_pick_any(payload, [parent_key], None)
+        if isinstance(parent, dict):
+            nested = _p38_extract_runner_list_from_payload(parent)
+            if nested.get("ok"):
+                nested["source_key"] = f"{parent_key}.{nested.get('source_key', 'ND')}"
+                return nested
+
+    return {
+        "ok": False,
+        "reason": "STRUCTURED_RUNNER_LIST_ABSENT",
+        "source_key": "ND",
+        "raw_runners": [],
+    }
+
+
+def _p38_normalize_official_runner(row, context_payload, selected_course):
+    if not isinstance(row, dict):
+        row = {}
+
+    numero = _p38_pick_any(row, [
+        "numero", "num", "no", "n", "runner_no", "numPmu", "num_pmu", "numeroPmu"
+    ], "ND")
+
+    cheval = _p38_pick_any(row, [
+        "cheval", "nom", "name", "horse", "runner", "nomCheval", "nom_cheval", "libelle"
+    ], "ND")
+
+    statut = _p38_pick_any(row, [
+        "statut", "status", "runner_status", "statut_partant", "etat", "etat_partant"
+    ], "ND")
+
+    is_np_raw = _p38_pick_any(row, [
+        "is_np", "np", "non_partant", "nonpartant", "isNonPartant", "nonPartant"
+    ], "ND")
+
+    is_np = _p38_to_np_oui_non(is_np_raw, statut)
+
+    if statut in (None, "", "ND"):
+        statut = "NP" if is_np == "oui" else "PARTANT" if is_np == "non" else "ND"
+
+    return {
+        "course_uid": context_payload.get("course_uid", "ND"),
+        "reunion_no": context_payload.get("reunion_no", "ND"),
+        "course_no": context_payload.get("course_no", "ND"),
+        "scheduled_time": context_payload.get("scheduled_time", "ND"),
+        "race_name": context_payload.get("race_name", "ND"),
+        "numero": numero,
+        "cheval": cheval,
+        "statut": statut,
+        "is_np": is_np,
+        "official_source": "LETROT_MATCHED_COURSE_SELECTED_PAYLOAD",
+        "statut_source": "LETROT_MATCHED_COURSE_SELECTED_PAYLOAD",
+        "np_statut_confidence": "HIGH" if numero not in ("", "ND") and cheval not in ("", "ND") and is_np != "ND" else "LOW",
+    }
+
+
+def _p38_validate_official_runner_rows(rows):
+    if not isinstance(rows, list):
+        rows = []
+
+    reason_codes = []
+
+    if not rows:
+        return {
+            "ok": False,
+            "status": "NO_RUNNER_ROWS",
+            "reason_codes": ["NO_RUNNER_ROWS"],
+            "rows_count": 0,
+            "missing_numero_count": 0,
+            "missing_cheval_count": 0,
+            "missing_is_np_count": 0,
+            "np_count": 0,
+        }
+
+    missing_numero = sum(1 for r in rows if r.get("numero") in (None, "", "ND"))
+    missing_cheval = sum(1 for r in rows if r.get("cheval") in (None, "", "ND"))
+    missing_is_np = sum(1 for r in rows if r.get("is_np") in (None, "", "ND"))
+    np_count = sum(1 for r in rows if r.get("is_np") == "oui")
+
+    if missing_numero:
+        reason_codes.append("RUNNER_NUMERO_MISSING")
+    if missing_cheval:
+        reason_codes.append("RUNNER_NAME_MISSING")
+    if missing_is_np:
+        reason_codes.append("RUNNER_IS_NP_MISSING")
+
+    if reason_codes:
+        return {
+            "ok": False,
+            "status": "RUNNER_ROWS_INCOMPLETE",
+            "reason_codes": reason_codes,
+            "rows_count": len(rows),
+            "missing_numero_count": missing_numero,
+            "missing_cheval_count": missing_cheval,
+            "missing_is_np_count": missing_is_np,
+            "np_count": np_count,
+        }
+
+    return {
+        "ok": True,
+        "status": "RUNNER_ROWS_COMPLETE",
+        "reason_codes": ["RUNNER_ROWS_COMPLETE"],
+        "rows_count": len(rows),
+        "missing_numero_count": 0,
+        "missing_cheval_count": 0,
+        "missing_is_np_count": 0,
+        "np_count": np_count,
+    }
+
+
+def _p38_write_csv_rows_utf8sig(path_obj, rows):
+    import csv
+    from pathlib import Path
+
+    path_obj = Path(path_obj)
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "course_uid",
+        "reunion_no",
+        "course_no",
+        "scheduled_time",
+        "race_name",
+        "numero",
+        "cheval",
+        "statut",
+        "is_np",
+        "official_source",
+        "statut_source",
+        "np_statut_confidence",
+        "checked_at_utc",
+    ]
+
+    with path_obj.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore", delimiter=";")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+    return str(path_obj)
+
+
+def _p38_upload_file_to_gcs(local_path, blob_name, content_type="text/csv"):
+    import os
+    from pathlib import Path
+
+    bucket_name = (
+        os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+        or "gpi-lite-watchlist-data"
+    )
+
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        blob.upload_from_filename(str(local_path), content_type=content_type)
+
+        return {
+            "ok": True,
+            "reason": "UPLOADED",
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"GCS_UPLOAD_ERROR:{type(exc).__name__}:{exc}",
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+        }
+
+
+@app.post("/action/official-runner-status-letrot-capture", dependencies=[Depends(require_api_key)])
+def action_official_runner_status_letrot_capture():
+    """
+    GPI V0_9_31B2.8
+    Capture prudente des partants/NP officiels depuis la course LeTrot match?e.
+
+    N'?crit official_runner_status_latest.csv que si une liste structur?e
+    de partants existe r?ellement dans selected_course ou payload associ?.
+
+    Ne peut jamais ouvrir le strict.
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path
+    import json
+
+    checked_at_utc = datetime.now(timezone.utc).isoformat()
+
+    try:
+        context_payload = action_latest_h5_auto_context()
+    except Exception as exc:
+        context_payload = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    if not isinstance(context_payload, dict):
+        context_payload = {}
+
+    try:
+        context_payload = _p372_force_enriched_course_context(context_payload)
+    except Exception:
+        try:
+            context_payload = _p361_apply_course_level_context_overlay(context_payload)
+        except Exception:
+            pass
+
+    try:
+        letrot_match = action_letrot_course_match_preview()
+    except Exception as exc:
+        letrot_match = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    selected_course = {}
+    if isinstance(letrot_match, dict):
+        selected_course = letrot_match.get("selected_course", {}) or {}
+
+    if not isinstance(selected_course, dict):
+        selected_course = {}
+
+    extraction = _p38_extract_runner_list_from_payload(selected_course)
+
+    capture_status = "OFFICIAL_RUNNER_STATUS_NOT_CAPTURED"
+    reason_codes = []
+
+    if not isinstance(letrot_match, dict) or not letrot_match.get("ok"):
+        reason_codes.append("LETROT_COURSE_MATCH_PREVIEW_UNAVAILABLE")
+
+    if not selected_course:
+        reason_codes.append("SELECTED_COURSE_ABSENT")
+
+    if not extraction.get("ok"):
+        reason_codes.append(extraction.get("reason", "STRUCTURED_RUNNER_LIST_ABSENT"))
+
+    normalized_rows = []
+
+    if extraction.get("ok"):
+        for raw_row in extraction.get("raw_runners", []):
+            if isinstance(raw_row, dict):
+                row = _p38_normalize_official_runner(raw_row, context_payload, selected_course)
+                row["checked_at_utc"] = checked_at_utc
+                normalized_rows.append(row)
+
+    validation = _p38_validate_official_runner_rows(normalized_rows)
+
+    uploads = {
+        "latest": {
+            "ok": False,
+            "reason": "NOT_UPLOADED_NO_VALID_CAPTURE",
+        },
+        "course_scoped": {
+            "ok": False,
+            "reason": "NOT_UPLOADED_NO_VALID_CAPTURE",
+        },
+    }
+
+    local_paths = {
+        "latest": "ND",
+        "course_scoped": "ND",
+    }
+
+    if validation.get("ok"):
+        capture_status = "OFFICIAL_RUNNER_STATUS_CAPTURED"
+        reason_codes.extend(validation.get("reason_codes", []))
+
+        slug = context_payload.get("course_slug")
+        if not slug:
+            try:
+                slug = _p36_safe_slug(context_payload.get("course_uid", "ND"))
+            except Exception:
+                slug = "nd"
+
+        latest_path = Path("data/output/official_runner_status_latest.csv")
+        course_path = Path("data/output/official_runner_status") / f"{slug}_official_runner_status.csv"
+
+        local_paths["latest"] = _p38_write_csv_rows_utf8sig(latest_path, normalized_rows)
+        local_paths["course_scoped"] = _p38_write_csv_rows_utf8sig(course_path, normalized_rows)
+
+        uploads["latest"] = _p38_upload_file_to_gcs(
+            latest_path,
+            "gpi-lite/outputs/official_runner_status_latest.csv",
+            content_type="text/csv",
+        )
+        uploads["course_scoped"] = _p38_upload_file_to_gcs(
+            course_path,
+            f"gpi-lite/outputs/official_runner_status/{slug}_official_runner_status.csv",
+            content_type="text/csv",
+        )
+    else:
+        reason_codes.extend(validation.get("reason_codes", []))
+
+    # Diagnostic JSON toujours ?crit localement, mais le CSV latest officiel n'est pas ?cras? si capture KO.
+    diagnostic = {
+        "ok": True,
+        "phase": "official_runner_status_letrot_capture",
+        "capture_version": "official_runner_status_letrot_capture_v0_9_31b2_8",
+        "checked_at_utc": checked_at_utc,
+        "course_uid": context_payload.get("course_uid", "ND"),
+        "context_course_fields": {
+            "reunion_no": context_payload.get("reunion_no", "ND"),
+            "course_no": context_payload.get("course_no", "ND"),
+            "scheduled_time": context_payload.get("scheduled_time", "ND"),
+            "race_name": context_payload.get("race_name", "ND"),
+        },
+        "letrot_match_ok": letrot_match.get("ok", False) if isinstance(letrot_match, dict) else False,
+        "letrot_course_match_status": letrot_match.get("course_match_status", "ND") if isinstance(letrot_match, dict) else "ND",
+        "letrot_course_level_input_status": letrot_match.get("course_level_input_status", "ND") if isinstance(letrot_match, dict) else "ND",
+        "selected_course": selected_course,
+        "runner_extraction_ok": extraction.get("ok", False),
+        "runner_extraction_reason": extraction.get("reason", "ND"),
+        "runner_extraction_source_key": extraction.get("source_key", "ND"),
+        "raw_runner_count": len(extraction.get("raw_runners", [])),
+        "normalized_runner_count": len(normalized_rows),
+        "validation": validation,
+        "capture_status": capture_status,
+        "reason_codes": reason_codes,
+        "local_paths": local_paths,
+        "uploads": uploads,
+        "official_runner_status_available_oui_non": "oui" if validation.get("ok") else "non",
+        "official_join_ok_oui_non": "oui" if validation.get("ok") else "non",
+        "matched_runner_status_sample": normalized_rows[:20],
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "doctrine": (
+            "Capture officielle prudente depuis selected_course LeTrot. "
+            "Aucun partant invente. Aucun strict ouvert."
+        ),
+    }
+
+    try:
+        Path("data/output").mkdir(parents=True, exist_ok=True)
+        diag_path = Path("data/output/official_runner_status_letrot_capture_latest.json")
+        diag_path.write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
+        diagnostic["diagnostic_local_path"] = str(diag_path)
+    except Exception as exc:
+        diagnostic["diagnostic_write_error"] = f"{type(exc).__name__}:{exc}"
+
+    return diagnostic
+
+
 @app.get("/action/official-runner-status-course-level-preview", dependencies=[Depends(require_api_key)])
 def action_official_runner_status_course_level_preview():
     """
