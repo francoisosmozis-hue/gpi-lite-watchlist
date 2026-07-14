@@ -17623,16 +17623,21 @@ def action_official_runner_status_letrot_capture():
     if not extraction.get("ok"):
         reason_codes.append(extraction.get("reason", "STRUCTURED_RUNNER_LIST_ABSENT"))
 
-    normalized_rows = []
+    normalized_rows_raw = []
 
     if extraction.get("ok"):
         for raw_row in extraction.get("raw_runners", []):
             if isinstance(raw_row, dict):
                 row = _p38_normalize_official_runner(raw_row, context_payload, selected_course)
                 row["checked_at_utc"] = checked_at_utc
-                normalized_rows.append(row)
+                normalized_rows_raw.append(row)
 
-    validation = _p38_validate_official_runner_rows(normalized_rows)
+    # V0_9_31B2_8_7_HARDEN_DETAIL_RUNNER_TABLE_EXTRACTION
+    hardened_filter = _p387_filter_hardened_runner_rows(normalized_rows_raw)
+    normalized_rows = hardened_filter.get("rows", [])
+    runner_row_filter_audit = hardened_filter.get("audit", {})
+
+    validation = _p387_validate_hardened_runner_rows(normalized_rows, runner_row_filter_audit)
 
     uploads = {
         "latest": {
@@ -17705,7 +17710,9 @@ def action_official_runner_status_letrot_capture():
         "runner_extraction_reason": extraction.get("reason", "ND"),
         "runner_extraction_source_key": extraction.get("source_key", "ND"),
         "raw_runner_count": len(extraction.get("raw_runners", [])),
+        "normalized_runner_raw_count": len(normalized_rows_raw),
         "normalized_runner_count": len(normalized_rows),
+        "runner_row_filter_audit": runner_row_filter_audit,
         "validation": validation,
         "capture_status": capture_status,
         "reason_codes": reason_codes,
