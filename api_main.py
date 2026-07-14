@@ -17137,6 +17137,8 @@ def _p386_apply_discovered_detail_url_to_selected_course(selected_course):
 def _p387_clean_runner_name(value):
     """
     Nettoie un nom cheval issu du HTML LeTrot.
+    V0_9_31B2.8.8 : durcit la suppression des IDs num?riques finaux
+    m?me lorsqu'ils sont suivis de glyphes parasites.
     Ne fabrique pas de nom : si la valeur est inutilisable, renvoie ND.
     """
     import re
@@ -17145,14 +17147,28 @@ def _p387_clean_runner_name(value):
     txt = str(value or "").strip()
     txt = unescape(txt)
     txt = re.sub(r"<[^>]+>", " ", txt)
+
+    # Normalisation des apostrophes / entit?s fr?quentes.
+    txt = txt.replace("&#039;", "'")
+    txt = txt.replace("&apos;", "'")
+
+    # Supprime glyphes parasites connus avant et apr?s nettoyage.
     txt = txt.replace("?", " ")
+    txt = txt.replace("?", " ")
+    txt = txt.replace("\ufffd", " ")
+
     txt = re.sub(r"\s+", " ", txt).strip()
 
-    # Supprime les IDs num?riques finaux fr?quents dans le HTML.
+    # Supprime une s?quence finale : nombre d'identification + ?ventuels glyphes non lettres.
+    # Exemples : "KHEOPS DU VAAL 9187 ?" -> "KHEOPS DU VAAL"
+    #            "KELLE BELLE JASMA 974 ?" -> "KELLE BELLE JASMA"
+    txt = re.sub(r"\s+\d{2,6}(?:\s*[^A-Za-z?-??-??-?0-9'\-]+)*\s*$", "", txt).strip()
+
+    # Deuxi?me passage au cas o? un glyphe ?tait coll? ? l'ID.
     txt = re.sub(r"\s+\d{2,6}\s*$", "", txt).strip()
 
-    # Supprime ponctuation r?siduelle finale.
-    txt = re.sub(r"[\uFFFD?]+$", "", txt).strip()
+    # Supprime r?sidus finaux non utiles.
+    txt = re.sub(r"[^A-Za-z?-??-??-?0-9'\- ]+$", "", txt).strip()
     txt = re.sub(r"\s+", " ", txt).strip()
 
     if not txt:
