@@ -15931,6 +15931,112 @@ def _p38_upload_file_to_gcs(local_path, blob_name, content_type="text/csv"):
         }
 
 
+
+# V0_9_31B2_8_1_SELECTED_COURSE_FALLBACK
+def _p381_extract_best_candidate_from_source_preview(source_preview):
+    """
+    Recupere la meilleure candidate LeTrot depuis zeturf-course-level-source-preview.
+    Ne scrape rien. Ne fabrique aucun partant.
+    """
+    if not isinstance(source_preview, dict):
+        return {
+            "ok": False,
+            "reason": "SOURCE_PREVIEW_NOT_DICT",
+            "selected_course": {},
+            "source": "ND",
+        }
+
+    compare = source_preview.get("zeturf_letrot_course_compare", {})
+    if not isinstance(compare, dict):
+        return {
+            "ok": False,
+            "reason": "COMPARE_NOT_DICT",
+            "selected_course": {},
+            "source": "ND",
+        }
+
+    # Cas le plus probable : best_candidate ou selected_candidate.
+    for key in ["selected_course", "best_candidate", "candidate", "matched_candidate"]:
+        value = compare.get(key)
+        if isinstance(value, dict) and value:
+            return {
+                "ok": True,
+                "reason": f"{key.upper()}_FOUND",
+                "selected_course": value,
+                "source": f"source_preview.zeturf_letrot_course_compare.{key}",
+            }
+
+    # Cas fr?quent : scored_candidates[0].candidate.
+    scored = compare.get("scored_candidates") or compare.get("candidates") or compare.get("candidate_courses")
+    if isinstance(scored, list) and scored:
+        first = scored[0]
+        if isinstance(first, dict):
+            candidate = first.get("candidate", first)
+            if isinstance(candidate, dict) and candidate:
+                return {
+                    "ok": True,
+                    "reason": "SCORED_CANDIDATES_FIRST_FOUND",
+                    "selected_course": candidate,
+                    "source": "source_preview.zeturf_letrot_course_compare.scored_candidates[0].candidate",
+                }
+
+    return {
+        "ok": False,
+        "reason": "NO_BEST_CANDIDATE_IN_SOURCE_PREVIEW",
+        "selected_course": {},
+        "source": "ND",
+    }
+
+
+def _p381_get_selected_course_for_runner_capture(letrot_match):
+    """
+    Selection robuste de la course LeTrot match?e pour B2.8.
+    Priorit? :
+    1. selected_course de letrot-course-match-preview ;
+    2. best candidate de zeturf-course-level-source-preview.
+    """
+    if isinstance(letrot_match, dict):
+        selected = letrot_match.get("selected_course", {}) or {}
+        if isinstance(selected, dict) and selected:
+            return {
+                "ok": True,
+                "selected_course": selected,
+                "selected_course_source": "letrot_course_match_preview.selected_course",
+                "selected_course_reason": "SELECTED_COURSE_FROM_LETROT_PREVIEW",
+                "fallback_source_preview_used_oui_non": "non",
+            }
+
+    try:
+        source_preview = action_zeturf_course_level_source_preview()
+    except Exception as exc:
+        source_preview = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    fallback = _p381_extract_best_candidate_from_source_preview(source_preview)
+
+    if fallback.get("ok"):
+        return {
+            "ok": True,
+            "selected_course": fallback.get("selected_course", {}),
+            "selected_course_source": fallback.get("source", "source_preview"),
+            "selected_course_reason": fallback.get("reason", "SOURCE_PREVIEW_FALLBACK"),
+            "fallback_source_preview_used_oui_non": "oui",
+            "source_preview_course_uid": source_preview.get("course_uid", "ND") if isinstance(source_preview, dict) else "ND",
+            "source_preview_official_join_ok_oui_non": source_preview.get("official_join_ok_oui_non", "ND") if isinstance(source_preview, dict) else "ND",
+        }
+
+    return {
+        "ok": False,
+        "selected_course": {},
+        "selected_course_source": "ND",
+        "selected_course_reason": fallback.get("reason", "SELECTED_COURSE_NOT_FOUND"),
+        "fallback_source_preview_used_oui_non": "oui",
+        "source_preview_error": source_preview.get("error", "ND") if isinstance(source_preview, dict) else "SOURCE_PREVIEW_NOT_DICT",
+    }
+
+
 @app.post("/action/official-runner-status-letrot-capture", dependencies=[Depends(require_api_key)])
 def action_official_runner_status_letrot_capture():
     """
@@ -15975,9 +16081,8 @@ def action_official_runner_status_letrot_capture():
             "error": f"{type(exc).__name__}:{exc}",
         }
 
-    selected_course = {}
-    if isinstance(letrot_match, dict):
-        selected_course = letrot_match.get("selected_course", {}) or {}
+    selected_course_pick = _p381_get_selected_course_for_runner_capture(letrot_match)
+    selected_course = selected_course_pick.get("selected_course", {}) if isinstance(selected_course_pick, dict) else {}
 
     if not isinstance(selected_course, dict):
         selected_course = {}
@@ -15992,6 +16097,8 @@ def action_official_runner_status_letrot_capture():
 
     if not selected_course:
         reason_codes.append("SELECTED_COURSE_ABSENT")
+    else:
+        reason_codes.append("SELECTED_COURSE_FOUND")
 
     if not extraction.get("ok"):
         reason_codes.append(extraction.get("reason", "STRUCTURED_RUNNER_LIST_ABSENT"))
@@ -16070,6 +16177,10 @@ def action_official_runner_status_letrot_capture():
         "letrot_course_match_status": letrot_match.get("course_match_status", "ND") if isinstance(letrot_match, dict) else "ND",
         "letrot_course_level_input_status": letrot_match.get("course_level_input_status", "ND") if isinstance(letrot_match, dict) else "ND",
         "selected_course": selected_course,
+        "selected_course_found_oui_non": "oui" if selected_course else "non",
+        "selected_course_source": selected_course_pick.get("selected_course_source", "ND") if isinstance(selected_course_pick, dict) else "ND",
+        "selected_course_reason": selected_course_pick.get("selected_course_reason", "ND") if isinstance(selected_course_pick, dict) else "ND",
+        "selected_course_fallback_source_preview_used_oui_non": selected_course_pick.get("fallback_source_preview_used_oui_non", "ND") if isinstance(selected_course_pick, dict) else "ND",
         "runner_extraction_ok": extraction.get("ok", False),
         "runner_extraction_reason": extraction.get("reason", "ND"),
         "runner_extraction_source_key": extraction.get("source_key", "ND"),
