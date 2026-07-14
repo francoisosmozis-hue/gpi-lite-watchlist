@@ -11540,6 +11540,18 @@ def action_latest_h5_auto_context():
     payload["strict_usable_oui_non"] = "non"
     payload["ticket_strict"] = "NO_BET"
 
+
+    # V0_9_31B2_6_1_COURSE_SCOPED_CONTEXT_FALLBACK
+    fallback_overlay = _p361_read_course_scoped_h5_context_for_overlay(payload)
+    if isinstance(fallback_overlay, dict) and isinstance(fallback_overlay.get("merged_payload"), dict):
+        payload = fallback_overlay["merged_payload"]
+    else:
+        payload["course_level_context_fallback_overlay_applied_oui_non"] = "non"
+        payload["course_level_context_fallback_overlay_error"] = "FALLBACK_OVERLAY_NOT_APPLIED"
+
+    payload = _p361_apply_course_level_context_overlay(payload)
+
+
     return payload
 
 @app.get("/action/h5-decision-preview")
@@ -14641,6 +14653,240 @@ def _p34_extract_course_level_source_from_context(context_payload):
 
 
 # V0_9_31B2_6_COURSE_LEVEL_CONTEXT_SYNC
+
+# V0_9_31B2_6_1_COURSE_SCOPED_CONTEXT_FALLBACK
+def _p361_read_course_scoped_h5_context_for_overlay(payload, bucket_name=None):
+    """
+    Lit le contexte H5 course-specific si latest_h5_auto_context ne contient pas
+    encore les champs course-level propages.
+
+    Ne peut jamais ouvrir le strict.
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "reason": "PAYLOAD_NOT_DICT",
+            "merged_payload": payload,
+        }
+
+    course_uid = str(payload.get("course_uid") or payload.get("course_key") or "ND")
+    if not course_uid or course_uid == "ND":
+        return {
+            "ok": False,
+            "reason": "COURSE_UID_ABSENT",
+            "merged_payload": payload,
+        }
+
+    try:
+        slug = _p36_safe_slug(course_uid)
+    except Exception:
+        slug = str(payload.get("course_slug") or "").strip()
+
+    if not slug:
+        return {
+            "ok": False,
+            "reason": "COURSE_SLUG_ABSENT",
+            "merged_payload": payload,
+        }
+
+    blob_name = f"gpi-lite/outputs/h5_contexts/{slug}_h5_auto_context.json"
+
+    bucket_name = (
+        bucket_name
+        or os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+        or "gpi-lite-watchlist-data"
+    )
+
+    candidate_payload = None
+    read_source = "ND"
+    read_error = "ND"
+
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+
+        if blob.exists():
+            raw = blob.download_as_text(encoding="utf-8")
+            candidate_payload = json.loads(raw)
+            read_source = "gcs_course_scoped_context"
+        else:
+            read_error = "GCS_COURSE_SCOPED_CONTEXT_ABSENT"
+    except Exception as exc:
+        read_error = f"GCS_READ_ERROR:{type(exc).__name__}:{exc}"
+
+    if not isinstance(candidate_payload, dict):
+        local_path = Path("data/output/h5_contexts") / f"{slug}_h5_auto_context.json"
+        if local_path.exists():
+            try:
+                candidate_payload = json.loads(local_path.read_text(encoding="utf-8-sig"))
+                read_source = "local_course_scoped_context"
+                read_error = "ND"
+            except Exception as exc:
+                read_error = f"LOCAL_READ_ERROR:{type(exc).__name__}:{exc}"
+
+    if not isinstance(candidate_payload, dict):
+        payload["course_level_context_fallback_overlay_version"] = "course_scoped_context_fallback_overlay_v0_9_31b2_6_1"
+        payload["course_level_context_fallback_overlay_applied_oui_non"] = "non"
+        payload["course_level_context_fallback_overlay_source"] = "none"
+        payload["course_level_context_fallback_overlay_error"] = read_error
+        payload["course_level_context_fallback_overlay_blob"] = blob_name
+        payload["strict_allowed_oui_non"] = "non"
+        payload["strict_usable_oui_non"] = "non"
+        payload["ticket_strict"] = "NO_BET"
+        return {
+            "ok": False,
+            "reason": read_error,
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "merged_payload": payload,
+        }
+
+    merged = dict(payload)
+
+    safe_keys = [
+        "reunion_no",
+        "course_no",
+        "scheduled_time",
+        "race_name",
+        "course_level_context_sync_version",
+        "course_level_context_sync_status",
+        "course_level_context_sync_checked_at_utc",
+        "course_level_context_sync_missing_fields",
+        "course_level_context_sync_source",
+        "course_level_validated_fields",
+        "course_level_official_join_ok_oui_non",
+        "course_level_match_status",
+        "course_level_match_best_score",
+        "course_level_match_reason_codes",
+        "course_level_time_guard_status",
+        "course_level_time_guard_reason_codes",
+    ]
+
+    merged_keys = []
+
+    for key in safe_keys:
+        value = candidate_payload.get(key)
+        if value not in (None, "", "ND"):
+            if merged.get(key) in (None, "", "ND") or key.startswith("course_level_"):
+                merged[key] = value
+                merged_keys.append(key)
+
+    fields = merged.get("course_level_validated_fields", {})
+    if isinstance(fields, dict):
+        for key in ["reunion_no", "course_no", "scheduled_time", "race_name"]:
+            value = fields.get(key)
+            if value not in (None, "", "ND") and merged.get(key) in (None, "", "ND"):
+                merged[key] = value
+                if key not in merged_keys:
+                    merged_keys.append(key)
+
+    merged["course_level_context_fallback_overlay_version"] = "course_scoped_context_fallback_overlay_v0_9_31b2_6_1"
+    merged["course_level_context_fallback_overlay_applied_oui_non"] = "oui" if merged_keys else "non"
+    merged["course_level_context_fallback_overlay_source"] = read_source
+    merged["course_level_context_fallback_overlay_blob"] = blob_name
+    merged["course_level_context_fallback_overlay_merged_keys"] = merged_keys
+    merged["course_level_context_fallback_overlay_error"] = "ND"
+
+    merged["strict_allowed_oui_non"] = "non"
+    merged["strict_usable_oui_non"] = "non"
+    merged["ticket_strict"] = "NO_BET"
+
+    return {
+        "ok": True,
+        "reason": "COURSE_SCOPED_CONTEXT_MERGED",
+        "bucket": bucket_name,
+        "blob": blob_name,
+        "source": read_source,
+        "merged_keys": merged_keys,
+        "merged_payload": merged,
+    }
+
+
+def _p361_apply_course_level_context_overlay(payload):
+    """
+    Recopie les metadonnees course-level validees dans les champs top-level
+    attendus par les previews LeTrot.
+
+    Ne peut jamais ouvrir le strict.
+    """
+    if not isinstance(payload, dict):
+        return payload
+
+    fields = payload.get("course_level_validated_fields", {})
+    if not isinstance(fields, dict):
+        fields = {}
+
+    aliases = {
+        "reunion_no": [
+            "reunion_no",
+            "reunion_num",
+            "num_reunion",
+            "course_level_reunion_no",
+            "latest_reunion_no",
+        ],
+        "course_no": [
+            "course_no",
+            "course_num",
+            "num_course",
+            "course_level_course_no",
+            "latest_course_no",
+        ],
+        "scheduled_time": [
+            "scheduled_time",
+            "course_time",
+            "start_time",
+            "heure_depart",
+            "course_level_scheduled_time",
+            "latest_scheduled_time",
+        ],
+        "race_name": [
+            "race_name",
+            "course_name",
+            "prix",
+            "course_level_race_name",
+            "latest_race_name",
+        ],
+    }
+
+    overlay_applied = []
+    overlay_missing = []
+
+    for canonical, keys in aliases.items():
+        value = fields.get(canonical, "ND")
+
+        if value in (None, "", "ND"):
+            overlay_missing.append(canonical)
+            continue
+
+        if payload.get(canonical) in (None, "", "ND"):
+            payload[canonical] = value
+            overlay_applied.append(canonical)
+
+        for key in keys:
+            if payload.get(key) in (None, "", "ND"):
+                payload[key] = value
+
+    payload["course_level_context_overlay_version"] = "course_level_context_overlay_v0_9_31b2_6_1"
+    payload["course_level_context_overlay_applied_fields"] = overlay_applied
+    payload["course_level_context_overlay_missing_fields"] = overlay_missing
+    payload["course_level_context_overlay_applied_oui_non"] = "oui" if overlay_applied else "non"
+
+    payload["strict_allowed_oui_non"] = "non"
+    payload["strict_usable_oui_non"] = "non"
+    payload["ticket_strict"] = "NO_BET"
+
+    return payload
+
+
 def _p36_safe_slug(value):
     import re
     import unicodedata
@@ -14845,6 +15091,8 @@ def action_zeturf_course_level_context_sync():
     enriched_context["strict_usable_oui_non"] = "non"
     enriched_context["ticket_strict"] = "NO_BET"
     enriched_context["Segment_ROI"] = "NO_BET"
+
+    enriched_context = _p361_apply_course_level_context_overlay(enriched_context)
 
     course_uid = str(enriched_context.get("course_uid", "ND"))
     slug = _p36_safe_slug(course_uid)
