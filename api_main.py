@@ -15140,6 +15140,490 @@ def action_zeturf_course_level_context_sync():
     }
 
 
+
+# V0_9_31B2_7_OFFICIAL_RUNNER_STATUS_COURSE_JOIN
+def _p37_norm_text(value):
+    import re
+    import unicodedata
+
+    raw = str(value or "").strip()
+    raw = "".join(
+        c for c in unicodedata.normalize("NFD", raw)
+        if unicodedata.category(c) != "Mn"
+    )
+    raw = raw.lower()
+    raw = raw.replace("&", " et ")
+    raw = re.sub(r"[^a-z0-9]+", " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip()
+    return raw
+
+
+def _p37_pick(row, keys, default="ND"):
+    if not isinstance(row, dict):
+        return default
+
+    lower = {str(k).strip().lower(): k for k in row.keys()}
+
+    for key in keys:
+        lk = str(key).strip().lower()
+        if lk in lower:
+            value = row.get(lower[lk])
+            if value not in (None, ""):
+                return value
+
+    return default
+
+
+def _p37_to_int_or_none(value):
+    import re
+
+    raw = str(value or "").strip().upper()
+    if raw in ("", "ND", "NONE", "NULL"):
+        return None
+
+    try:
+        return int(float(raw))
+    except Exception:
+        pass
+
+    m = re.search(r"(?<!\d)(?:C|R|N|NO|NUMERO)?\s*(\d{1,2})(?!\d)", raw)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            return None
+
+    return None
+
+
+def _p37_bool_np(value):
+    raw = _p37_norm_text(value)
+
+    if raw in {"oui", "yes", "true", "1", "np", "non partant", "nonpartant"}:
+        return "oui"
+
+    if raw in {"non", "no", "false", "0", "partant", "p"}:
+        return "non"
+
+    return "ND"
+
+
+def _p37_csv_rows_from_text(text):
+    import csv
+    import io
+
+    raw = str(text or "")
+    if not raw.strip():
+        return {
+            "ok": False,
+            "reason": "CSV_EMPTY",
+            "fieldnames": [],
+            "rows": [],
+        }
+
+    sample = raw[:4096]
+
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,|\t,")
+    except Exception:
+        dialect = csv.excel
+        dialect.delimiter = ";"
+
+    reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
+    rows = list(reader)
+    fieldnames = list(reader.fieldnames or [])
+
+    return {
+        "ok": True,
+        "reason": "CSV_READ",
+        "fieldnames": fieldnames,
+        "rows": rows,
+    }
+
+
+def _p37_read_text_local_or_gcs(local_candidates, gcs_candidates, bucket_name=None):
+    import os
+    from pathlib import Path
+
+    bucket_name = (
+        bucket_name
+        or os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+        or "gpi-lite-watchlist-data"
+    )
+
+    errors = []
+
+    for blob_name in gcs_candidates:
+        try:
+            from google.cloud import storage
+
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+
+            if blob.exists():
+                return {
+                    "ok": True,
+                    "source": "gcs",
+                    "bucket": bucket_name,
+                    "path": blob_name,
+                    "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+                    "text": blob.download_as_text(encoding="utf-8"),
+                    "errors": errors,
+                }
+
+            errors.append(f"GCS_ABSENT:{blob_name}")
+        except Exception as exc:
+            errors.append(f"GCS_ERROR:{blob_name}:{type(exc).__name__}:{exc}")
+
+    for local_path in local_candidates:
+        lp = Path(local_path)
+        if not lp.exists():
+            errors.append(f"LOCAL_ABSENT:{local_path}")
+            continue
+
+        try:
+            return {
+                "ok": True,
+                "source": "local",
+                "bucket": bucket_name,
+                "path": str(lp),
+                "gcs_uri": "ND",
+                "text": lp.read_text(encoding="utf-8-sig"),
+                "errors": errors,
+            }
+        except Exception as exc:
+            errors.append(f"LOCAL_ERROR:{local_path}:{type(exc).__name__}:{exc}")
+
+    return {
+        "ok": False,
+        "source": "none",
+        "bucket": bucket_name,
+        "path": "ND",
+        "gcs_uri": "ND",
+        "text": "",
+        "errors": errors,
+    }
+
+
+def _p37_classify_official_runner_status_columns(fieldnames):
+    cols = {str(c).strip().lower(): c for c in fieldnames or []}
+
+    def has_any(keys):
+        return any(str(k).strip().lower() in cols for k in keys)
+
+    return {
+        "has_course_uid": has_any(["course_uid", "course_key"]),
+        "has_reunion_no": has_any(["reunion_no", "reunion", "num_reunion", "reunion_num", "r"]),
+        "has_course_no": has_any(["course_no", "num_course", "course_num", "c", "course_no_int"]),
+        "has_scheduled_time": has_any(["scheduled_time", "course_time", "start_time", "heure_depart", "heure"]),
+        "has_race_name": has_any(["race_name", "course_name", "prix", "libelle"]),
+        "has_numero": has_any(["numero", "num", "no", "n", "runner_no"]),
+        "has_cheval": has_any(["cheval", "runner", "horse", "nom_cheval", "name"]),
+        "has_statut": has_any(["statut", "status", "runner_status", "statut_partant"]),
+        "has_is_np": has_any(["is_np", "np", "non_partant", "nonpartant"]),
+        "has_official_source": has_any(["official_source", "source_officielle", "source", "official_source_kind"]),
+        "has_confidence": has_any(["np_statut_confidence", "confidence", "official_confidence"]),
+    }
+
+
+def _p37_row_matches_course(row, context):
+    if not isinstance(row, dict):
+        return {
+            "match": False,
+            "score": 0,
+            "reason_codes": ["ROW_NOT_DICT"],
+        }
+
+    if not isinstance(context, dict):
+        context = {}
+
+    reasons = []
+    score = 0
+
+    ctx_course_uid = _p37_norm_text(context.get("course_uid") or context.get("course_key"))
+    row_course_uid = _p37_norm_text(_p37_pick(row, ["course_uid", "course_key"], ""))
+
+    if ctx_course_uid and row_course_uid and ctx_course_uid == row_course_uid:
+        score += 8
+        reasons.append("COURSE_UID_MATCH")
+
+    ctx_reunion = _p37_to_int_or_none(context.get("reunion_no"))
+    row_reunion = _p37_to_int_or_none(_p37_pick(row, ["reunion_no", "reunion", "num_reunion", "reunion_num", "r"], ""))
+
+    if ctx_reunion is not None and row_reunion is not None and ctx_reunion == row_reunion:
+        score += 3
+        reasons.append("REUNION_NO_MATCH")
+
+    ctx_course_no = _p37_to_int_or_none(context.get("course_no"))
+    row_course_no = _p37_to_int_or_none(_p37_pick(row, ["course_no", "num_course", "course_num", "c", "course_no_int"], ""))
+
+    if ctx_course_no is not None and row_course_no is not None and ctx_course_no == row_course_no:
+        score += 4
+        reasons.append("COURSE_NO_MATCH")
+
+    ctx_time = _p37_norm_text(context.get("scheduled_time"))
+    row_time = _p37_norm_text(_p37_pick(row, ["scheduled_time", "course_time", "start_time", "heure_depart", "heure"], ""))
+
+    if ctx_time and row_time and ctx_time == row_time:
+        score += 3
+        reasons.append("SCHEDULED_TIME_MATCH")
+
+    ctx_race = _p37_norm_text(context.get("race_name"))
+    row_race = _p37_norm_text(_p37_pick(row, ["race_name", "course_name", "prix", "libelle"], ""))
+
+    if ctx_race and row_race:
+        ctx_tokens = set(ctx_race.split())
+        row_tokens = set(row_race.split())
+        inter = len(ctx_tokens & row_tokens)
+        union = max(1, len(ctx_tokens | row_tokens))
+        similarity = inter / union
+
+        if similarity >= 0.60:
+            score += 2
+            reasons.append("RACE_NAME_MATCH")
+
+    # Match robuste minimal :
+    # - course_uid exact ; OU
+    # - reunion + course_no ; OU
+    # - course_no + scheduled_time.
+    robust = (
+        "COURSE_UID_MATCH" in reasons
+        or ("REUNION_NO_MATCH" in reasons and "COURSE_NO_MATCH" in reasons)
+        or ("COURSE_NO_MATCH" in reasons and "SCHEDULED_TIME_MATCH" in reasons)
+    )
+
+    return {
+        "match": bool(robust),
+        "score": score,
+        "reason_codes": reasons or ["NO_COURSE_MATCH"],
+    }
+
+
+def _p37_normalize_runner_status_row(row):
+    numero = _p37_pick(row, ["numero", "num", "no", "n", "runner_no"], "ND")
+    cheval = _p37_pick(row, ["cheval", "runner", "horse", "nom_cheval", "name"], "ND")
+    statut = _p37_pick(row, ["statut", "status", "runner_status", "statut_partant"], "ND")
+    is_np_raw = _p37_pick(row, ["is_np", "np", "non_partant", "nonpartant"], "ND")
+    source = _p37_pick(row, ["official_source", "source_officielle", "source", "official_source_kind"], "ND")
+    confidence = _p37_pick(row, ["np_statut_confidence", "confidence", "official_confidence"], "ND")
+
+    is_np = _p37_bool_np(is_np_raw)
+
+    if is_np == "ND":
+        statut_norm = _p37_norm_text(statut)
+        if statut_norm in {"np", "non partant", "nonpartant", "non partant officiel"}:
+            is_np = "oui"
+        elif statut_norm in {"partant", "partant officiel", "ok", "running"}:
+            is_np = "non"
+
+    return {
+        "numero": numero,
+        "cheval": cheval,
+        "statut": statut,
+        "is_np": is_np,
+        "official_source": source,
+        "np_statut_confidence": confidence,
+    }
+
+
+@app.get("/action/official-runner-status-course-level-preview", dependencies=[Depends(require_api_key)])
+def action_official_runner_status_course_level_preview():
+    """
+    GPI V0_9_31B2.7
+    Jointure preview des statuts officiels partants/NP au niveau course precise.
+
+    Lecture seule.
+    Ne scrape pas de nouveaux partants.
+    Ne valide jamais le strict.
+    """
+    from datetime import datetime, timezone
+
+    checked_at_utc = datetime.now(timezone.utc).isoformat()
+
+    try:
+        context_payload = action_latest_h5_auto_context()
+    except Exception as exc:
+        context_payload = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    if not isinstance(context_payload, dict) or not context_payload.get("ok"):
+        return {
+            "ok": False,
+            "phase": "official_runner_status_course_level_preview",
+            "preview_version": "official_runner_status_course_level_preview_v0_9_31b2_7",
+            "checked_at_utc": checked_at_utc,
+            "reason": "LATEST_H5_AUTO_CONTEXT_UNAVAILABLE",
+            "context_error": context_payload.get("error", "ND") if isinstance(context_payload, dict) else "CONTEXT_NOT_DICT",
+            "official_runner_status_available_oui_non": "non",
+            "official_join_ok_oui_non": "non",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    context_course_fields = {
+        "course_uid": context_payload.get("course_uid", "ND"),
+        "reunion_no": context_payload.get("reunion_no", "ND"),
+        "course_no": context_payload.get("course_no", "ND"),
+        "scheduled_time": context_payload.get("scheduled_time", "ND"),
+        "race_name": context_payload.get("race_name", "ND"),
+        "course_level_context_sync_status": context_payload.get("course_level_context_sync_status", "ND"),
+        "course_level_official_join_ok_oui_non": context_payload.get("course_level_official_join_ok_oui_non", "ND"),
+    }
+
+    read_result = _p37_read_text_local_or_gcs(
+        local_candidates=[
+            "data/output/official_runner_status_latest.csv",
+            "data/output/official_runner_status.csv",
+            "data/input/official_runner_status_latest.csv",
+            "data/input/official_runner_status.csv",
+        ],
+        gcs_candidates=[
+            "gpi-lite/outputs/official_runner_status_latest.csv",
+            "gpi-lite/outputs/official_runner_status.csv",
+        ],
+    )
+
+    if not read_result.get("ok"):
+        return {
+            "ok": True,
+            "phase": "official_runner_status_course_level_preview",
+            "preview_version": "official_runner_status_course_level_preview_v0_9_31b2_7",
+            "checked_at_utc": checked_at_utc,
+            "course_uid": context_payload.get("course_uid", "ND"),
+            "context_course_fields": context_course_fields,
+            "official_status_source_read_ok": "non",
+            "official_status_read_errors": read_result.get("errors", []),
+            "official_runner_status_available_oui_non": "non",
+            "official_runner_status_unavailable_reason": "OFFICIAL_RUNNER_STATUS_SOURCE_ABSENT",
+            "official_join_ok_oui_non": "non",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+            "Segment_ROI": "NO_BET",
+        }
+
+    csv_payload = _p37_csv_rows_from_text(read_result.get("text", ""))
+
+    fieldnames = csv_payload.get("fieldnames", [])
+    rows = csv_payload.get("rows", [])
+    column_audit = _p37_classify_official_runner_status_columns(fieldnames)
+
+    matched = []
+    rejected_sample = []
+
+    for row in rows:
+        match_info = _p37_row_matches_course(row, context_payload)
+        if match_info.get("match"):
+            normalized = _p37_normalize_runner_status_row(row)
+            normalized["match_score"] = match_info.get("score", 0)
+            normalized["match_reason_codes"] = match_info.get("reason_codes", [])
+            matched.append(normalized)
+        elif len(rejected_sample) < 8:
+            rejected_sample.append({
+                "match_score": match_info.get("score", 0),
+                "match_reason_codes": match_info.get("reason_codes", []),
+                "course_uid": _p37_pick(row, ["course_uid", "course_key"], "ND"),
+                "reunion_no": _p37_pick(row, ["reunion_no", "reunion", "num_reunion", "reunion_num", "r"], "ND"),
+                "course_no": _p37_pick(row, ["course_no", "num_course", "course_num", "c", "course_no_int"], "ND"),
+                "scheduled_time": _p37_pick(row, ["scheduled_time", "course_time", "start_time", "heure_depart", "heure"], "ND"),
+                "race_name": _p37_pick(row, ["race_name", "course_name", "prix", "libelle"], "ND"),
+            })
+
+    missing_runner_columns = []
+
+    for flag, logical in [
+        ("has_numero", "numero"),
+        ("has_cheval", "cheval"),
+        ("has_statut", "statut"),
+        ("has_is_np", "is_np"),
+    ]:
+        if not column_audit.get(flag):
+            missing_runner_columns.append(logical)
+
+    statut_missing_count = sum(
+        1 for r in matched
+        if r.get("statut") in (None, "", "ND")
+    )
+    is_np_missing_count = sum(
+        1 for r in matched
+        if r.get("is_np") in (None, "", "ND")
+    )
+    numero_missing_count = sum(
+        1 for r in matched
+        if r.get("numero") in (None, "", "ND")
+    )
+
+    np_count = sum(1 for r in matched if r.get("is_np") == "oui")
+
+    official_source_values = sorted({
+        str(r.get("official_source", "ND"))
+        for r in matched
+        if str(r.get("official_source", "ND")).strip()
+    })
+
+    official_runner_status_available_oui_non = "non"
+    official_status_join_status = "OFFICIAL_RUNNER_STATUS_NOT_AVAILABLE"
+    reason_codes = []
+
+    if missing_runner_columns:
+        reason_codes.append("OFFICIAL_STATUS_REQUIRED_COLUMNS_MISSING")
+        official_status_join_status = "OFFICIAL_STATUS_REQUIRED_COLUMNS_MISSING"
+    elif not matched:
+        reason_codes.append("NO_OFFICIAL_STATUS_ROWS_MATCH_COURSE")
+        official_status_join_status = "NO_OFFICIAL_STATUS_ROWS_MATCH_COURSE"
+    elif statut_missing_count > 0 or is_np_missing_count > 0 or numero_missing_count > 0:
+        reason_codes.append("OFFICIAL_STATUS_ROWS_INCOMPLETE")
+        official_status_join_status = "OFFICIAL_STATUS_ROWS_INCOMPLETE"
+    else:
+        official_runner_status_available_oui_non = "oui"
+        official_status_join_status = "OFFICIAL_STATUS_ROWS_MATCHED_COMPLETE"
+        reason_codes.append("OFFICIAL_STATUS_ROWS_MATCHED_COMPLETE")
+
+    return {
+        "ok": True,
+        "phase": "official_runner_status_course_level_preview",
+        "preview_version": "official_runner_status_course_level_preview_v0_9_31b2_7",
+        "checked_at_utc": checked_at_utc,
+        "course_uid": context_payload.get("course_uid", "ND"),
+        "context_course_fields": context_course_fields,
+        "official_status_source_read_ok": "oui",
+        "official_status_source": read_result.get("source", "ND"),
+        "official_status_source_path": read_result.get("path", "ND"),
+        "official_status_source_gcs_uri": read_result.get("gcs_uri", "ND"),
+        "official_status_csv_fieldnames": fieldnames,
+        "official_status_column_audit": column_audit,
+        "official_status_rows_total": len(rows),
+        "official_status_rows_matched_course": len(matched),
+        "official_status_join_status": official_status_join_status,
+        "official_runner_status_available_oui_non": official_runner_status_available_oui_non,
+        "official_join_ok_oui_non": "oui" if official_runner_status_available_oui_non == "oui" else "non",
+        "reason_codes": reason_codes,
+        "missing_runner_columns": missing_runner_columns,
+        "statut_missing_count": statut_missing_count,
+        "is_np_missing_count": is_np_missing_count,
+        "numero_missing_count": numero_missing_count,
+        "np_count": np_count,
+        "official_source_values": official_source_values,
+        "matched_runner_status_sample": matched[:20],
+        "rejected_rows_sample": rejected_sample,
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "doctrine": (
+            "Preview official runner status course-level. "
+            "Ne valide pas proxy/split/calibration/decision_engine_outputs. "
+            "Strict ferme."
+        ),
+    }
+
+
 @app.get("/action/zeturf-course-level-source-preview")
 def action_zeturf_course_level_source_preview():
     """
