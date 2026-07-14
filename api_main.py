@@ -17132,6 +17132,202 @@ def _p386_apply_discovered_detail_url_to_selected_course(selected_course):
     }
 
 
+
+# V0_9_31B2_8_7_HARDEN_DETAIL_RUNNER_TABLE_EXTRACTION
+def _p387_clean_runner_name(value):
+    """
+    Nettoie un nom cheval issu du HTML LeTrot.
+    Ne fabrique pas de nom : si la valeur est inutilisable, renvoie ND.
+    """
+    import re
+    from html import unescape
+
+    txt = str(value or "").strip()
+    txt = unescape(txt)
+    txt = re.sub(r"<[^>]+>", " ", txt)
+    txt = txt.replace("?", " ")
+    txt = re.sub(r"\s+", " ", txt).strip()
+
+    # Supprime les IDs num?riques finaux fr?quents dans le HTML.
+    txt = re.sub(r"\s+\d{2,6}\s*$", "", txt).strip()
+
+    # Supprime ponctuation r?siduelle finale.
+    txt = re.sub(r"[\uFFFD?]+$", "", txt).strip()
+    txt = re.sub(r"\s+", " ", txt).strip()
+
+    if not txt:
+        return "ND"
+
+    # Rejet : valeur num?rique seule ou quasi num?rique.
+    compact = re.sub(r"[\s\W_]+", "", txt, flags=re.UNICODE)
+    if compact.isdigit():
+        return "ND"
+
+    # Rejet : pas de lettre.
+    if not re.search(r"[A-Za-z?-??-??-?]", txt):
+        return "ND"
+
+    return txt
+
+
+def _p387_normalize_runner_numero(value):
+    """
+    N?accepte que les num?ros de partants strictement num?riques >= 1.
+    Rejette 0, 2e, 3e, rangs d?arriv?e, ND, etc.
+    """
+    raw = str(value or "").strip()
+
+    if not raw.isdigit():
+        return None
+
+    try:
+        no = int(raw)
+    except Exception:
+        return None
+
+    if no < 1 or no > 99:
+        return None
+
+    return no
+
+
+def _p387_filter_hardened_runner_rows(rows):
+    """
+    Filtre les lignes parasites extraites de tableaux HTML.
+    Conserve uniquement les lignes qui ressemblent ? de vrais partants :
+    - numero entier >= 1 ;
+    - cheval textuel avec au moins une lettre ;
+    - numero non dupliqu?.
+    """
+    if not isinstance(rows, list):
+        rows = []
+
+    valid = []
+    rejected = []
+    seen_numero = set()
+
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            rejected.append({
+                "index": idx,
+                "reason": "ROW_NOT_DICT",
+                "row": row,
+            })
+            continue
+
+        numero_raw = row.get("numero", "ND")
+        cheval_raw = row.get("cheval", "ND")
+
+        numero_int = _p387_normalize_runner_numero(numero_raw)
+        cheval_clean = _p387_clean_runner_name(cheval_raw)
+
+        reasons = []
+
+        if numero_int is None:
+            reasons.append("INVALID_NUMERO")
+
+        if cheval_clean == "ND":
+            reasons.append("INVALID_CHEVAL")
+
+        if numero_int is not None and numero_int in seen_numero:
+            reasons.append("DUPLICATE_NUMERO")
+
+        if reasons:
+            rejected.append({
+                "index": idx,
+                "reason": ",".join(reasons),
+                "numero": numero_raw,
+                "cheval": cheval_raw,
+            })
+            continue
+
+        seen_numero.add(numero_int)
+
+        clean_row = dict(row)
+        clean_row["numero"] = str(numero_int)
+        clean_row["cheval"] = cheval_clean
+        clean_row["runner_row_filter_version"] = "hardened_detail_runner_table_filter_v0_9_31b2_8_7"
+        clean_row["runner_row_filter_status"] = "ACCEPTED_NUMERIC_NUMERO_TEXTUAL_CHEVAL"
+
+        # Source plus pr?cise que l?ancien libell? g?n?rique.
+        clean_row["official_source"] = "LETROT_DETAIL_HTML_TABLE_FILTERED"
+        clean_row["statut_source"] = "LETROT_DETAIL_HTML_TABLE_FILTERED"
+
+        # On ?vite HIGH tant que le parser HTML table n?est pas audit? plus finement.
+        clean_row["np_statut_confidence"] = "MEDIUM"
+
+        valid.append(clean_row)
+
+    valid = sorted(valid, key=lambda r: int(r.get("numero", "999")))
+
+    audit = {
+        "filter_version": "hardened_detail_runner_table_filter_v0_9_31b2_8_7",
+        "raw_rows_count": len(rows),
+        "accepted_rows_count": len(valid),
+        "rejected_rows_count": len(rejected),
+        "accepted_numero_min": int(valid[0]["numero"]) if valid else None,
+        "accepted_numero_max": int(valid[-1]["numero"]) if valid else None,
+        "accepted_numeros": [r.get("numero", "ND") for r in valid],
+        "rejected_rows_sample": rejected[:20],
+        "status": "FILTERED_VALID_RUNNERS" if valid else "NO_VALID_RUNNER_AFTER_FILTER",
+    }
+
+    return {
+        "rows": valid,
+        "audit": audit,
+    }
+
+
+def _p387_validate_hardened_runner_rows(rows, filter_audit):
+    """
+    Validation renforc?e post-filtrage.
+    """
+    base_validation = _p38_validate_official_runner_rows(rows)
+
+    reason_codes = []
+    ok = True
+
+    if not base_validation.get("ok"):
+        ok = False
+        reason_codes.extend(base_validation.get("reason_codes", []))
+
+    rows_count = len(rows) if isinstance(rows, list) else 0
+
+    if rows_count < 3:
+        ok = False
+        reason_codes.append("TOO_FEW_VALID_RUNNER_ROWS")
+
+    numeros = []
+    for row in rows:
+        no = _p387_normalize_runner_numero(row.get("numero", "ND")) if isinstance(row, dict) else None
+        if no is None:
+            ok = False
+            reason_codes.append("INVALID_NUMERO_AFTER_FILTER")
+        else:
+            numeros.append(no)
+
+        cheval = _p387_clean_runner_name(row.get("cheval", "ND")) if isinstance(row, dict) else "ND"
+        if cheval == "ND":
+            ok = False
+            reason_codes.append("INVALID_CHEVAL_AFTER_FILTER")
+
+    if len(numeros) != len(set(numeros)):
+        ok = False
+        reason_codes.append("DUPLICATE_NUMERO_AFTER_FILTER")
+
+    if not reason_codes:
+        reason_codes.append("HARDENED_RUNNER_ROWS_COMPLETE")
+
+    return {
+        "ok": ok,
+        "status": "HARDENED_RUNNER_ROWS_COMPLETE" if ok else "HARDENED_RUNNER_ROWS_INVALID",
+        "reason_codes": sorted(set(reason_codes)),
+        "rows_count": rows_count,
+        "base_validation": base_validation,
+        "filter_audit": filter_audit,
+    }
+
+
 @app.post("/action/official-runner-status-letrot-detail-capture", dependencies=[Depends(require_api_key)])
 def action_official_runner_status_letrot_detail_capture():
     """
@@ -17251,16 +17447,21 @@ def action_official_runner_status_letrot_detail_capture():
                 "raw_runners": [],
             }
 
-    normalized_rows = []
+    normalized_rows_raw = []
 
     if extraction.get("ok"):
         for raw_row in extraction.get("raw_runners", []):
             if isinstance(raw_row, dict):
                 row = _p38_normalize_official_runner(raw_row, context_payload, selected_course)
                 row["checked_at_utc"] = checked_at_utc
-                normalized_rows.append(row)
+                normalized_rows_raw.append(row)
 
-    validation = _p38_validate_official_runner_rows(normalized_rows)
+    # V0_9_31B2_8_7_HARDEN_DETAIL_RUNNER_TABLE_EXTRACTION
+    hardened_filter = _p387_filter_hardened_runner_rows(normalized_rows_raw)
+    normalized_rows = hardened_filter.get("rows", [])
+    runner_row_filter_audit = hardened_filter.get("audit", {})
+
+    validation = _p387_validate_hardened_runner_rows(normalized_rows, runner_row_filter_audit)
 
     uploads = {
         "latest": {
@@ -17325,7 +17526,9 @@ def action_official_runner_status_letrot_detail_capture():
         "runner_extraction_reason": extraction.get("reason", "ND"),
         "runner_extraction_source": extraction.get("source", "ND"),
         "raw_runner_count": len(extraction.get("raw_runners", [])),
+        "normalized_runner_raw_count": len(normalized_rows_raw),
         "normalized_runner_count": len(normalized_rows),
+        "runner_row_filter_audit": runner_row_filter_audit,
         "validation": validation,
         "capture_status": capture_status,
         "local_paths": local_paths,
