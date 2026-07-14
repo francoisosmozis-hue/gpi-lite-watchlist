@@ -12377,31 +12377,139 @@ def _p31_official_status_download_latest():
 
 def _p31_find_official_np_statut_rows_for_course(course_uid):
     """
-    Contrat local officiel/simul? V0_9_31B1.
+    V0_9_31B2_9_REUSE_B2_OFFICIAL_READER_IN_P31
 
-    Source attendue :
-    data/output/official_runner_status_latest.csv
+    Remplace la lecture pandas fragile du CSV officiel par la lecture robuste B2 :
+    - _p37_read_text_local_or_gcs
+    - _p37_csv_rows_from_text
+    - _p37_row_matches_course
+    - _p37_normalize_runner_status_row
 
-    Colonnes minimales :
-    course_uid, numero, cheval, statut, is_np,
-    official_source, statut_source, np_statut_confidence, checked_at_utc
+    Lecture seule.
+    Ne scrape rien.
+    N'ouvre jamais le strict.
     """
-    from pathlib import Path
     import pandas as pd
 
-    wanted = _p11_norm_text(course_uid)
+    wanted = _p37_norm_text(course_uid)
     if not wanted or wanted == "nd":
         return None, "COURSE_UID_ND", {
             "download_official_status": {"ok": False, "reason": "COURSE_UID_ND"},
+            "reader_version": "p31_reuse_b2_official_reader_v0_9_31b2_9",
+            "strict_allowed_oui_non": "non",
+            "ticket_strict": "NO_BET",
         }
 
     download_status = _p31_official_status_download_latest()
 
-    candidates = [
-        Path("data/output/official_runner_status_latest.csv"),
-        Path("data/output/official_runner_status.csv"),
-        Path("data/input/official_runner_status_latest.csv"),
-    ]
+    read_result = _p37_read_text_local_or_gcs(
+        local_candidates=[
+            "data/output/official_runner_status_latest.csv",
+            "data/output/official_runner_status.csv",
+            "data/input/official_runner_status_latest.csv",
+            "data/input/official_runner_status.csv",
+        ],
+        gcs_candidates=[
+            "gpi-lite/outputs/official_runner_status_latest.csv",
+            "gpi-lite/outputs/official_runner_status.csv",
+        ],
+    )
+
+    diagnostics = {
+        "reader_version": "p31_reuse_b2_official_reader_v0_9_31b2_9",
+        "download_official_status": download_status,
+        "official_status_read_result": {
+            "ok": read_result.get("ok", False) if isinstance(read_result, dict) else False,
+            "source": read_result.get("source", "ND") if isinstance(read_result, dict) else "READ_RESULT_NOT_DICT",
+            "path": read_result.get("path", "ND") if isinstance(read_result, dict) else "ND",
+            "gcs_uri": read_result.get("gcs_uri", "ND") if isinstance(read_result, dict) else "ND",
+            "errors": read_result.get("errors", []) if isinstance(read_result, dict) else [],
+        },
+        "strict_allowed_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
+    if not isinstance(read_result, dict) or not read_result.get("ok"):
+        diagnostics["official_status_join_status"] = "OFFICIAL_RUNNER_STATUS_SOURCE_ABSENT"
+        diagnostics["official_status_rows_total"] = 0
+        diagnostics["official_status_rows_matched_course"] = 0
+        return None, "OFFICIAL_RUNNER_STATUS_SOURCE_ABSENT", diagnostics
+
+    try:
+        csv_payload = _p37_csv_rows_from_text(read_result.get("text", ""))
+    except Exception as exc:
+        diagnostics["official_status_join_status"] = f"OFFICIAL_STATUS_CSV_PARSE_ERROR:{type(exc).__name__}:{exc}"
+        diagnostics["official_status_rows_total"] = 0
+        diagnostics["official_status_rows_matched_course"] = 0
+        return None, "OFFICIAL_STATUS_CSV_PARSE_ERROR", diagnostics
+
+    rows = csv_payload.get("rows", []) if isinstance(csv_payload, dict) else []
+    fieldnames = csv_payload.get("fieldnames", []) if isinstance(csv_payload, dict) else []
+
+    context_payload = {
+        "course_uid": course_uid,
+        "strict_allowed_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
+    try:
+        context_payload = _p372_force_enriched_course_context(context_payload)
+    except Exception as exc:
+        diagnostics["p31_context_force_error"] = f"{type(exc).__name__}:{exc}"
+
+    try:
+        column_audit = _p37_classify_official_runner_status_columns(fieldnames)
+    except Exception as exc:
+        column_audit = {"ok": False, "error": f"{type(exc).__name__}:{exc}"}
+
+    try:
+        source_diagnostics = _p371_build_official_status_source_diagnostics(rows, context_payload)
+    except Exception as exc:
+        source_diagnostics = {
+            "source_alignment_status": "SOURCE_DIAGNOSTICS_ERROR",
+            "reason_codes": [f"{type(exc).__name__}:{exc}"],
+        }
+
+    matched = []
+    rejected_sample = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        try:
+            match_info = _p37_row_matches_course(row, context_payload)
+        except Exception as exc:
+            match_info = {
+                "match": False,
+                "score": 0,
+                "reason_codes": [f"MATCH_ERROR:{type(exc).__name__}:{exc}"],
+            }
+
+        if match_info.get("match"):
+            normalized = _p37_normalize_runner_status_row(row)
+
+            normalized["course_uid"] = _p37_pick(row, ["course_uid", "course_key"], course_uid)
+            normalized["checked_at_utc"] = _p37_pick(row, ["checked_at_utc", "checked_at", "created_at"], "ND")
+            normalized["official_source"] = _p37_pick(row, ["official_source"], normalized.get("official_source", "ND"))
+            normalized["statut_source"] = _p37_pick(row, ["statut_source"], normalized.get("statut_source", "ND"))
+            normalized["np_statut_confidence"] = _p37_pick(row, ["np_statut_confidence", "confidence"], normalized.get("np_statut_confidence", "ND"))
+
+            normalized["match_score"] = match_info.get("score", 0)
+            normalized["match_reason_codes"] = match_info.get("reason_codes", [])
+
+            matched.append(normalized)
+
+        elif len(rejected_sample) < 8:
+            rejected_sample.append({
+                "match_score": match_info.get("score", 0),
+                "match_reason_codes": match_info.get("reason_codes", []),
+                "course_uid": _p37_pick(row, ["course_uid", "course_key"], "ND"),
+                "reunion_no": _p37_pick(row, ["reunion_no", "reunion", "num_reunion", "reunion_num", "r"], "ND"),
+                "course_no": _p37_pick(row, ["course_no", "num_course", "course_num", "c", "course_no_int"], "ND"),
+                "scheduled_time": _p37_pick(row, ["scheduled_time", "course_time", "start_time", "heure_depart", "heure"], "ND"),
+                "race_name": _p37_pick(row, ["race_name", "course_name", "prix", "libelle"], "ND"),
+            })
 
     required = [
         "course_uid",
@@ -12415,54 +12523,35 @@ def _p31_find_official_np_statut_rows_for_course(course_uid):
         "checked_at_utc",
     ]
 
-    inspected = []
+    df = pd.DataFrame(matched)
 
-    for csv_path in candidates:
-        if not csv_path.exists():
-            inspected.append({
-                "path": str(csv_path),
-                "exists": False,
-            })
-            continue
+    for col in required:
+        if col not in df.columns:
+            df[col] = "ND"
 
-        try:
-            df = pd.read_csv(csv_path)
-        except Exception as exc:
-            inspected.append({
-                "path": str(csv_path),
-                "exists": True,
-                "read_ok": False,
-                "reason": f"CSV_READ_ERROR:{type(exc).__name__}:{exc}",
-            })
-            continue
+    source = (
+        read_result.get("gcs_uri")
+        or read_result.get("path")
+        or read_result.get("source")
+        or "OFFICIAL_RUNNER_STATUS_B2_ROBUST_READER"
+    )
 
-        cols = {str(col).strip().lower(): col for col in df.columns}
-        missing = [col for col in required if col not in cols]
+    diagnostics.update({
+        "official_status_csv_fieldnames": fieldnames,
+        "official_status_column_audit": column_audit,
+        "official_status_source_diagnostics": source_diagnostics,
+        "official_status_source_alignment_status": source_diagnostics.get("source_alignment_status", "ND") if isinstance(source_diagnostics, dict) else "ND",
+        "official_status_source_diagnostics_reason_codes": source_diagnostics.get("reason_codes", []) if isinstance(source_diagnostics, dict) else [],
+        "official_status_rows_total": len(rows),
+        "official_status_rows_matched_course": len(matched),
+        "official_status_join_status": "OFFICIAL_STATUS_ROWS_MATCHED_COMPLETE" if len(matched) > 0 else "NO_OFFICIAL_STATUS_ROWS_MATCH_COURSE",
+        "rejected_rows_sample": rejected_sample,
+        "strict_allowed_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    })
 
-        inspected.append({
-            "path": str(csv_path),
-            "exists": True,
-            "read_ok": True,
-            "rows": int(len(df)),
-            "missing_columns": missing,
-        })
+    return df, source, diagnostics
 
-        if missing:
-            continue
-
-        cu_col = cols["course_uid"]
-        rows = df[df[cu_col].astype(str).map(_p11_norm_text) == wanted].copy()
-
-        if not rows.empty:
-            return rows, str(csv_path), {
-                "download_official_status": download_status,
-                "official_status_inspected_files": inspected,
-            }
-
-    return None, "OFFICIAL_SOURCE_ABSENT_FOR_COURSE", {
-        "download_official_status": download_status,
-        "official_status_inspected_files": inspected,
-    }
 
 
 def _p31_compute_official_np_statut_gate_from_rows(rows, source, diagnostics=None):
