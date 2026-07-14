@@ -13911,11 +13911,25 @@ def _p35_time_to_minutes(value):
 
 
 def _p35_to_int_or_none(value):
+    import re
+
     try:
-        raw = str(value or "").strip()
-        if raw in ("", "ND"):
+        raw = str(value or "").strip().upper()
+        if raw in ("", "ND", "NONE", "NULL"):
             return None
-        return int(float(raw))
+
+        # Cas directs : 5, 5.0
+        try:
+            return int(float(raw))
+        except Exception:
+            pass
+
+        # Cas LeTrot / ZEturf : C5, R2, course C5, etc.
+        m = re.search(r"(?<!\d)(?:C|R)?\s*(\d{1,2})(?!\d)", raw)
+        if m:
+            return int(m.group(1))
+
+        return None
     except Exception:
         return None
 
@@ -13966,7 +13980,7 @@ def _p35_compare_zeturf_with_letrot_candidates(zeturf_meta, candidate_courses):
             continue
 
         c_course_no = _p35_to_int_or_none(
-            _p35_candidate_field(candidate, ["course_no", "numero", "num", "num_course", "course_number", "course_index"])
+            _p35_candidate_field(candidate, ["course_no_int", "course_no", "numero", "num", "num_course", "course_number", "course_index"])
         )
         c_time_raw = _p35_candidate_field(candidate, ["scheduled_time", "heure", "start_time", "depart", "heure_depart", "course_time"])
         c_time = _p35_time_to_minutes(c_time_raw)
@@ -13979,8 +13993,11 @@ def _p35_compare_zeturf_with_letrot_candidates(zeturf_meta, candidate_courses):
             score += 4
             reasons.append("COURSE_NO_MATCH")
 
+        time_delta_minutes = "ND"
+
         if z_time is not None and c_time is not None:
             delta = abs(z_time - c_time)
+            time_delta_minutes = delta
             if delta <= 3:
                 score += 3
                 reasons.append("TIME_MATCH_3MIN")
@@ -13990,6 +14007,8 @@ def _p35_compare_zeturf_with_letrot_candidates(zeturf_meta, candidate_courses):
             elif delta <= 10:
                 score += 1
                 reasons.append("TIME_NEAR_10MIN")
+            else:
+                reasons.append("TIME_MISMATCH_GT_10MIN")
 
         sim = _p35_name_similarity(z_name, c_name)
 
@@ -14009,6 +14028,7 @@ def _p35_compare_zeturf_with_letrot_candidates(zeturf_meta, candidate_courses):
             "candidate": candidate,
             "candidate_course_no": c_course_no if c_course_no is not None else "ND",
             "candidate_scheduled_time": c_time_raw or "ND",
+            "time_delta_minutes": time_delta_minutes,
             "candidate_race_name": c_name or "ND",
             "name_similarity": round(sim, 3),
         })
