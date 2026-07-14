@@ -15429,6 +15429,176 @@ def _p37_normalize_runner_status_row(row):
     }
 
 
+
+# V0_9_31B2_7_1_OFFICIAL_STATUS_SOURCE_DIAGNOSTICS
+def _p371_build_official_status_source_diagnostics(rows, context_payload):
+    if not isinstance(rows, list):
+        rows = []
+
+    if not isinstance(context_payload, dict):
+        context_payload = {}
+
+    ctx_course_uid_raw = str(context_payload.get("course_uid") or context_payload.get("course_key") or "ND")
+    ctx_course_uid_norm = _p37_norm_text(ctx_course_uid_raw)
+    ctx_reunion = _p37_to_int_or_none(context_payload.get("reunion_no"))
+    ctx_course_no = _p37_to_int_or_none(context_payload.get("course_no"))
+    ctx_time = _p37_norm_text(context_payload.get("scheduled_time"))
+    ctx_race = _p37_norm_text(context_payload.get("race_name"))
+
+    course_uid_counts = {}
+    reunion_course_counts = {}
+    scheduled_time_counts = {}
+    race_name_counts = {}
+
+    rows_with_course_uid = 0
+    rows_with_reunion_course = 0
+    rows_with_scheduled_time = 0
+    rows_with_race_name = 0
+
+    uid_exact_match_count = 0
+    reunion_course_match_count = 0
+    scheduled_time_match_count = 0
+    race_name_similarity_count = 0
+
+    sample_values = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        row_course_uid = str(_p37_pick(row, ["course_uid", "course_key"], "ND") or "ND")
+        row_course_uid_norm = _p37_norm_text(row_course_uid)
+
+        if row_course_uid not in ("", "ND"):
+            rows_with_course_uid += 1
+            course_uid_counts[row_course_uid] = course_uid_counts.get(row_course_uid, 0) + 1
+
+            if row_course_uid_norm and row_course_uid_norm == ctx_course_uid_norm:
+                uid_exact_match_count += 1
+
+        row_reunion = _p37_to_int_or_none(_p37_pick(row, ["reunion_no", "reunion", "num_reunion", "reunion_num", "r"], ""))
+        row_course_no = _p37_to_int_or_none(_p37_pick(row, ["course_no", "num_course", "course_num", "c", "course_no_int"], ""))
+
+        if row_reunion is not None and row_course_no is not None:
+            rows_with_reunion_course += 1
+            key = f"R{row_reunion}C{row_course_no}"
+            reunion_course_counts[key] = reunion_course_counts.get(key, 0) + 1
+
+            if ctx_reunion == row_reunion and ctx_course_no == row_course_no:
+                reunion_course_match_count += 1
+
+        row_time = str(_p37_pick(row, ["scheduled_time", "course_time", "start_time", "heure_depart", "heure"], "ND") or "ND")
+        row_time_norm = _p37_norm_text(row_time)
+
+        if row_time not in ("", "ND"):
+            rows_with_scheduled_time += 1
+            scheduled_time_counts[row_time] = scheduled_time_counts.get(row_time, 0) + 1
+
+            if ctx_time and row_time_norm == ctx_time:
+                scheduled_time_match_count += 1
+
+        row_race = str(_p37_pick(row, ["race_name", "course_name", "prix", "libelle"], "ND") or "ND")
+        row_race_norm = _p37_norm_text(row_race)
+
+        if row_race not in ("", "ND"):
+            rows_with_race_name += 1
+            race_name_counts[row_race] = race_name_counts.get(row_race, 0) + 1
+
+            if ctx_race and row_race_norm:
+                ctx_tokens = set(ctx_race.split())
+                row_tokens = set(row_race_norm.split())
+                sim = len(ctx_tokens & row_tokens) / max(1, len(ctx_tokens | row_tokens))
+                if sim >= 0.60:
+                    race_name_similarity_count += 1
+
+        if len(sample_values) < 10:
+            sample_values.append({
+                "course_uid": row_course_uid,
+                "reunion_no": row_reunion if row_reunion is not None else "ND",
+                "course_no": row_course_no if row_course_no is not None else "ND",
+                "scheduled_time": row_time,
+                "race_name": row_race,
+                "numero": _p37_pick(row, ["numero", "num", "no", "n", "runner_no"], "ND"),
+                "cheval": _p37_pick(row, ["cheval", "runner", "horse", "nom_cheval", "name"], "ND"),
+                "statut": _p37_pick(row, ["statut", "status", "runner_status", "statut_partant"], "ND"),
+                "is_np": _p37_pick(row, ["is_np", "np", "non_partant", "nonpartant"], "ND"),
+            })
+
+    unique_course_uids = [
+        {"course_uid": key, "rows": count}
+        for key, count in sorted(course_uid_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+    unique_reunion_courses = [
+        {"reunion_course": key, "rows": count}
+        for key, count in sorted(reunion_course_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+    unique_scheduled_times = [
+        {"scheduled_time": key, "rows": count}
+        for key, count in sorted(scheduled_time_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+    unique_race_names = [
+        {"race_name": key, "rows": count}
+        for key, count in sorted(race_name_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+    reason_codes = []
+
+    if not rows:
+        reason_codes.append("OFFICIAL_STATUS_SOURCE_EMPTY")
+    elif uid_exact_match_count == 0 and rows_with_course_uid > 0:
+        reason_codes.append("OFFICIAL_STATUS_SOURCE_STALE_OR_WRONG_COURSE")
+    elif rows_with_course_uid == 0:
+        reason_codes.append("OFFICIAL_STATUS_COURSE_UID_COLUMN_EMPTY")
+
+    if rows_with_reunion_course == 0:
+        reason_codes.append("OFFICIAL_STATUS_NO_REUNION_COURSE_COLUMNS")
+
+    if rows_with_scheduled_time == 0:
+        reason_codes.append("OFFICIAL_STATUS_NO_SCHEDULED_TIME_COLUMN")
+
+    if rows_with_race_name == 0:
+        reason_codes.append("OFFICIAL_STATUS_NO_RACE_NAME_COLUMN")
+
+    if uid_exact_match_count > 0 or reunion_course_match_count > 0:
+        source_alignment_status = "SOURCE_CAN_MATCH_CURRENT_COURSE"
+    elif rows and rows_with_course_uid > 0:
+        source_alignment_status = "SOURCE_STALE_OR_WRONG_COURSE"
+    elif rows:
+        source_alignment_status = "SOURCE_SCHEMA_INSUFFICIENT_FOR_COURSE_MATCH"
+    else:
+        source_alignment_status = "SOURCE_EMPTY"
+
+    return {
+        "diagnostics_version": "official_status_source_diagnostics_v0_9_31b2_7_1",
+        "context_course_uid": ctx_course_uid_raw,
+        "context_reunion_no": context_payload.get("reunion_no", "ND"),
+        "context_course_no": context_payload.get("course_no", "ND"),
+        "context_scheduled_time": context_payload.get("scheduled_time", "ND"),
+        "context_race_name": context_payload.get("race_name", "ND"),
+        "rows_total": len(rows),
+        "rows_with_course_uid": rows_with_course_uid,
+        "rows_with_reunion_course": rows_with_reunion_course,
+        "rows_with_scheduled_time": rows_with_scheduled_time,
+        "rows_with_race_name": rows_with_race_name,
+        "uid_exact_match_count": uid_exact_match_count,
+        "reunion_course_match_count": reunion_course_match_count,
+        "scheduled_time_match_count": scheduled_time_match_count,
+        "race_name_similarity_count": race_name_similarity_count,
+        "source_alignment_status": source_alignment_status,
+        "reason_codes": reason_codes,
+        "unique_course_uids_sample": unique_course_uids[:10],
+        "unique_reunion_courses_sample": unique_reunion_courses[:10],
+        "unique_scheduled_times_sample": unique_scheduled_times[:10],
+        "unique_race_names_sample": unique_race_names[:10],
+        "rows_sample": sample_values,
+        "strict_allowed_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
+
 @app.get("/action/official-runner-status-course-level-preview", dependencies=[Depends(require_api_key)])
 def action_official_runner_status_course_level_preview():
     """
@@ -15513,6 +15683,7 @@ def action_official_runner_status_course_level_preview():
     fieldnames = csv_payload.get("fieldnames", [])
     rows = csv_payload.get("rows", [])
     column_audit = _p37_classify_official_runner_status_columns(fieldnames)
+    source_diagnostics = _p371_build_official_status_source_diagnostics(rows, context_payload)
 
     matched = []
     rejected_sample = []
@@ -15576,6 +15747,9 @@ def action_official_runner_status_course_level_preview():
         official_status_join_status = "OFFICIAL_STATUS_REQUIRED_COLUMNS_MISSING"
     elif not matched:
         reason_codes.append("NO_OFFICIAL_STATUS_ROWS_MATCH_COURSE")
+        for diag_reason in source_diagnostics.get("reason_codes", []):
+            if diag_reason not in reason_codes:
+                reason_codes.append(diag_reason)
         official_status_join_status = "NO_OFFICIAL_STATUS_ROWS_MATCH_COURSE"
     elif statut_missing_count > 0 or is_np_missing_count > 0 or numero_missing_count > 0:
         reason_codes.append("OFFICIAL_STATUS_ROWS_INCOMPLETE")
@@ -15598,6 +15772,9 @@ def action_official_runner_status_course_level_preview():
         "official_status_source_gcs_uri": read_result.get("gcs_uri", "ND"),
         "official_status_csv_fieldnames": fieldnames,
         "official_status_column_audit": column_audit,
+        "official_status_source_diagnostics": source_diagnostics,
+        "official_status_source_alignment_status": source_diagnostics.get("source_alignment_status", "ND"),
+        "official_status_source_diagnostics_reason_codes": source_diagnostics.get("reason_codes", []),
         "official_status_rows_total": len(rows),
         "official_status_rows_matched_course": len(matched),
         "official_status_join_status": official_status_join_status,
