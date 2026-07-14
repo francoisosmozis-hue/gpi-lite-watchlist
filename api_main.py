@@ -14639,6 +14639,259 @@ def _p34_extract_course_level_source_from_context(context_payload):
     }
 
 
+
+# V0_9_31B2_6_COURSE_LEVEL_CONTEXT_SYNC
+def _p36_safe_slug(value):
+    import re
+    import unicodedata
+
+    raw = str(value or "ND")
+    raw = "".join(
+        c for c in unicodedata.normalize("NFD", raw)
+        if unicodedata.category(c) != "Mn"
+    )
+    raw = raw.lower()
+    raw = raw.replace("&", " et ")
+    raw = re.sub(r"[^a-z0-9]+", "_", raw)
+    raw = re.sub(r"_+", "_", raw).strip("_")
+    return raw[:180] or "nd"
+
+
+def _p36_write_json_local(path_obj, payload):
+    import json
+    from pathlib import Path
+
+    path_obj = Path(path_obj)
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+    path_obj.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return str(path_obj)
+
+
+def _p36_upload_json_to_gcs(payload, blob_name, bucket_name=None):
+    import json
+    import os
+
+    bucket_name = (
+        bucket_name
+        or os.getenv("GPI_BUCKET_NAME")
+        or os.getenv("BUCKET_NAME")
+        or os.getenv("GPI_BUCKET")
+        or "gpi-lite-watchlist-data"
+    )
+
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        blob.upload_from_string(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            content_type="application/json",
+        )
+
+        return {
+            "ok": True,
+            "reason": "UPLOADED",
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"GCS_UPLOAD_ERROR:{type(exc).__name__}:{exc}",
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+        }
+
+
+@app.post("/action/zeturf-course-level-context-sync", dependencies=[Depends(require_api_key)])
+def action_zeturf_course_level_context_sync():
+    """
+    GPI V0_9_31B2.6
+    Propagation technique des metadonnees course-level validees dans latest_h5_auto_context.
+
+    Ne cree aucun ticket.
+    Ne rend pas le strict jouable.
+    official_join_ok reste une validation course-level uniquement.
+    """
+    from datetime import datetime, timezone
+    import copy
+    from pathlib import Path
+
+    checked_at_utc = datetime.now(timezone.utc).isoformat()
+
+    try:
+        context_payload = action_latest_h5_auto_context()
+    except Exception as exc:
+        context_payload = {
+            "ok": False,
+            "phase": "latest_h5_auto_context",
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    if not isinstance(context_payload, dict) or not context_payload.get("ok"):
+        return {
+            "ok": False,
+            "phase": "zeturf_course_level_context_sync",
+            "sync_version": "zeturf_course_level_context_sync_v0_9_31b2_6",
+            "reason": "LATEST_H5_AUTO_CONTEXT_UNAVAILABLE",
+            "context_error": context_payload.get("error", "ND") if isinstance(context_payload, dict) else "CONTEXT_NOT_DICT",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    try:
+        source_preview = action_zeturf_course_level_source_preview()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "phase": "zeturf_course_level_context_sync",
+            "sync_version": "zeturf_course_level_context_sync_v0_9_31b2_6",
+            "reason": "SOURCE_PREVIEW_FAILED",
+            "error": f"{type(exc).__name__}:{exc}",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    if not isinstance(source_preview, dict) or not source_preview.get("ok"):
+        return {
+            "ok": False,
+            "phase": "zeturf_course_level_context_sync",
+            "sync_version": "zeturf_course_level_context_sync_v0_9_31b2_6",
+            "reason": "SOURCE_PREVIEW_UNAVAILABLE",
+            "source_preview_error": source_preview.get("error", "ND") if isinstance(source_preview, dict) else "SOURCE_PREVIEW_NOT_DICT",
+            "strict_allowed_oui_non": "non",
+            "strict_usable_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    zeturf_meta = source_preview.get("zeturf_html_course_level", {})
+    compare = source_preview.get("zeturf_letrot_course_compare", {})
+    time_guard = source_preview.get("zeturf_scheduled_time_guard", {})
+
+    if not isinstance(zeturf_meta, dict):
+        zeturf_meta = {}
+    if not isinstance(compare, dict):
+        compare = {}
+    if not isinstance(time_guard, dict):
+        time_guard = {}
+
+    official_join_course_level_oui_non = (
+        "oui"
+        if source_preview.get("official_join_ok_oui_non") == "oui"
+        and compare.get("match_status") == "ROBUST_MATCH"
+        and time_guard.get("status") == "OK"
+        else "non"
+    )
+
+    validated_fields = {
+        "reunion_no": zeturf_meta.get("reunion_no", "ND"),
+        "course_no": zeturf_meta.get("course_no", "ND"),
+        "scheduled_time": zeturf_meta.get("scheduled_time", "ND"),
+        "race_name": zeturf_meta.get("race_name", "ND"),
+        "hippodrome": zeturf_meta.get("hippodrome", "ND"),
+        "date": zeturf_meta.get("date", "ND"),
+    }
+
+    missing = [
+        key for key, value in validated_fields.items()
+        if key in {"reunion_no", "course_no", "scheduled_time", "race_name"}
+        and value in (None, "", "ND")
+    ]
+
+    if missing:
+        course_level_context_status = "COURSE_LEVEL_CONTEXT_NOT_SYNCED_MISSING_FIELDS"
+        sync_allowed = False
+    elif official_join_course_level_oui_non != "oui":
+        course_level_context_status = "COURSE_LEVEL_CONTEXT_NOT_SYNCED_JOIN_NOT_ROBUST"
+        sync_allowed = False
+    else:
+        course_level_context_status = "COURSE_LEVEL_CONTEXT_SYNCED"
+        sync_allowed = True
+
+    enriched_context = copy.deepcopy(context_payload)
+
+    # Champs top-level attendus par les previews LeTrot.
+    if sync_allowed:
+        enriched_context["reunion_no"] = validated_fields["reunion_no"]
+        enriched_context["course_no"] = validated_fields["course_no"]
+        enriched_context["scheduled_time"] = validated_fields["scheduled_time"]
+        enriched_context["race_name"] = validated_fields["race_name"]
+
+    # Audit course-level, toujours visible, m?me si non sync.
+    enriched_context["course_level_context_sync_version"] = "zeturf_course_level_context_sync_v0_9_31b2_6"
+    enriched_context["course_level_context_sync_status"] = course_level_context_status
+    enriched_context["course_level_context_sync_checked_at_utc"] = checked_at_utc
+    enriched_context["course_level_context_sync_missing_fields"] = missing
+    enriched_context["course_level_context_sync_source"] = "/action/zeturf-course-level-source-preview"
+    enriched_context["course_level_validated_fields"] = validated_fields
+    enriched_context["course_level_official_join_ok_oui_non"] = official_join_course_level_oui_non
+    enriched_context["course_level_match_status"] = compare.get("match_status", "ND")
+    enriched_context["course_level_match_best_score"] = compare.get("best_score", "ND")
+    enriched_context["course_level_match_reason_codes"] = compare.get("best_reason_codes", [])
+    enriched_context["course_level_time_guard_status"] = time_guard.get("status", "ND")
+    enriched_context["course_level_time_guard_reason_codes"] = time_guard.get("reason_codes", [])
+
+    # Garde doctrine absolue.
+    enriched_context["strict_allowed_oui_non"] = "non"
+    enriched_context["strict_usable_oui_non"] = "non"
+    enriched_context["ticket_strict"] = "NO_BET"
+    enriched_context["Segment_ROI"] = "NO_BET"
+
+    course_uid = str(enriched_context.get("course_uid", "ND"))
+    slug = _p36_safe_slug(course_uid)
+
+    local_latest = Path("data/output/latest_h5_auto_context.json")
+    local_course = Path("data/output/h5_contexts") / f"{slug}_h5_auto_context.json"
+
+    local_latest_path = _p36_write_json_local(local_latest, enriched_context)
+    local_course_path = _p36_write_json_local(local_course, enriched_context)
+
+    latest_blob = "gpi-lite/outputs/latest_h5_auto_context.json"
+    course_blob = f"gpi-lite/outputs/h5_contexts/{slug}_h5_auto_context.json"
+
+    upload_latest = _p36_upload_json_to_gcs(enriched_context, latest_blob)
+    upload_course = _p36_upload_json_to_gcs(enriched_context, course_blob)
+
+    return {
+        "ok": True,
+        "phase": "zeturf_course_level_context_sync",
+        "sync_version": "zeturf_course_level_context_sync_v0_9_31b2_6",
+        "course_uid": course_uid,
+        "course_level_context_sync_status": course_level_context_status,
+        "sync_applied_oui_non": "oui" if sync_allowed else "non",
+        "validated_fields": validated_fields,
+        "missing_fields": missing,
+        "source_preview_course_uid": source_preview.get("course_uid", "ND"),
+        "source_preview_official_join_ok_oui_non": source_preview.get("official_join_ok_oui_non", "ND"),
+        "course_level_official_join_ok_oui_non": official_join_course_level_oui_non,
+        "match_status": compare.get("match_status", "ND"),
+        "match_best_score": compare.get("best_score", "ND"),
+        "time_guard_status": time_guard.get("status", "ND"),
+        "local_latest_path": local_latest_path,
+        "local_course_path": local_course_path,
+        "upload_latest_h5_auto_context": upload_latest,
+        "upload_course_h5_auto_context": upload_course,
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "doctrine": (
+            "Propagation course-level uniquement. "
+            "Ne valide pas NP/statut partants/proxy/split/calibration. "
+            "Strict ferme."
+        ),
+    }
+
+
 @app.get("/action/zeturf-course-level-source-preview")
 def action_zeturf_course_level_source_preview():
     """
