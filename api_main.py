@@ -12948,6 +12948,164 @@ def _p32_canonical_status_code(value):
 
 
 
+
+# V0_9_31B2_8_3_FIX1_PRESERVE_LETROT_HREFS
+def _p383_fix1_extract_observed_hrefs_from_segment(segment):
+    """
+    Extrait uniquement les hrefs observ?s dans un segment HTML LeTrot.
+    Ne construit pas d?URL artificielle hors transformation chemin relatif -> URL absolue letrot.com.
+    """
+    import re
+    from html import unescape
+
+    raw = str(segment or "")
+    out = []
+    seen = set()
+
+    href_re = re.compile(
+        r'<a\b[^>]*?href=["\'](?P<href>[^"\']+)["\'][^>]*>(?P<label>.*?)</a>',
+        flags=re.I | re.S,
+    )
+
+    for m in href_re.finditer(raw):
+        href = unescape(m.group("href") or "").strip()
+        label_html = m.group("label") or ""
+        label = re.sub(r"<[^>]+>", " ", label_html)
+        label = re.sub(r"\s+", " ", unescape(label)).strip()
+
+        if not href:
+            continue
+
+        href_l = href.lower()
+        label_l = label.lower()
+
+        plausible = (
+            "course" in href_l
+            or "courses" in href_l
+            or "reunion" in href_l
+            or "partant" in href_l
+            or "programme" in href_l
+            or "prix" in label_l
+            or "course" in label_l
+        )
+
+        if not plausible:
+            continue
+
+        if href.startswith("http://") or href.startswith("https://"):
+            url = href
+            path = href
+        elif href.startswith("/"):
+            path = href
+            url = "https://www.letrot.com" + href
+        else:
+            continue
+
+        if url in seen:
+            continue
+
+        seen.add(url)
+        out.append({
+            "href": href,
+            "path": path,
+            "url": url,
+            "label": label,
+        })
+
+    return out
+
+
+def _p383_fix1_match_observed_href_to_course(segment, course_no):
+    """
+    Associe prudemment une URL observ?e ? Cx.
+    Si aucun indice Cx n?est trouv?, renvoie ND.
+    """
+    hrefs = _p383_fix1_extract_observed_hrefs_from_segment(segment)
+
+    try:
+        cno = int(course_no)
+    except Exception:
+        return {
+            "detail_url": "ND",
+            "detail_path": "ND",
+            "detail_label": "ND",
+            "detail_url_match_status": "COURSE_NO_INVALID",
+            "detail_url_match_score": 0,
+            "detail_url_match_reason_codes": [],
+            "observed_href_count": len(hrefs),
+        }
+
+    scored = []
+
+    for item in hrefs:
+        joined = " ".join([
+            str(item.get("href", "")),
+            str(item.get("path", "")),
+            str(item.get("url", "")),
+            str(item.get("label", "")),
+        ])
+
+        text = _p37_norm_text(joined)
+
+        score = 0
+        reasons = []
+
+        tokens = [
+            f"c{cno}",
+            f"c {cno}",
+            f"course {cno}",
+            f"course n {cno}",
+            f"course numero {cno}",
+        ]
+
+        if any(tok in text for tok in tokens):
+            score += 6
+            reasons.append("COURSE_NO_TOKEN_MATCH")
+
+        # Indices moins forts, seulement pour d?partager.
+        if "partant" in text:
+            score += 1
+            reasons.append("PARTANT_TOKEN")
+        if "prix" in text:
+            score += 1
+            reasons.append("PRIX_TOKEN")
+        if "course" in text:
+            score += 1
+            reasons.append("COURSE_TOKEN")
+
+        if score >= 6:
+            scored.append({
+                "score": score,
+                "reason_codes": reasons,
+                "item": item,
+            })
+
+    if not scored:
+        return {
+            "detail_url": "ND",
+            "detail_path": "ND",
+            "detail_label": "ND",
+            "detail_url_match_status": "NO_OBSERVED_HREF_MATCH_COURSE",
+            "detail_url_match_score": 0,
+            "detail_url_match_reason_codes": [],
+            "observed_href_count": len(hrefs),
+        }
+
+    scored = sorted(scored, key=lambda x: x.get("score", 0), reverse=True)
+    best = scored[0]
+    item = best.get("item", {}) or {}
+
+    return {
+        "detail_url": item.get("url", "ND"),
+        "detail_path": item.get("path", "ND"),
+        "detail_label": item.get("label", "ND"),
+        "detail_url_match_status": "OBSERVED_HREF_MATCHED_COURSE",
+        "detail_url_match_score": best.get("score", 0),
+        "detail_url_match_reason_codes": best.get("reason_codes", []),
+        "observed_href_count": len(hrefs),
+    }
+
+
 def _p32_extract_letrot_today_index_from_html(html_text):
     """
     Extraction prudente depuis le HTML public LeTrot.
@@ -13020,6 +13178,8 @@ def _p32_extract_letrot_today_index_from_html(html_text):
                 continue
             seen_course_keys.add(key)
 
+            detail_href = _p383_fix1_match_observed_href_to_course(segment, course_no)
+
             courses.append({
                 "course_no": f"C{course_no}",
                 "course_no_int": int(course_no),
@@ -13028,6 +13188,13 @@ def _p32_extract_letrot_today_index_from_html(html_text):
                 "course_status_code": _p32_canonical_status_code(course_status),
                 "official_source": "LETROT",
                 "official_source_kind": "LETROT_TODAY_INDEX",
+                "detail_url": detail_href.get("detail_url", "ND"),
+                "detail_path": detail_href.get("detail_path", "ND"),
+                "detail_label": detail_href.get("detail_label", "ND"),
+                "detail_url_match_status": detail_href.get("detail_url_match_status", "ND"),
+                "detail_url_match_score": detail_href.get("detail_url_match_score", 0),
+                "detail_url_match_reason_codes": detail_href.get("detail_url_match_reason_codes", []),
+                "observed_href_count": detail_href.get("observed_href_count", 0),
             })
 
         # Fallback B2.1.2 : si la regex horaire/statut ne r?cup?re pas toutes les courses,
@@ -13056,6 +13223,8 @@ def _p32_extract_letrot_today_index_from_html(html_text):
                 status_window = segment[max(0, fc.start() - 160):min(len(segment), fc.end() + 320)]
                 fallback_status = _p32_extract_course_status_from_window(status_window)
 
+                fallback_detail_href = _p383_fix1_match_observed_href_to_course(segment, fallback_no)
+
                 courses.append({
                     "course_no": f"C{fallback_no}",
                     "course_no_int": fallback_no,
@@ -13064,6 +13233,13 @@ def _p32_extract_letrot_today_index_from_html(html_text):
                     "course_status_code": _p32_canonical_status_code(fallback_status),
                     "official_source": "LETROT",
                     "official_source_kind": "LETROT_TODAY_INDEX_FALLBACK",
+                    "detail_url": fallback_detail_href.get("detail_url", "ND"),
+                    "detail_path": fallback_detail_href.get("detail_path", "ND"),
+                    "detail_label": fallback_detail_href.get("detail_label", "ND"),
+                    "detail_url_match_status": fallback_detail_href.get("detail_url_match_status", "ND"),
+                    "detail_url_match_score": fallback_detail_href.get("detail_url_match_score", 0),
+                    "detail_url_match_reason_codes": fallback_detail_href.get("detail_url_match_reason_codes", []),
+                    "observed_href_count": fallback_detail_href.get("observed_href_count", 0),
                 })
                 existing_course_ints.add(fallback_no)
 
@@ -13455,6 +13631,13 @@ def _p33_summarize_candidate_courses(selected_meeting):
             "course_status": course.get("course_status", "ND"),
             "course_status_code": course.get("course_status_code", "ND"),
             "official_source_kind": course.get("official_source_kind", "ND"),
+            "detail_url": course.get("detail_url", "ND"),
+            "detail_path": course.get("detail_path", "ND"),
+            "detail_label": course.get("detail_label", "ND"),
+            "detail_url_match_status": course.get("detail_url_match_status", "ND"),
+            "detail_url_match_score": course.get("detail_url_match_score", 0),
+            "detail_url_match_reason_codes": course.get("detail_url_match_reason_codes", []),
+            "observed_href_count": course.get("observed_href_count", 0),
         })
 
     return out
