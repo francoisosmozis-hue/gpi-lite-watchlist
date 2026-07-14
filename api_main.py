@@ -16157,7 +16157,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "ok": True,
             "reason": "NOT_OFFICIAL_RUNNER_STATUS_LATEST",
             "target_blob": target,
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
         }
 
     path = Path(local_path)
@@ -16167,7 +16167,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "reason": "CAPTURE_REJECTED_LOCAL_CSV_ABSENT",
             "target_blob": target,
             "local_path": str(path),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
         }
 
     try:
@@ -16181,7 +16181,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "reason": f"CAPTURE_REJECTED_LOCAL_CSV_READ_ERROR:{type(exc).__name__}:{exc}",
             "target_blob": target,
             "local_path": str(path),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
         }
 
     try:
@@ -16192,7 +16192,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "reason": f"CAPTURE_REJECTED_LOCAL_CSV_PARSE_ERROR:{type(exc).__name__}:{exc}",
             "target_blob": target,
             "local_path": str(path),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
         }
 
     rows = csv_payload.get("rows", []) if isinstance(csv_payload, dict) else []
@@ -16205,7 +16205,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "target_blob": target,
             "local_path": str(path),
             "fieldnames": fieldnames,
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
         }
 
     try:
@@ -16217,7 +16217,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "target_blob": target,
             "local_path": str(path),
             "rows_total": len(rows),
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
         }
 
     if not isinstance(active_context, dict) or not active_context.get("ok"):
@@ -16228,21 +16228,39 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "local_path": str(path),
             "rows_total": len(rows),
             "active_context_ok": active_context.get("ok", "ND") if isinstance(active_context, dict) else "CONTEXT_NOT_DICT",
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
         }
 
     matched = []
     rejected_sample = []
 
+    active_course_uid_norm = _p37_norm_text(active_context.get("course_uid", "ND"))
+
     for row in rows:
-        try:
-            match_info = _p37_row_matches_course(row, active_context)
-        except Exception as exc:
+        row_course_uid_norm = _p37_norm_text(row.get("course_uid", "ND"))
+
+        exact_course_uid_match = (
+            active_course_uid_norm
+            and active_course_uid_norm != "nd"
+            and row_course_uid_norm
+            and row_course_uid_norm == active_course_uid_norm
+        )
+
+        if exact_course_uid_match:
             match_info = {
-                "match": False,
-                "score": 0,
-                "reason_codes": [f"MATCH_ERROR:{type(exc).__name__}:{exc}"],
+                "match": True,
+                "score": 100,
+                "reason_codes": ["EXACT_COURSE_UID_MATCH_GUARD_FIX1"],
             }
+        else:
+            try:
+                match_info = _p37_row_matches_course(row, active_context)
+            except Exception as exc:
+                match_info = {
+                    "match": False,
+                    "score": 0,
+                    "reason_codes": [f"MATCH_ERROR:{type(exc).__name__}:{exc}"],
+                }
 
         if match_info.get("match"):
             matched.append({
@@ -16286,7 +16304,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
             "active_context_fields": active_fields,
             "csv_fieldnames": fieldnames,
             "rejected_sample": rejected_sample,
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
             "strict_allowed_oui_non": "non",
             "ticket_strict": "NO_BET",
         }
@@ -16300,7 +16318,7 @@ def _p3810_guard_official_latest_upload(local_path, blob_name):
         "rows_matched_active_context": len(matched),
         "active_context_fields": active_fields,
         "matched_sample": matched[:5],
-        "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+        "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
     }
 
 
@@ -16314,7 +16332,7 @@ def _p38_upload_file_to_gcs(local_path, blob_name, content_type="text/csv"):
         guard = {
             "ok": False,
             "reason": "OFFICIAL_LATEST_GUARD_NOT_DICT",
-            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10_fix1",
         }
 
     if not guard.get("ok"):
