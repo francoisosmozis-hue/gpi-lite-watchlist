@@ -16138,16 +16138,222 @@ def _p38_write_csv_rows_utf8sig(path_obj, rows):
     return str(path_obj)
 
 
+# V0_9_31B2_8_10_GUARD_OFFICIAL_LATEST_OVERWRITE
+def _p3810_guard_official_latest_upload(local_path, blob_name):
+    """
+    Emp?che official_runner_status_latest.csv d'?tre ?cras? par une course
+    diff?rente de la course H5 active.
+
+    Lecture seule.
+    Ne scrape rien.
+    N'ouvre jamais le strict.
+    """
+    from pathlib import Path
+
+    target = str(blob_name or "").strip()
+
+    if target != "gpi-lite/outputs/official_runner_status_latest.csv":
+        return {
+            "ok": True,
+            "reason": "NOT_OFFICIAL_RUNNER_STATUS_LATEST",
+            "target_blob": target,
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+        }
+
+    path = Path(local_path)
+    if not path.exists():
+        return {
+            "ok": False,
+            "reason": "CAPTURE_REJECTED_LOCAL_CSV_ABSENT",
+            "target_blob": target,
+            "local_path": str(path),
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+        }
+
+    try:
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            text = path.read_text(encoding="latin-1")
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"CAPTURE_REJECTED_LOCAL_CSV_READ_ERROR:{type(exc).__name__}:{exc}",
+            "target_blob": target,
+            "local_path": str(path),
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+        }
+
+    try:
+        csv_payload = _p37_csv_rows_from_text(text)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"CAPTURE_REJECTED_LOCAL_CSV_PARSE_ERROR:{type(exc).__name__}:{exc}",
+            "target_blob": target,
+            "local_path": str(path),
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+        }
+
+    rows = csv_payload.get("rows", []) if isinstance(csv_payload, dict) else []
+    fieldnames = csv_payload.get("fieldnames", []) if isinstance(csv_payload, dict) else []
+
+    if not rows:
+        return {
+            "ok": False,
+            "reason": "CAPTURE_REJECTED_NO_ROWS_FOR_LATEST",
+            "target_blob": target,
+            "local_path": str(path),
+            "fieldnames": fieldnames,
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+        }
+
+    try:
+        active_context = action_latest_h5_auto_context()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"CAPTURE_REJECTED_ACTIVE_CONTEXT_ERROR:{type(exc).__name__}:{exc}",
+            "target_blob": target,
+            "local_path": str(path),
+            "rows_total": len(rows),
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+        }
+
+    if not isinstance(active_context, dict) or not active_context.get("ok"):
+        return {
+            "ok": False,
+            "reason": "CAPTURE_REJECTED_ACTIVE_CONTEXT_UNAVAILABLE",
+            "target_blob": target,
+            "local_path": str(path),
+            "rows_total": len(rows),
+            "active_context_ok": active_context.get("ok", "ND") if isinstance(active_context, dict) else "CONTEXT_NOT_DICT",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+        }
+
+    matched = []
+    rejected_sample = []
+
+    for row in rows:
+        try:
+            match_info = _p37_row_matches_course(row, active_context)
+        except Exception as exc:
+            match_info = {
+                "match": False,
+                "score": 0,
+                "reason_codes": [f"MATCH_ERROR:{type(exc).__name__}:{exc}"],
+            }
+
+        if match_info.get("match"):
+            matched.append({
+                "course_uid": row.get("course_uid", "ND"),
+                "reunion_no": row.get("reunion_no", "ND"),
+                "course_no": row.get("course_no", "ND"),
+                "scheduled_time": row.get("scheduled_time", "ND"),
+                "race_name": row.get("race_name", "ND"),
+                "match_score": match_info.get("score", 0),
+                "match_reason_codes": match_info.get("reason_codes", []),
+            })
+        elif len(rejected_sample) < 5:
+            rejected_sample.append({
+                "course_uid": row.get("course_uid", "ND"),
+                "reunion_no": row.get("reunion_no", "ND"),
+                "course_no": row.get("course_no", "ND"),
+                "scheduled_time": row.get("scheduled_time", "ND"),
+                "race_name": row.get("race_name", "ND"),
+                "match_score": match_info.get("score", 0),
+                "match_reason_codes": match_info.get("reason_codes", []),
+            })
+
+    active_fields = {
+        "course_uid": active_context.get("course_uid", "ND"),
+        "course_slug": active_context.get("course_slug", "ND"),
+        "reunion_no": active_context.get("reunion_no", "ND"),
+        "course_no": active_context.get("course_no", "ND"),
+        "scheduled_time": active_context.get("scheduled_time", "ND"),
+        "race_name": active_context.get("race_name", "ND"),
+        "runners_count": active_context.get("runners_count", "ND"),
+    }
+
+    if not matched:
+        return {
+            "ok": False,
+            "reason": "CAPTURE_REJECTED_WRONG_ACTIVE_COURSE_FOR_LATEST",
+            "target_blob": target,
+            "local_path": str(path),
+            "rows_total": len(rows),
+            "rows_matched_active_context": 0,
+            "active_context_fields": active_fields,
+            "csv_fieldnames": fieldnames,
+            "rejected_sample": rejected_sample,
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+            "strict_allowed_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
+
+    return {
+        "ok": True,
+        "reason": "OFFICIAL_LATEST_UPLOAD_ALLOWED_ACTIVE_COURSE_MATCHED",
+        "target_blob": target,
+        "local_path": str(path),
+        "rows_total": len(rows),
+        "rows_matched_active_context": len(matched),
+        "active_context_fields": active_fields,
+        "matched_sample": matched[:5],
+        "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+    }
+
+
 def _p38_upload_file_to_gcs(local_path, blob_name, content_type="text/csv"):
     import os
     from pathlib import Path
+
+    guard = _p3810_guard_official_latest_upload(local_path, blob_name)
+
+    if not isinstance(guard, dict):
+        guard = {
+            "ok": False,
+            "reason": "OFFICIAL_LATEST_GUARD_NOT_DICT",
+            "guard_version": "official_latest_overwrite_guard_v0_9_31b2_8_10",
+        }
+
+    if not guard.get("ok"):
+        return {
+            "ok": False,
+            "reason": guard.get("reason", "OFFICIAL_LATEST_UPLOAD_REJECTED"),
+            "bucket": (
+                os.getenv("GPI_BUCKET_NAME")
+                or os.getenv("BUCKET_NAME")
+                or os.getenv("GPI_BUCKET")
+                or globals().get("GPI_BUCKET_NAME")
+                or "gpi-lite-watchlist-data"
+            ),
+            "blob": blob_name,
+            "gcs_uri": f"gs://{(os.getenv('GPI_BUCKET_NAME') or os.getenv('BUCKET_NAME') or os.getenv('GPI_BUCKET') or globals().get('GPI_BUCKET_NAME') or 'gpi-lite-watchlist-data')}/{blob_name}",
+            "guard": guard,
+            "strict_allowed_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
 
     bucket_name = (
         os.getenv("GPI_BUCKET_NAME")
         or os.getenv("BUCKET_NAME")
         or os.getenv("GPI_BUCKET")
+        or globals().get("GPI_BUCKET_NAME")
         or "gpi-lite-watchlist-data"
     )
+
+    path = Path(local_path)
+    if not path.exists():
+        return {
+            "ok": False,
+            "reason": "LOCAL_FILE_ABSENT",
+            "bucket": bucket_name,
+            "blob": blob_name,
+            "local_path": str(path),
+            "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+            "guard": guard,
+        }
 
     try:
         from google.cloud import storage
@@ -16155,80 +16361,28 @@ def _p38_upload_file_to_gcs(local_path, blob_name, content_type="text/csv"):
         client = storage.Client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
-        blob.upload_from_filename(str(local_path), content_type=content_type)
+        blob.upload_from_filename(str(path), content_type=content_type)
 
         return {
             "ok": True,
             "reason": "UPLOADED",
             "bucket": bucket_name,
             "blob": blob_name,
+            "local_path": str(path),
             "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+            "guard": guard,
         }
+
     except Exception as exc:
         return {
             "ok": False,
             "reason": f"GCS_UPLOAD_ERROR:{type(exc).__name__}:{exc}",
             "bucket": bucket_name,
             "blob": blob_name,
+            "local_path": str(path),
             "gcs_uri": f"gs://{bucket_name}/{blob_name}",
+            "guard": guard,
         }
-
-
-
-# V0_9_31B2_8_1_SELECTED_COURSE_FALLBACK
-def _p381_extract_best_candidate_from_source_preview(source_preview):
-    """
-    Recupere la meilleure candidate LeTrot depuis zeturf-course-level-source-preview.
-    Ne scrape rien. Ne fabrique aucun partant.
-    """
-    if not isinstance(source_preview, dict):
-        return {
-            "ok": False,
-            "reason": "SOURCE_PREVIEW_NOT_DICT",
-            "selected_course": {},
-            "source": "ND",
-        }
-
-    compare = source_preview.get("zeturf_letrot_course_compare", {})
-    if not isinstance(compare, dict):
-        return {
-            "ok": False,
-            "reason": "COMPARE_NOT_DICT",
-            "selected_course": {},
-            "source": "ND",
-        }
-
-    # Cas le plus probable : best_candidate ou selected_candidate.
-    for key in ["selected_course", "best_candidate", "candidate", "matched_candidate"]:
-        value = compare.get(key)
-        if isinstance(value, dict) and value:
-            return {
-                "ok": True,
-                "reason": f"{key.upper()}_FOUND",
-                "selected_course": value,
-                "source": f"source_preview.zeturf_letrot_course_compare.{key}",
-            }
-
-    # Cas fr?quent : scored_candidates[0].candidate.
-    scored = compare.get("scored_candidates") or compare.get("candidates") or compare.get("candidate_courses")
-    if isinstance(scored, list) and scored:
-        first = scored[0]
-        if isinstance(first, dict):
-            candidate = first.get("candidate", first)
-            if isinstance(candidate, dict) and candidate:
-                return {
-                    "ok": True,
-                    "reason": "SCORED_CANDIDATES_FIRST_FOUND",
-                    "selected_course": candidate,
-                    "source": "source_preview.zeturf_letrot_course_compare.scored_candidates[0].candidate",
-                }
-
-    return {
-        "ok": False,
-        "reason": "NO_BEST_CANDIDATE_IN_SOURCE_PREVIEW",
-        "selected_course": {},
-        "source": "ND",
-    }
 
 
 def _p381_get_selected_course_for_runner_capture(letrot_match):
@@ -17609,8 +17763,9 @@ def action_official_runner_status_letrot_detail_capture():
         "capture_status": capture_status,
         "local_paths": local_paths,
         "uploads": uploads,
-        "official_runner_status_available_oui_non": "oui" if validation.get("ok") else "non",
-        "official_join_ok_oui_non": "oui" if validation.get("ok") else "non",
+        "official_runner_status_available_oui_non": "oui" if validation.get("ok") and (uploads.get("latest", {}) or {}).get("ok") else "non",
+        "official_join_ok_oui_non": "oui" if validation.get("ok") and (uploads.get("latest", {}) or {}).get("ok") else "non",
+        "official_latest_upload_required_for_join_oui_non": "oui",
         "matched_runner_status_sample": normalized_rows[:20],
         "strict_allowed_oui_non": "non",
         "strict_usable_oui_non": "non",
@@ -17794,8 +17949,9 @@ def action_official_runner_status_letrot_capture():
         "reason_codes": reason_codes,
         "local_paths": local_paths,
         "uploads": uploads,
-        "official_runner_status_available_oui_non": "oui" if validation.get("ok") else "non",
-        "official_join_ok_oui_non": "oui" if validation.get("ok") else "non",
+        "official_runner_status_available_oui_non": "oui" if validation.get("ok") and (uploads.get("latest", {}) or {}).get("ok") else "non",
+        "official_join_ok_oui_non": "oui" if validation.get("ok") and (uploads.get("latest", {}) or {}).get("ok") else "non",
+        "official_latest_upload_required_for_join_oui_non": "oui",
         "matched_runner_status_sample": normalized_rows[:20],
         "strict_allowed_oui_non": "non",
         "strict_usable_oui_non": "non",
