@@ -13736,6 +13736,312 @@ def action_letrot_course_match_preview():
 # >>> GPI V0_9_31B2_4_1 ZETURF COURSE LEVEL SOURCE AUDIT >>>
 # V0_9_31B2_4_2B_HTML_GCS_READ_PRIORITY
 # V0_9_31B2_4_2C_CLOUD_CAPTURE_HTML_GCS
+
+# V0_9_31B2_5_ZETURF_HTML_COURSE_LEVEL_EXTRACTOR
+def _p35_clean_text(value):
+    import re
+    import html as _html
+
+    raw = _html.unescape(str(value or ""))
+    raw = re.sub(r"<[^>]+>", " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip()
+    return raw
+
+
+def _p35_strip_accents(value):
+    import unicodedata
+
+    return "".join(
+        c for c in unicodedata.normalize("NFD", str(value or ""))
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _p35_norm_for_match(value):
+    import re
+
+    raw = _p35_strip_accents(str(value or "").lower())
+    raw = raw.replace("&", " et ")
+    raw = re.sub(r"[^a-z0-9]+", " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip()
+    return raw
+
+
+def _p35_extract_title_from_html(html_text):
+    import re
+
+    m = re.search(r"<title[^>]*>(.*?)</title>", str(html_text or ""), flags=re.I | re.S)
+    return _p35_clean_text(m.group(1)) if m else ""
+
+
+def _p35_extract_course_uid_parts(course_uid):
+    import re
+
+    raw = str(course_uid or "").strip()
+    out = {
+        "date": "ND",
+        "hippodrome": "ND",
+        "race_name": "ND",
+        "source": "ND",
+    }
+
+    m = re.match(
+        r"^\s*(?P<date>\d{2}_\d{2}_\d{4})\s*-\s*(?P<hippo>.*?)\s*-\s*(?P<race>.*?)(?:_|\s+Pronostics|\s*$)",
+        raw,
+        flags=re.I,
+    )
+
+    if not m:
+        return out
+
+    out["date"] = m.group("date").strip()
+    out["hippodrome"] = _p35_clean_text(m.group("hippo"))
+    out["race_name"] = _p35_clean_text(m.group("race"))
+    out["source"] = "COURSE_UID_FALLBACK"
+    return out
+
+
+def _p35_extract_zeturf_course_level_from_html(html_text, source_html_path="", course_uid=""):
+    import re
+
+    html_text = str(html_text or "")
+    source_html_path = str(source_html_path or "")
+    course_uid = str(course_uid or "")
+
+    uid_parts = _p35_extract_course_uid_parts(course_uid)
+    title = _p35_extract_title_from_html(html_text)
+
+    result = {
+        "extractor_version": "zeturf_html_course_level_extractor_v0_9_31b2_5",
+        "source_html_path": source_html_path or "ND",
+        "html_available_oui_non": "oui" if html_text else "non",
+        "html_chars": len(html_text),
+        "course_uid": course_uid or "ND",
+        "html_title": title or "ND",
+        "reunion_no": "ND",
+        "course_no": "ND",
+        "scheduled_time": "ND",
+        "race_name": "ND",
+        "hippodrome": "ND",
+        "date": "ND",
+        "confidence": "ND",
+        "sources": [],
+        "reason_codes": [],
+    }
+
+    if not html_text:
+        result["reason_codes"].append("HTML_ABSENT")
+        return result
+
+    search_space = html_text + "\n" + source_html_path
+
+    rc_patterns = [
+        r"/R(?P<r>\d{1,2})C(?P<c>\d{1,2})(?:[-_/]|[A-Za-z0-9])",
+        r"\bR\s*(?P<r>\d{1,2})\s*C\s*(?P<c>\d{1,2})\b",
+        r'"numReunion"\s*:\s*(?P<r>\d{1,2}).{0,160}?"numCourse"\s*:\s*(?P<c>\d{1,2})',
+    ]
+
+    for pat in rc_patterns:
+        m = re.search(pat, search_space, flags=re.I | re.S)
+        if m:
+            result["reunion_no"] = str(m.group("r"))
+            result["course_no"] = str(m.group("c"))
+            result["sources"].append("HTML_RC_PATTERN")
+            break
+
+    time_patterns = [
+        r'"heureDepart"\s*:\s*"(?P<h>\d{1,2})[:h](?P<m>\d{2})"',
+        r'"heure"\s*:\s*"(?P<h>\d{1,2})[:h](?P<m>\d{2})"',
+        r'"dateDepart"[^"]*"\s*:\s*"[^"]*T(?P<h>\d{1,2}):(?P<m>\d{2})',
+        r"\b(?P<h>\d{1,2})h(?P<m>\d{2})\b",
+    ]
+
+    for pat in time_patterns:
+        m = re.search(pat, search_space, flags=re.I | re.S)
+        if m:
+            result["scheduled_time"] = f"{int(m.group('h')):02d}:{int(m.group('m')):02d}"
+            result["sources"].append("HTML_TIME_PATTERN")
+            break
+
+    title_norm = _p35_norm_for_match(title)
+
+    if title and "prix" in title_norm:
+        cleaned = re.sub(r"\s*-\s*ZEturf.*$", "", title, flags=re.I)
+        cleaned = re.sub(r"\s*\|\s*ZEturf.*$", "", cleaned, flags=re.I)
+        result["race_name"] = _p35_clean_text(cleaned)
+        result["sources"].append("HTML_TITLE_RACE_NAME")
+
+    if uid_parts["race_name"] != "ND" and (result["race_name"] == "ND" or len(str(result["race_name"])) > 120):
+        result["race_name"] = uid_parts["race_name"]
+        result["sources"].append("COURSE_UID_RACE_NAME_FALLBACK")
+
+    if uid_parts["hippodrome"] != "ND":
+        result["hippodrome"] = uid_parts["hippodrome"]
+        result["sources"].append("COURSE_UID_HIPPODROME_FALLBACK")
+
+    if uid_parts["date"] != "ND":
+        result["date"] = uid_parts["date"]
+        result["sources"].append("COURSE_UID_DATE_FALLBACK")
+
+    has_rc = result["reunion_no"] != "ND" and result["course_no"] != "ND"
+    has_time = result["scheduled_time"] != "ND"
+    has_name = result["race_name"] != "ND"
+
+    if has_rc and has_time and has_name:
+        result["confidence"] = "HIGH"
+    elif (has_rc and has_name) or (has_time and has_name):
+        result["confidence"] = "MEDIUM"
+    elif has_name:
+        result["confidence"] = "LOW_NAME_ONLY"
+    else:
+        result["confidence"] = "ND"
+        result["reason_codes"].append("COURSE_LEVEL_METADATA_NOT_FOUND")
+
+    return result
+
+
+def _p35_time_to_minutes(value):
+    import re
+
+    m = re.search(r"(?P<h>\d{1,2})[:h](?P<m>\d{2})", str(value or ""))
+    if not m:
+        return None
+
+    return int(m.group("h")) * 60 + int(m.group("m"))
+
+
+def _p35_to_int_or_none(value):
+    try:
+        raw = str(value or "").strip()
+        if raw in ("", "ND"):
+            return None
+        return int(float(raw))
+    except Exception:
+        return None
+
+
+def _p35_candidate_field(candidate, keys):
+    if not isinstance(candidate, dict):
+        return ""
+
+    for key in keys:
+        value = candidate.get(key)
+        if value not in (None, "", "ND"):
+            return value
+
+    return ""
+
+
+def _p35_name_similarity(a, b):
+    a_norm = _p35_norm_for_match(a)
+    b_norm = _p35_norm_for_match(b)
+
+    if not a_norm or not b_norm:
+        return 0.0
+
+    if a_norm in b_norm or b_norm in a_norm:
+        return 1.0
+
+    a_tokens = set(a_norm.split())
+    b_tokens = set(b_norm.split())
+
+    if not a_tokens or not b_tokens:
+        return 0.0
+
+    return len(a_tokens & b_tokens) / max(1, len(a_tokens | b_tokens))
+
+
+def _p35_compare_zeturf_with_letrot_candidates(zeturf_meta, candidate_courses):
+    if not isinstance(candidate_courses, list):
+        candidate_courses = []
+
+    z_course_no = _p35_to_int_or_none(zeturf_meta.get("course_no"))
+    z_time = _p35_time_to_minutes(zeturf_meta.get("scheduled_time"))
+    z_name = zeturf_meta.get("race_name", "ND")
+
+    scored = []
+
+    for candidate in candidate_courses:
+        if not isinstance(candidate, dict):
+            continue
+
+        c_course_no = _p35_to_int_or_none(
+            _p35_candidate_field(candidate, ["course_no", "numero", "num", "num_course", "course_number", "course_index"])
+        )
+        c_time_raw = _p35_candidate_field(candidate, ["scheduled_time", "heure", "start_time", "depart", "heure_depart", "course_time"])
+        c_time = _p35_time_to_minutes(c_time_raw)
+        c_name = _p35_candidate_field(candidate, ["race_name", "nom", "prix", "title", "course_name", "libelle"])
+
+        score = 0
+        reasons = []
+
+        if z_course_no is not None and c_course_no is not None and z_course_no == c_course_no:
+            score += 4
+            reasons.append("COURSE_NO_MATCH")
+
+        if z_time is not None and c_time is not None:
+            delta = abs(z_time - c_time)
+            if delta <= 3:
+                score += 3
+                reasons.append("TIME_MATCH_3MIN")
+            elif delta <= 5:
+                score += 2
+                reasons.append("TIME_MATCH_5MIN")
+            elif delta <= 10:
+                score += 1
+                reasons.append("TIME_NEAR_10MIN")
+
+        sim = _p35_name_similarity(z_name, c_name)
+
+        if sim >= 0.80:
+            score += 3
+            reasons.append("RACE_NAME_MATCH_STRONG")
+        elif sim >= 0.55:
+            score += 2
+            reasons.append("RACE_NAME_MATCH_MEDIUM")
+        elif sim >= 0.35:
+            score += 1
+            reasons.append("RACE_NAME_MATCH_WEAK")
+
+        scored.append({
+            "score": score,
+            "reason_codes": reasons,
+            "candidate": candidate,
+            "candidate_course_no": c_course_no if c_course_no is not None else "ND",
+            "candidate_scheduled_time": c_time_raw or "ND",
+            "candidate_race_name": c_name or "ND",
+            "name_similarity": round(sim, 3),
+        })
+
+    scored = sorted(scored, key=lambda item: item.get("score", 0), reverse=True)
+
+    best = scored[0] if scored else None
+    second = scored[1] if len(scored) > 1 else None
+
+    ambiguous = bool(
+        best
+        and second
+        and best.get("score", 0) > 0
+        and (best.get("score", 0) - second.get("score", 0)) <= 1
+    )
+
+    robust = bool(best and best.get("score", 0) >= 6 and not ambiguous)
+    partial = bool(best and best.get("score", 0) >= 3 and not robust)
+
+    return {
+        "compare_version": "zeturf_letrot_course_compare_v0_9_31b2_5",
+        "candidate_courses_count": len(candidate_courses),
+        "best_score": best.get("score", 0) if best else 0,
+        "best_reason_codes": best.get("reason_codes", []) if best else [],
+        "best_candidate": best.get("candidate", {}) if best else {},
+        "second_score": second.get("score", 0) if second else "ND",
+        "ambiguous_oui_non": "oui" if ambiguous else "non",
+        "match_status": "ROBUST_MATCH" if robust else "PARTIAL_MATCH" if partial else "NO_ROBUST_MATCH",
+        "official_join_ok_oui_non": "oui" if robust else "non",
+        "scored_candidates_sample": scored[:5],
+    }
+
+
 def _p34_bucket_name():
     import os
 
@@ -13988,6 +14294,68 @@ def _p34_extract_course_level_source_from_context(context_payload):
 
     html_text = html_read.get("text", "") or ""
 
+    # V0_9_31B2_5_ZETURF_HTML_COURSE_LEVEL_EXTRACTOR
+    zeturf_html_course_level = _p35_extract_zeturf_course_level_from_html(
+        html_text=html_text,
+        source_html_path=source_html_path,
+        course_uid=str(context_payload.get("course_uid", "ND")) if isinstance(context_payload, dict) else "ND",
+    )
+
+    candidate_courses = []
+    letrot_course_level_probe = {
+        "ok": False,
+        "source": "ND",
+        "error": "ND",
+        "candidate_courses_count": 0,
+        "candidate_courses": [],
+    }
+
+    try:
+        if "action_letrot_course_match_preview" in globals():
+            letrot_payload = action_letrot_course_match_preview()
+
+            candidate_courses = (
+                letrot_payload.get("candidate_courses")
+                or letrot_payload.get("course_level_candidates")
+                or letrot_payload.get("candidate_courses_sample")
+                or letrot_payload.get("candidates")
+                or []
+            )
+
+            if not candidate_courses and isinstance(letrot_payload.get("course_level_audit"), dict):
+                candidate_courses = letrot_payload["course_level_audit"].get("candidate_courses", []) or []
+
+            letrot_course_level_probe = {
+                "ok": True,
+                "source": "action_letrot_course_match_preview",
+                "match_status": letrot_payload.get("course_match_status", "ND"),
+                "selected_meeting": letrot_payload.get("selected_meeting", "ND"),
+                "candidate_courses_count": len(candidate_courses) if isinstance(candidate_courses, list) else 0,
+                "candidate_courses": candidate_courses,
+            }
+        else:
+            letrot_course_level_probe["error"] = "LETROT_MATCH_PREVIEW_ROUTE_NOT_AVAILABLE"
+    except Exception as exc:
+        candidate_courses = []
+        letrot_course_level_probe = {
+            "ok": False,
+            "source": "action_letrot_course_match_preview",
+            "error": f"{type(exc).__name__}:{exc}",
+            "candidate_courses_count": 0,
+            "candidate_courses": [],
+        }
+
+    zeturf_letrot_course_compare = _p35_compare_zeturf_with_letrot_candidates(
+        zeturf_html_course_level,
+        candidate_courses,
+    )
+
+    course_level_official_join_ok_oui_non = zeturf_letrot_course_compare.get(
+        "official_join_ok_oui_non",
+        "non",
+    )
+
+
     return {
         "course_level_source_audit_version": "zeturf_course_level_source_audit_v0_9_31b2_4_1",
         "bucket": bucket_name,
@@ -14010,6 +14378,10 @@ def _p34_extract_course_level_source_from_context(context_payload):
         "source_html_read_error": html_read.get("error", "ND"),
         "source_html_chars": len(html_text),
         "source_html_sample": html_text[:1200],
+        "zeturf_html_course_level": zeturf_html_course_level,
+        "letrot_course_level_probe": {k: v for k, v in letrot_course_level_probe.items() if k != "candidate_courses"},
+        "zeturf_letrot_course_compare": zeturf_letrot_course_compare,
+        "course_level_official_join_ok_oui_non": course_level_official_join_ok_oui_non,
         "course_level_source_status": source_status,
     }
 
@@ -14042,7 +14414,7 @@ def action_zeturf_course_level_source_preview():
         "source_context_phase": context_payload.get("phase", "ND") if isinstance(context_payload, dict) else "ND",
         "source_context_ok": context_payload.get("ok", "ND") if isinstance(context_payload, dict) else "ND",
         **audit,
-        "official_join_ok_oui_non": "non",
+        "official_join_ok_oui_non": "oui" if audit.get("course_level_official_join_ok_oui_non") == "oui" else "non",
         "strict_allowed_oui_non": "non",
         "strict_usable_oui_non": "non",
         "ticket_strict": "NO_BET",
