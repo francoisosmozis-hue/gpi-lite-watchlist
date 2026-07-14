@@ -16037,6 +16037,470 @@ def _p381_get_selected_course_for_runner_capture(letrot_match):
     }
 
 
+
+# V0_9_31B2_8_2_LETROT_DETAIL_RUNNER_EXTRACTION
+def _p382_collect_possible_detail_urls(obj, max_depth=4):
+    """
+    Collecte prudente des URLs ou chemins detail pr?sents dans un payload.
+    Ne construit pas d?URL artificielle.
+    """
+    import re
+
+    urls = []
+    seen = set()
+
+    def walk(value, path="", depth=0):
+        if depth > max_depth:
+            return
+
+        if isinstance(value, dict):
+            for k, v in value.items():
+                walk(v, f"{path}.{k}" if path else str(k), depth + 1)
+            return
+
+        if isinstance(value, list):
+            for i, v in enumerate(value[:50]):
+                walk(v, f"{path}[{i}]", depth + 1)
+            return
+
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return
+
+            candidates = []
+
+            # URL compl?te.
+            if raw.startswith("http://") or raw.startswith("https://"):
+                candidates.append(raw)
+
+            # Chemin relatif LeTrot possible.
+            if raw.startswith("/") and ("course" in raw.lower() or "reunion" in raw.lower() or "partant" in raw.lower()):
+                candidates.append("https://www.letrot.com" + raw)
+
+            # URL contenue dans une cha?ne.
+            for m in re.finditer(r"https?://[^\s\"']+", raw):
+                candidates.append(m.group(0))
+
+            for url in candidates:
+                if url not in seen:
+                    seen.add(url)
+                    urls.append({
+                        "path": path,
+                        "url": url,
+                    })
+
+    walk(obj)
+
+    return urls
+
+
+def _p382_fetch_url_text(url):
+    """
+    Fetch HTTP simple, lecture seule.
+    """
+    try:
+        import requests
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 GPI-Lite Watchlist official runner status preview",
+            "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+        }
+
+        r = requests.get(url, headers=headers, timeout=20)
+
+        return {
+            "ok": 200 <= r.status_code < 400,
+            "http_status": r.status_code,
+            "content_type": r.headers.get("content-type", "ND"),
+            "text": r.text or "",
+            "error": "ND",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "http_status": "ND",
+            "content_type": "ND",
+            "text": "",
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+
+def _p382_extract_runners_from_json_like(value):
+    """
+    Recherche r?cursive de listes structur?es de partants dans JSON.
+    """
+    found = []
+
+    def looks_like_runner(row):
+        if not isinstance(row, dict):
+            return False
+
+        keys = {str(k).lower() for k in row.keys()}
+
+        has_num = bool(keys & {
+            "numero", "num", "no", "n", "runner_no", "numpmu", "num_pmu", "numeropmu"
+        })
+        has_name = bool(keys & {
+            "cheval", "nom", "name", "horse", "runner", "nomcheval", "nom_cheval", "libelle"
+        })
+
+        return has_num and has_name
+
+    def walk(obj, path="", depth=0):
+        if depth > 7:
+            return
+
+        if isinstance(obj, list):
+            runner_like = [x for x in obj if looks_like_runner(x)]
+            if len(runner_like) >= 3:
+                found.append({
+                    "path": path,
+                    "rows": runner_like,
+                    "rows_count": len(runner_like),
+                })
+
+            for i, x in enumerate(obj[:100]):
+                walk(x, f"{path}[{i}]", depth + 1)
+
+        elif isinstance(obj, dict):
+            for k, v in obj.items():
+                walk(v, f"{path}.{k}" if path else str(k), depth + 1)
+
+    walk(value)
+
+    if found:
+        found_sorted = sorted(found, key=lambda x: x.get("rows_count", 0), reverse=True)
+        return {
+            "ok": True,
+            "reason": "JSON_STRUCTURED_RUNNER_LIST_FOUND",
+            "source_path": found_sorted[0].get("path", "ND"),
+            "raw_runners": found_sorted[0].get("rows", []),
+            "all_matches_sample": [
+                {"path": x.get("path"), "rows_count": x.get("rows_count")}
+                for x in found_sorted[:10]
+            ],
+        }
+
+    return {
+        "ok": False,
+        "reason": "JSON_STRUCTURED_RUNNER_LIST_ABSENT",
+        "source_path": "ND",
+        "raw_runners": [],
+        "all_matches_sample": [],
+    }
+
+
+def _p382_extract_json_objects_from_html(text):
+    """
+    Extraction prudente de JSON embarqu?.
+    Ne tente pas de parser tout le HTML comme donn?es de course si structure absente.
+    """
+    import json
+    import re
+
+    raw = str(text or "")
+    candidates = []
+
+    # Scripts JSON purs.
+    for m in re.finditer(
+        r'<script[^>]+type=["\']application/json["\'][^>]*>(?P<body>.*?)</script>',
+        raw,
+        flags=re.I | re.S,
+    ):
+        body = m.group("body").strip()
+        if body:
+            candidates.append(body)
+
+    # __NEXT_DATA__ / state fr?quents.
+    for m in re.finditer(
+        r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>(?P<body>.*?)</script>',
+        raw,
+        flags=re.I | re.S,
+    ):
+        body = m.group("body").strip()
+        if body:
+            candidates.append(body)
+
+    parsed = []
+
+    for body in candidates[:20]:
+        try:
+            parsed.append(json.loads(body))
+        except Exception:
+            continue
+
+    return parsed
+
+
+def _p382_extract_runners_from_html_table(text):
+    """
+    Fallback tr?s prudent sur HTML : ne valide que si des lignes semblent avoir numero + nom.
+    """
+    import re
+
+    raw = str(text or "")
+    rows = []
+
+    tr_blocks = re.findall(r"<tr\b[^>]*>(.*?)</tr>", raw, flags=re.I | re.S)
+
+    for tr in tr_blocks:
+        clean = re.sub(r"<script\b.*?</script>", " ", tr, flags=re.I | re.S)
+        clean = re.sub(r"<style\b.*?</style>", " ", clean, flags=re.I | re.S)
+        cells = re.findall(r"<t[dh]\b[^>]*>(.*?)</t[dh]>", clean, flags=re.I | re.S)
+
+        values = []
+        for cell in cells:
+            txt = re.sub(r"<[^>]+>", " ", cell)
+            txt = re.sub(r"\s+", " ", txt).strip()
+            if txt:
+                values.append(txt)
+
+        if len(values) < 2:
+            continue
+
+        numero = values[0]
+        cheval = values[1]
+
+        # Prudence : numero court + nom non vide.
+        if _p37_to_int_or_none(numero) is not None and len(str(cheval).strip()) >= 2:
+            rows.append({
+                "numero": numero,
+                "cheval": cheval,
+                "statut": "PARTANT",
+                "is_np": "non",
+            })
+
+    if len(rows) >= 3:
+        return {
+            "ok": True,
+            "reason": "HTML_TABLE_RUNNER_LIST_FOUND",
+            "source_path": "html.tr.td",
+            "raw_runners": rows,
+        }
+
+    return {
+        "ok": False,
+        "reason": "HTML_TABLE_RUNNER_LIST_ABSENT",
+        "source_path": "ND",
+        "raw_runners": [],
+    }
+
+
+@app.post("/action/official-runner-status-letrot-detail-capture", dependencies=[Depends(require_api_key)])
+def action_official_runner_status_letrot_detail_capture():
+    """
+    GPI V0_9_31B2.8.2
+    Tente une capture officielle des partants depuis une page/detail LeTrot si une URL exploitable existe.
+
+    Ne construit pas d'URL artificielle.
+    Ne cr?e aucun partant depuis ZEturf.
+    N'?crase pas official_runner_status_latest.csv si capture KO.
+    Strict toujours ferm?.
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path
+    import json
+
+    checked_at_utc = datetime.now(timezone.utc).isoformat()
+
+    try:
+        base_capture = action_official_runner_status_letrot_capture()
+    except Exception as exc:
+        base_capture = {
+            "ok": False,
+            "error": f"{type(exc).__name__}:{exc}",
+        }
+
+    if not isinstance(base_capture, dict):
+        base_capture = {}
+
+    context_payload = {
+        "course_uid": base_capture.get("course_uid", "ND"),
+        "reunion_no": (base_capture.get("context_course_fields", {}) or {}).get("reunion_no", "ND"),
+        "course_no": (base_capture.get("context_course_fields", {}) or {}).get("course_no", "ND"),
+        "scheduled_time": (base_capture.get("context_course_fields", {}) or {}).get("scheduled_time", "ND"),
+        "race_name": (base_capture.get("context_course_fields", {}) or {}).get("race_name", "ND"),
+    }
+
+    selected_course = base_capture.get("selected_course", {}) or {}
+    if not isinstance(selected_course, dict):
+        selected_course = {}
+
+    possible_urls = _p382_collect_possible_detail_urls(selected_course)
+
+    detail_fetch = {
+        "ok": False,
+        "reason": "DETAIL_URL_ABSENT",
+        "url": "ND",
+        "http_status": "ND",
+        "content_type": "ND",
+        "text_chars": 0,
+        "error": "ND",
+    }
+
+    extraction = {
+        "ok": False,
+        "reason": "DETAIL_URL_ABSENT",
+        "source": "ND",
+        "raw_runners": [],
+    }
+
+    if possible_urls:
+        chosen_url = possible_urls[0].get("url", "ND")
+        fetched = _p382_fetch_url_text(chosen_url)
+
+        detail_fetch = {
+            "ok": fetched.get("ok", False),
+            "reason": "DETAIL_FETCH_OK" if fetched.get("ok") else "DETAIL_FETCH_FAILED",
+            "url": chosen_url,
+            "http_status": fetched.get("http_status", "ND"),
+            "content_type": fetched.get("content_type", "ND"),
+            "text_chars": len(fetched.get("text", "") or ""),
+            "error": fetched.get("error", "ND"),
+        }
+
+        if fetched.get("ok"):
+            json_objects = _p382_extract_json_objects_from_html(fetched.get("text", ""))
+
+            for obj in json_objects:
+                js_ext = _p382_extract_runners_from_json_like(obj)
+                if js_ext.get("ok"):
+                    extraction = {
+                        "ok": True,
+                        "reason": js_ext.get("reason", "JSON_STRUCTURED_RUNNER_LIST_FOUND"),
+                        "source": js_ext.get("source_path", "json"),
+                        "raw_runners": js_ext.get("raw_runners", []),
+                        "json_matches_sample": js_ext.get("all_matches_sample", []),
+                    }
+                    break
+
+            if not extraction.get("ok"):
+                html_ext = _p382_extract_runners_from_html_table(fetched.get("text", ""))
+                if html_ext.get("ok"):
+                    extraction = {
+                        "ok": True,
+                        "reason": html_ext.get("reason", "HTML_TABLE_RUNNER_LIST_FOUND"),
+                        "source": html_ext.get("source_path", "html"),
+                        "raw_runners": html_ext.get("raw_runners", []),
+                    }
+                else:
+                    extraction = {
+                        "ok": False,
+                        "reason": "DETAIL_RUNNER_LIST_ABSENT",
+                        "source": "ND",
+                        "raw_runners": [],
+                    }
+        else:
+            extraction = {
+                "ok": False,
+                "reason": "DETAIL_FETCH_FAILED",
+                "source": "ND",
+                "raw_runners": [],
+            }
+
+    normalized_rows = []
+
+    if extraction.get("ok"):
+        for raw_row in extraction.get("raw_runners", []):
+            if isinstance(raw_row, dict):
+                row = _p38_normalize_official_runner(raw_row, context_payload, selected_course)
+                row["checked_at_utc"] = checked_at_utc
+                normalized_rows.append(row)
+
+    validation = _p38_validate_official_runner_rows(normalized_rows)
+
+    uploads = {
+        "latest": {
+            "ok": False,
+            "reason": "NOT_UPLOADED_NO_VALID_DETAIL_CAPTURE",
+        },
+        "course_scoped": {
+            "ok": False,
+            "reason": "NOT_UPLOADED_NO_VALID_DETAIL_CAPTURE",
+        },
+    }
+
+    local_paths = {
+        "latest": "ND",
+        "course_scoped": "ND",
+    }
+
+    capture_status = "OFFICIAL_RUNNER_STATUS_DETAIL_NOT_CAPTURED"
+
+    if validation.get("ok"):
+        capture_status = "OFFICIAL_RUNNER_STATUS_DETAIL_CAPTURED"
+
+        slug = "nd"
+        try:
+            slug = _p36_safe_slug(context_payload.get("course_uid", "ND"))
+        except Exception:
+            pass
+
+        latest_path = Path("data/output/official_runner_status_latest.csv")
+        course_path = Path("data/output/official_runner_status") / f"{slug}_official_runner_status.csv"
+
+        local_paths["latest"] = _p38_write_csv_rows_utf8sig(latest_path, normalized_rows)
+        local_paths["course_scoped"] = _p38_write_csv_rows_utf8sig(course_path, normalized_rows)
+
+        uploads["latest"] = _p38_upload_file_to_gcs(
+            latest_path,
+            "gpi-lite/outputs/official_runner_status_latest.csv",
+            content_type="text/csv",
+        )
+        uploads["course_scoped"] = _p38_upload_file_to_gcs(
+            course_path,
+            f"gpi-lite/outputs/official_runner_status/{slug}_official_runner_status.csv",
+            content_type="text/csv",
+        )
+
+    diagnostic = {
+        "ok": True,
+        "phase": "official_runner_status_letrot_detail_capture",
+        "capture_version": "official_runner_status_letrot_detail_capture_v0_9_31b2_8_2",
+        "checked_at_utc": checked_at_utc,
+        "course_uid": context_payload.get("course_uid", "ND"),
+        "context_course_fields": context_payload,
+        "base_capture_status": base_capture.get("capture_status", "ND"),
+        "base_selected_course_found_oui_non": base_capture.get("selected_course_found_oui_non", "ND"),
+        "base_selected_course_source": base_capture.get("selected_course_source", "ND"),
+        "selected_course": selected_course,
+        "possible_detail_urls": possible_urls,
+        "possible_detail_url_count": len(possible_urls),
+        "detail_fetch": detail_fetch,
+        "runner_extraction_ok": extraction.get("ok", False),
+        "runner_extraction_reason": extraction.get("reason", "ND"),
+        "runner_extraction_source": extraction.get("source", "ND"),
+        "raw_runner_count": len(extraction.get("raw_runners", [])),
+        "normalized_runner_count": len(normalized_rows),
+        "validation": validation,
+        "capture_status": capture_status,
+        "local_paths": local_paths,
+        "uploads": uploads,
+        "official_runner_status_available_oui_non": "oui" if validation.get("ok") else "non",
+        "official_join_ok_oui_non": "oui" if validation.get("ok") else "non",
+        "matched_runner_status_sample": normalized_rows[:20],
+        "strict_allowed_oui_non": "non",
+        "strict_usable_oui_non": "non",
+        "ticket_strict": "NO_BET",
+        "Segment_ROI": "NO_BET",
+        "doctrine": (
+            "Capture detail LeTrot prudente. Aucun partant invente. "
+            "Aucun ecrasement du latest officiel si extraction KO. Strict ferme."
+        ),
+    }
+
+    try:
+        Path("data/output").mkdir(parents=True, exist_ok=True)
+        diag_path = Path("data/output/official_runner_status_letrot_detail_capture_latest.json")
+        diag_path.write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
+        diagnostic["diagnostic_local_path"] = str(diag_path)
+    except Exception as exc:
+        diagnostic["diagnostic_write_error"] = f"{type(exc).__name__}:{exc}"
+
+    return diagnostic
+
+
 @app.post("/action/official-runner-status-letrot-capture", dependencies=[Depends(require_api_key)])
 def action_official_runner_status_letrot_capture():
     """
