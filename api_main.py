@@ -14062,6 +14062,89 @@ def _p35_compare_zeturf_with_letrot_candidates(zeturf_meta, candidate_courses):
     }
 
 
+
+# V0_9_31B2_5_2_ZETURF_SCHEDULED_TIME_GUARD
+def _p352_build_zeturf_scheduled_time_guard(zeturf_meta, compare_payload):
+    if not isinstance(zeturf_meta, dict):
+        zeturf_meta = {}
+
+    if not isinstance(compare_payload, dict):
+        compare_payload = {}
+
+    scored = compare_payload.get("scored_candidates_sample", [])
+    if not isinstance(scored, list):
+        scored = []
+
+    best_score = compare_payload.get("best_score", 0)
+
+    best_scored = {}
+    for item in scored:
+        if not isinstance(item, dict):
+            continue
+        if item.get("score") == best_score:
+            best_scored = item
+            break
+
+    if not best_scored and scored:
+        best_scored = scored[0] if isinstance(scored[0], dict) else {}
+
+    best_candidate = compare_payload.get("best_candidate", {})
+    if not isinstance(best_candidate, dict):
+        best_candidate = {}
+
+    z_time = zeturf_meta.get("scheduled_time", "ND")
+    c_time = (
+        best_scored.get("candidate_scheduled_time")
+        or best_candidate.get("scheduled_time")
+        or "ND"
+    )
+    delta = best_scored.get("time_delta_minutes", "ND")
+
+    reason_codes = []
+    status = "ND"
+
+    try:
+        delta_numeric = int(delta)
+    except Exception:
+        delta_numeric = None
+
+    if z_time in ("", None, "ND"):
+        status = "ND"
+        reason_codes.append("ZETURF_TIME_ND")
+    elif c_time in ("", None, "ND"):
+        status = "ND"
+        reason_codes.append("LETROT_TIME_ND")
+    elif delta_numeric is None:
+        status = "ND"
+        reason_codes.append("TIME_DELTA_ND")
+    elif delta_numeric <= 10:
+        status = "OK"
+        reason_codes.append("ZETURF_TIME_MATCH_LETROT_LE_10MIN")
+    else:
+        status = "SUSPECT"
+        reason_codes.append("ZETURF_TIME_MISMATCH_LETROT_GT_10MIN")
+
+    compare_reasons = compare_payload.get("best_reason_codes", [])
+    if isinstance(compare_reasons, list) and "TIME_MISMATCH_GT_10MIN" in compare_reasons:
+        if "ZETURF_TIME_MISMATCH_LETROT_GT_10MIN" not in reason_codes:
+            reason_codes.append("ZETURF_TIME_MISMATCH_LETROT_GT_10MIN")
+        status = "SUSPECT"
+
+    official_join_allowed_by_time_guard = "oui" if status == "OK" else "non"
+
+    return {
+        "guard_version": "zeturf_scheduled_time_guard_v0_9_31b2_5_2",
+        "status": status,
+        "zeturf_scheduled_time": z_time or "ND",
+        "letrot_best_scheduled_time": c_time or "ND",
+        "time_delta_vs_letrot_minutes": delta if delta not in ("", None) else "ND",
+        "official_join_allowed_by_time_guard_oui_non": official_join_allowed_by_time_guard,
+        "reason_codes": reason_codes,
+        "strict_allowed_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+
+
 def _p34_bucket_name():
     import os
 
@@ -14370,10 +14453,30 @@ def _p34_extract_course_level_source_from_context(context_payload):
         candidate_courses,
     )
 
-    course_level_official_join_ok_oui_non = zeturf_letrot_course_compare.get(
+    zeturf_scheduled_time_guard = _p352_build_zeturf_scheduled_time_guard(
+        zeturf_html_course_level,
+        zeturf_letrot_course_compare,
+    )
+
+    course_level_official_join_raw_oui_non = zeturf_letrot_course_compare.get(
         "official_join_ok_oui_non",
         "non",
     )
+
+    course_level_official_join_ok_oui_non = (
+        "oui"
+        if course_level_official_join_raw_oui_non == "oui"
+        and zeturf_scheduled_time_guard.get("official_join_allowed_by_time_guard_oui_non") == "oui"
+        else "non"
+    )
+
+    if (
+        course_level_official_join_raw_oui_non == "oui"
+        and course_level_official_join_ok_oui_non != "oui"
+    ):
+        zeturf_scheduled_time_guard.setdefault("reason_codes", []).append(
+            "OFFICIAL_JOIN_BLOCKED_BY_ZETURF_TIME_GUARD"
+        )
 
 
     return {
@@ -14401,6 +14504,8 @@ def _p34_extract_course_level_source_from_context(context_payload):
         "zeturf_html_course_level": zeturf_html_course_level,
         "letrot_course_level_probe": {k: v for k, v in letrot_course_level_probe.items() if k != "candidate_courses"},
         "zeturf_letrot_course_compare": zeturf_letrot_course_compare,
+        "zeturf_scheduled_time_guard": zeturf_scheduled_time_guard,
+        "course_level_official_join_raw_oui_non": course_level_official_join_raw_oui_non,
         "course_level_official_join_ok_oui_non": course_level_official_join_ok_oui_non,
         "course_level_source_status": source_status,
     }
