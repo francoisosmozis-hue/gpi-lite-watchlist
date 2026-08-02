@@ -84,3 +84,16 @@ docker-compose.yml
 # Local Cloud Run env files
 cloudrun-env-action-safe.yaml
 gpi-lite-watchlist/
+
+# B2.12 LOCAL-ONLY EXCLUSIONS
+.venv/
+**/__pycache__/
+*.bak
+*.docx
+_gpi_b2_10_b2_11_pack/
+_gpi_b2_12_course_scoped/
+_local_backups/
+audit_gpi_lite_*/
+B2_10_Audit_Stabilite.ps1
+test_b2_12_course_scoped_reader.py
+test_gpi_live_board_contract.py

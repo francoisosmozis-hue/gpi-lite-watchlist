@@ -22,6 +22,19 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastmcp import FastMCP
 from engine.paper_results import write_paper_results
 from engine.paper_kpi import write_paper_kpi
+from v20_p1_cloud_auditor import VERSION as V20_P1_AUDITOR_VERSION
+from v20_p1_cloud_auditor import run_cloud_audit
+from v20_p1_3_prospective import VERSION as V20_P1_3_VERSION
+from v20_p1_3_prospective import get_status as v20_p13_status
+from v20_p1_3_prospective import run_capture_latest as v20_p13_capture
+from v20_p1_3_prospective import run_post_h5_capture as v20_p13_post_h5_capture
+from v20_p1_5_prospective_tracker import VERSION as V20_P1_5_VERSION
+from v20_p1_5_prospective_tracker import get_status as v20_p15_status
+from v20_p1_5_prospective_tracker import run_capture_latest as v20_p15_capture
+from v20_p1_5_prospective_tracker import run_settle_due as v20_p15_settle
+from v20_p1_5_prospective_tracker import run_post_h5_capture as v20_p15_post_h5_capture
+from v20_p1_5_prospective_tracker import run_post_results_settlement as v20_p15_post_results_settlement
+from v20_p1_3_prospective import run_settle_due as v20_p13_settle
 
 def drive_empty_response(phase: str, sync_result: dict, message: str) -> dict:
     return {
@@ -132,6 +145,73 @@ def require_api_key(x_api_key: Optional[str] = Header(default=None, alias="X-API
         )
 
     return True
+
+# GPI_V20_P1_CLOUD_AUDITOR_ROUTES
+@app.get("/action/v20/p1-audit-status", dependencies=[Depends(require_api_key)])
+def action_v20_p1_audit_status():
+    return {
+        "ok": True, "version": V20_P1_AUDITOR_VERSION,
+        "mode": "AUDIT_ONLY", "cloud_only": True,
+        "can_open_strict": False, "ticket_strict": "NO_BET",
+        "bankroll_eur": 1000.0, "standard_stake_eur": 1.0,
+        "cp3_stake_eur": 3.0,
+    }
+
+
+@app.post("/action/v20/p1-audit-run", dependencies=[Depends(require_api_key)])
+def action_v20_p1_audit_run(max_documents: int = 5000):
+    report = run_cloud_audit(max_documents=max(1, min(int(max_documents), 20000)))
+    report["can_open_strict"] = False
+    report["ticket_strict"] = "NO_BET"
+    return report
+
+
+# GPI_V20_P1_3_PROSPECTIVE_API_V1
+@app.get("/action/v20/p1-3/status", dependencies=[Depends(require_api_key)])
+def action_v20_p13_status():
+    return v20_p13_status()
+
+
+@app.post("/action/v20/p1-3/capture-latest", dependencies=[Depends(require_api_key)])
+def action_v20_p13_capture_latest():
+    return v20_p13_capture()
+
+
+@app.post("/action/v20/p1-3/settle-due", dependencies=[Depends(require_api_key)])
+def action_v20_p13_settle_due(max_captures: int = 1000):
+    return v20_p13_settle(max_captures=max(1, min(int(max_captures), 5000)))
+
+
+@app.post("/scheduler/v20/p1-3/run", dependencies=[Depends(require_api_key)])
+def scheduler_v20_p13_run():
+    capture = v20_p13_capture()
+    settlement = v20_p13_settle(max_captures=1000)
+    return {
+        "ok": bool(capture.get("ok") and settlement.get("ok")),
+        "version": V20_P1_3_VERSION,
+        "mode": "PROSPECTIVE_OBSERVATION_ONLY",
+        "capture": capture,
+        "settlement": settlement,
+        "can_open_strict": False,
+        "ticket_strict": "NO_BET",
+    }
+
+
+# GPI_V20_P1_5_PROSPECTIVE_TRACKER_API_V1
+@app.get("/action/v20/p1-5/status", dependencies=[Depends(require_api_key)])
+def action_v20_p15_status():
+    return v20_p15_status()
+
+
+@app.post("/action/v20/p1-5/capture-latest", dependencies=[Depends(require_api_key)])
+def action_v20_p15_capture_latest():
+    return v20_p15_capture()
+
+
+@app.post("/action/v20/p1-5/settle-due", dependencies=[Depends(require_api_key)])
+def action_v20_p15_settle_due(max_captures: int = 1000):
+    return v20_p15_settle(max_captures=max(1, min(int(max_captures), 5000)))
+
 
 def ensure_dirs():
     MORNING_DIR.mkdir(parents=True, exist_ok=True)
@@ -448,6 +528,19 @@ def get_latest_gcs_blob(prefix: str, suffix: str):
     if bucket is None:
         return None, error
 
+    exact_name = f"{prefix}{suffix}"
+
+    if suffix.startswith("latest_"):
+        try:
+            exact_blob = bucket.get_blob(exact_name)
+        except Exception as exc:
+            return None, f"{exact_name}: {type(exc).__name__}: {exc}"
+
+        if exact_blob is None:
+            return None, f"aucun fichier exact {exact_name}"
+
+        return exact_blob, ""
+
     try:
         blobs = list(bucket.list_blobs(prefix=prefix))
     except Exception as exc:
@@ -461,7 +554,17 @@ def get_latest_gcs_blob(prefix: str, suffix: str):
     if not candidates:
         return None, f"aucun fichier {suffix} trouve dans {prefix}"
 
-    latest = max(candidates, key=lambda b: b.updated)
+    def _blob_order_key(blob):
+        updated = getattr(blob, "updated", None)
+        generation = getattr(blob, "generation", None)
+
+        return (
+            updated.timestamp() if updated else 0.0,
+            str(getattr(blob, "name", "") or ""),
+            int(generation or 0),
+        )
+
+    latest = max(candidates, key=_blob_order_key)
 
     return latest, ""
 
@@ -2021,6 +2124,15 @@ def drive_run_results():
         "uploads": no_bet_audit_uploads,
     }
 
+    # GPI_V20_P1_5_RESULTS_SETTLEMENT_HOOK_V1
+    p15_results_pipeline_ok = bool(
+        results_pdf_parse_result.get("returncode") == 0
+        and paper_results_result.get("returncode") == 0
+    )
+    p15_prospective_settlement = v20_p15_post_results_settlement(
+        results_pipeline_ok=p15_results_pipeline_ok
+    )
+
     return {
         "ok": (
             paper_results_result.get("returncode") == 0
@@ -2037,6 +2149,8 @@ def drive_run_results():
             and no_bet_audit_cloud_result.get("ok") is True
         ),
         "phase": "paper_results",
+        "prospective_settlement_after_results": p15_prospective_settlement,
+        "prospective_tracker_version": V20_P1_5_VERSION,
         "sync": sync_result,
         "results_pdf_parse": results_pdf_parse_result,
         "results_pdf_parse_cloud_sync": results_pdf_parse_cloud_result,
@@ -3528,13 +3642,16 @@ def _gpi_build_paper_candidate_from_h5_context(context_payload: dict) -> dict:
         and cp_sec_sg_sum >= 7.5
     )
 
+    staking_policy = _gpi_cloud_staking_policy()
+
     if paper_allowed:
+        standard_stake = _gpi_cloud_stake_for_ticket("CP_SEC", allowed=True)
         return {
             "paper_candidate_allowed": "oui",
             "paper_candidate_type": "CP_SEC",
             "paper_candidate_ticket": f"CP_SEC {cp_sec}",
             "paper_candidate_segment": "PAPER_TRADING",
-            "paper_candidate_mise": "1",
+            "paper_candidate_mise": standard_stake,
             "paper_candidate_reason": (
                 f"CP_SEC_ETUDE_H5; cp_sec_sg_sum={cp_sec_sg_sum}; "
                 f"strict_reel_bloque"
@@ -3545,7 +3662,7 @@ def _gpi_build_paper_candidate_from_h5_context(context_payload: dict) -> dict:
             "strict_allowed": "non",
             "pronostic_papier_oui_non": "OUI",
             "paper_structure": "CP_SEC",
-            "paper_stake": "1",
+            "paper_stake": standard_stake,
             "strict_block_reasons": (
                 "H5_AUTO_BRIEF_READ_ONLY|STRICT_GATES_NOT_VALIDATED|REAL_STRICT_FORBIDDEN"
             ),
@@ -3555,6 +3672,11 @@ def _gpi_build_paper_candidate_from_h5_context(context_payload: dict) -> dict:
             "mise_theorique": "0",
             "segment_ROI": "PAPER_TRADING",
             "segment_roi": "PAPER_TRADING",
+            "bankroll_eur": staking_policy["bankroll_eur"],
+            "standard_stake_eur": staking_policy["standard_stake_eur"],
+            "cp3_stake_eur": staking_policy["cp3_stake_eur"],
+            "staking_policy_version": staking_policy["policy_version"],
+            "staking_policy_source": staking_policy["source"],
         }
 
     return {
@@ -3578,6 +3700,11 @@ def _gpi_build_paper_candidate_from_h5_context(context_payload: dict) -> dict:
         "mise_theorique": "0",
         "segment_ROI": "NO_BET",
         "segment_roi": "NO_BET",
+        "bankroll_eur": staking_policy["bankroll_eur"],
+        "standard_stake_eur": staking_policy["standard_stake_eur"],
+        "cp3_stake_eur": staking_policy["cp3_stake_eur"],
+        "staking_policy_version": staking_policy["policy_version"],
+        "staking_policy_source": staking_policy["source"],
     }
 # <<< GPI STUDY/PAPER/STRICT SPLIT PATCH V0_9_26 >>>
 
@@ -4188,15 +4315,25 @@ def drive_run_h5_auto_brief():
                     "edge_status": edge_status_by_odds_context,
                     "reason_codes": reason_codes,
                     "kill_switch_codes": str(context_payload.get("kill_switch_codes", reason_codes)),
-                    "split": "TEST_LIVE",
+                    # V20 P0: le producteur H5 ne peut pas s'auto-attribuer un
+                    # split, un audit de fuite ou un replay conformes. Ces
+                    # preuves sont produites plus tard par des jobs indépendants.
+                    "split": "UNASSIGNED",
                     "calibration_version": "GPI_CALIBRATION_V0_9_2",
-                    "leakage_check_ok": "true",
+                    "leakage_check_ok": "ND",
+                    "split_manifest_id": "ND",
+                    "leakage_audit_id": "ND",
+                    "replay_run_id": "ND",
+                    "proof_bundle_hash": "ND",
+                    "evidence_level": "P3_RULE_OR_CODE",
+                    "proof_status": "UNVERIFIED_SELF_DECLARATION_BLOCKED",
+                    "decision_mode": "PAPER_TEST",
                     "decision_before_race_oui_non": decision_before_race_oui_non_effective,
                     "backfill_technical_oui_non": backfill_technical_oui_non,
                     "strict_kpi_excluded_oui_non": strict_kpi_excluded_oui_non,
                     "strict_kpi_exclusion_reason": strict_kpi_exclusion_reason,
                     "created_at": h5_auto_generated_at_utc,
-                    "replay_match_oui_non": "oui",
+                    "replay_match_oui_non": "ND",
                     "strict_allowed_oui_non": "non",
                     "strict_usable_oui_non": "non",
                     "decision_block_reason": (
@@ -5672,7 +5809,28 @@ def gpi_status():
         ]
     )
 
-    h5_context_freshness = _gpi_latest_h5_context_freshness()
+    if cloud_ok:
+        h5_context_freshness = _gpi_latest_h5_context_freshness(
+            reference_course_uid=str(
+                cloud_brief.get("course_uid", "") or ""
+            ).strip(),
+            reference_source="cloud_brief",
+        )
+    else:
+        h5_context_freshness = {
+            "ok": True,
+            "latest_h5_context_exists_oui_non": "non",
+            "latest_h5_auto_brief_exists_oui_non": "non",
+            "latest_h5_context_fresh": False,
+            "latest_h5_context_fresh_oui_non": "non",
+            "latest_h5_context_mismatch": False,
+            "latest_h5_context_mismatch_oui_non": "non",
+            "latest_h5_context_course_key": "ND",
+            "latest_h5_auto_brief_course_uid": "ND",
+            "latest_h5_reference_source": "cloud_brief_unavailable",
+            "reason": "CLOUD_BRIEF_NOT_OK",
+        }
+
     cloud_ready = bool(
         cloud_ready_files
         and h5_context_freshness.get("latest_h5_context_fresh") is True
@@ -6983,15 +7141,30 @@ def gpi_status():
         "paper_candidate_allowed_oui_count": volatilite_audit.get("paper_candidate_allowed_oui_count", "ND"),
         "volatilite_audit_error": volatilite_audit.get("error", ""),
         "latest_course_uid": cloud_brief.get("course_uid", "ND") if cloud_ok else "ND",
-        "latest_verdict": cloud_brief.get("verdict_python", "ND") if cloud_ok else "ND",
+        "latest_verdict": (
+            "NO_BET"
+            if strict_activation_mode == "closed" or not cloud_ok
+            else cloud_brief.get("verdict_python", "ND")
+        ),
         "latest_structure": cloud_brief.get("structure_max", "ND") if cloud_ok else "ND",
-        "latest_ticket": cloud_brief.get("ticket_exact", "ND") if cloud_ok else "ND",
+        "latest_ticket": (
+            "NO_BET"
+            if strict_activation_mode == "closed" or not cloud_ok
+            else cloud_brief.get("ticket_exact", "ND")
+        ),
         "latest_edge": cloud_brief.get("edge_status", "ND") if cloud_ok else "ND",
         "latest_decision_source_kind": cloud_brief.get("decision_source_kind", "ND") if cloud_ok else "ND",
         "latest_decision_id": cloud_brief.get("decision_id", "ND") if cloud_ok else "ND",
         "latest_input_hash": cloud_brief.get("input_hash", "ND") if cloud_ok else "ND",
         "latest_engine_version": cloud_brief.get("engine_version", "ND") if cloud_ok else "ND",
         "latest_ruleset_version": cloud_brief.get("ruleset_version", "ND") if cloud_ok else "ND",
+        "latest_split_manifest_id": cloud_brief.get("split_manifest_id", "ND") if cloud_ok else "ND",
+        "latest_leakage_audit_id": cloud_brief.get("leakage_audit_id", "ND") if cloud_ok else "ND",
+        "latest_replay_run_id": cloud_brief.get("replay_run_id", "ND") if cloud_ok else "ND",
+        "latest_proof_bundle_hash": cloud_brief.get("proof_bundle_hash", "ND") if cloud_ok else "ND",
+        "latest_evidence_level": cloud_brief.get("evidence_level", "ND") if cloud_ok else "ND",
+        "latest_proof_status": cloud_brief.get("proof_status", "ND") if cloud_ok else "ND",
+        "latest_decision_mode": cloud_brief.get("decision_mode", "ND") if cloud_ok else "ND",
         "latest_strict_allowed_oui_non": cloud_brief.get("strict_allowed_oui_non", "ND") if cloud_ok else "ND",
         "latest_decision_strict_allowed": cloud_brief.get("decision_strict_allowed", "ND") if cloud_ok else "ND",
         "latest_decision_block_reason": cloud_brief.get("decision_block_reason", "ND") if cloud_ok else "ND",
@@ -7017,6 +7190,8 @@ def gpi_status():
         "latest_cp3_sg_min_pair_sum": (cloud_brief.get("cp3_sg_min_pair_sum") or cloud_brief.get("CP3_SG_MIN_PAIR_SUM") or latest_cp_sg_for_status.get("cp3_sg_min_pair_sum", "ND")) if cloud_ok else latest_cp_sg_for_status.get("cp3_sg_min_pair_sum", "ND"),
         "latest_cp3_sg_filter_status": (cloud_brief.get("cp3_sg_filter_status") or cloud_brief.get("CP3_SG_FILTER_STATUS") or latest_cp_sg_for_status.get("cp3_sg_filter_status", "ND")) if cloud_ok else latest_cp_sg_for_status.get("cp3_sg_filter_status", "ND"),
         "latest_source_decision": cloud_brief.get("source_decision", "") if cloud_ok else "",
+        "latest_source_updated": cloud_brief.get("updated", "ND") if cloud_ok else "ND",
+        "latest_source_generation": cloud_brief.get("generation", "ND") if cloud_ok else "ND",
         "cloud_error": cloud_brief.get("error", "") if not cloud_ok else "",
     }
 def get_quality_status():
@@ -7433,6 +7608,7 @@ def gpi_latest_brief_from_cloud():
         "source_decision": f"gs://{GPI_BUCKET_NAME}/{decision_blob.name}",
         "source_prompt": prompt_source,
         "updated": decision_blob.updated.isoformat() if decision_blob.updated else "",
+        "generation": str(getattr(decision_blob, "generation", "") or "ND"),
     }
 
     # Champs moteur utiles si source DEO.
@@ -7441,6 +7617,13 @@ def gpi_latest_brief_from_cloud():
         "input_hash",
         "engine_version",
         "ruleset_version",
+        "split_manifest_id",
+        "leakage_audit_id",
+        "replay_run_id",
+        "proof_bundle_hash",
+        "evidence_level",
+        "proof_status",
+        "decision_mode",
         "strict_allowed_oui_non",
         "split",
         "calibration_version",
@@ -8245,6 +8428,9 @@ def _action_compact_status(payload):
         "latest_paper_candidate_ticket": _action_str(payload.get("latest_paper_candidate_ticket")),
         "latest_paper_candidate_reason": _action_str(payload.get("latest_paper_candidate_reason")),
         "latest_source_decision": _action_str(payload.get("latest_source_decision")),
+        "latest_source_updated": _action_str(payload.get("latest_source_updated")),
+        "latest_source_generation": _action_str(payload.get("latest_source_generation")),
+        "cloud_brief_error": _action_str(payload.get("cloud_error"), ""),
         "error": _action_str(payload.get("error"), ""),
     }
 
@@ -8305,6 +8491,13 @@ def _action_compact_brief(payload):
         "input_hash": _action_str(payload.get("input_hash")),
         "engine_version": _action_str(payload.get("engine_version")),
         "ruleset_version": _action_str(payload.get("ruleset_version")),
+        "split_manifest_id": _action_str(payload.get("split_manifest_id")),
+        "leakage_audit_id": _action_str(payload.get("leakage_audit_id")),
+        "replay_run_id": _action_str(payload.get("replay_run_id")),
+        "proof_bundle_hash": _action_str(payload.get("proof_bundle_hash")),
+        "evidence_level": _action_str(payload.get("evidence_level")),
+        "proof_status": _action_str(payload.get("proof_status")),
+        "decision_mode": _action_str(payload.get("decision_mode")),
         "strict_allowed_oui_non": _action_str(payload.get("strict_allowed_oui_non")),
         "split": _action_str(payload.get("split")),
         "calibration_version": _action_str(payload.get("calibration_version")),
@@ -8861,6 +9054,124 @@ def action_h5_history_status():
 # ============================================================
 
 # GPI_H5_SCHEDULER_STATUS_PATCH_V0_9_28A2
+_b212_morning_refresh_state = {
+    "last_attempt_monotonic": 0.0,
+    "last_attempt_date": "",
+}
+
+
+def _b212_watchlist_today_snapshot(now_paris=None):
+    """Return a compact, fail-closed view of today's morning watchlist."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    current = now_paris or datetime.now(ZoneInfo("Europe/Paris"))
+    today = current.date().isoformat()
+    rows, source = _h5auto_load_latest_watchlist_rows()
+    today_rows = [
+        row for row in rows
+        if _h5auto_parse_course_date_from_uid(row.get("course_uid")) == today
+    ]
+    return {
+        "today_date": today,
+        "source": source,
+        "rows_total": len(rows),
+        "today_rows": len(today_rows),
+        "today_course_sample": [
+            str(row.get("course_uid", "")) for row in today_rows[:5]
+        ],
+    }
+
+
+def _b212_maybe_refresh_late_morning(now_paris=None):
+    """Rebuild the morning watchlist after a late Drive upload."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import os
+    import threading
+    import time
+
+    current = now_paris or datetime.now(ZoneInfo("Europe/Paris"))
+    before = _b212_watchlist_today_snapshot(current)
+    enabled = str(
+        os.getenv("GPI_LATE_MORNING_AUTO_REFRESH_ENABLED", "true")
+    ).strip().lower() in {"1", "true", "yes", "oui"}
+    result = {
+        "enabled": enabled,
+        "needed": before["today_rows"] == 0,
+        "ran": False,
+        "reason": "TODAY_WATCHLIST_PRESENT",
+        "before": before,
+        "after": before,
+        "strict_allowed_oui_non": "non",
+        "ticket_strict": "NO_BET",
+    }
+    if not result["needed"]:
+        return result
+    if not enabled:
+        result["reason"] = "AUTO_REFRESH_DISABLED"
+        return result
+
+    try:
+        cooldown_seconds = max(
+            180,
+            int(os.getenv("GPI_LATE_MORNING_REFRESH_COOLDOWN_SECONDS", "600")),
+        )
+    except Exception:
+        cooldown_seconds = 600
+
+    state = _b212_morning_refresh_state
+    today = current.date().isoformat()
+    elapsed = time.monotonic() - float(state.get("last_attempt_monotonic", 0.0))
+    if state.get("last_attempt_date") == today and elapsed < cooldown_seconds:
+        result["reason"] = "COOLDOWN_ACTIVE"
+        result["retry_after_seconds"] = max(0, int(cooldown_seconds - elapsed))
+        return result
+
+    lock = globals().get("_b212_morning_refresh_lock")
+    if lock is None:
+        lock = threading.Lock()
+        globals()["_b212_morning_refresh_lock"] = lock
+    if not lock.acquire(blocking=False):
+        result["reason"] = "REFRESH_ALREADY_RUNNING"
+        return result
+
+    try:
+        before_locked = _b212_watchlist_today_snapshot(current)
+        result["before"] = before_locked
+        if before_locked["today_rows"] > 0:
+            result["needed"] = False
+            result["reason"] = "TODAY_WATCHLIST_PRESENT_AFTER_LOCK"
+            result["after"] = before_locked
+            return result
+
+        state["last_attempt_monotonic"] = time.monotonic()
+        state["last_attempt_date"] = today
+        result["ran"] = True
+        morning = drive_run_morning()
+        result["morning"] = {
+            "ok": morning.get("ok", False) if isinstance(morning, dict) else False,
+            "pdf_downloaded_count": morning.get("pdf_downloaded_count", 0)
+            if isinstance(morning, dict) else 0,
+            "watchlist_rows_count": morning.get("watchlist_rows_count", 0)
+            if isinstance(morning, dict) else 0,
+            "archive_blocked": morning.get("archive_blocked", "ND")
+            if isinstance(morning, dict) else "ND",
+        }
+        result["after"] = _b212_watchlist_today_snapshot(current)
+        result["reason"] = (
+            "TODAY_WATCHLIST_REFRESHED"
+            if result["after"]["today_rows"] > 0
+            else "REFRESH_COMPLETED_TODAY_WATCHLIST_STILL_MISSING"
+        )
+    except Exception as exc:
+        result["reason"] = "REFRESH_FAILED"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        lock.release()
+    return result
+
+
 @app.post("/scheduler/run-due-h5", dependencies=[Depends(require_api_key)])
 def scheduler_run_due_h5():
     from datetime import datetime
@@ -8886,6 +9197,7 @@ def scheduler_run_due_h5():
     capture_payload = {}
     brief_payload = {}
     status_payload = {}
+    morning_self_heal = {}
 
     plan_ok = False
     resolver_ok = False
@@ -8922,6 +9234,19 @@ def scheduler_run_due_h5():
                 return value
 
         return default
+
+    try:
+        morning_self_heal = _b212_maybe_refresh_late_morning(now_paris)
+    except Exception as exc:
+        morning_self_heal = {
+            "enabled": True,
+            "needed": True,
+            "ran": False,
+            "reason": "SELF_HEAL_DIAGNOSTIC_FAILED",
+            "error": f"{type(exc).__name__}: {exc}",
+            "strict_allowed_oui_non": "non",
+            "ticket_strict": "NO_BET",
+        }
 
     try:
         plan_payload = drive_run_h5_auto_plan()
@@ -9146,6 +9471,14 @@ def scheduler_run_due_h5():
         run_status = "H5_RUN_IDLE_NO_PLAN_NO_CAPTURE"
         new_artifact_oui_non = "non"
 
+    # GPI_V20_P1_4_H5_POST_CAPTURE_HOOK_V1
+    # Audit-only and fail-open: never changes H5 status or opens strict.
+    p15_prospective_capture = v20_p15_post_h5_capture(
+        h5_run_ok=h5_run_ok,
+        capture_count=capture_count,
+        briefs_created=briefs_created,
+    )
+
     # GPI_H5_SCHEDULER_STABILITY_AUDIT_PATCH_V0_9_31B2_10
     # Contr?le les ?tapes du scheduler et la coh?rence du latest.
     # Aucun appel r?seau suppl?mentaire et aucune ?criture suppl?mentaire.
@@ -9280,6 +9613,7 @@ def scheduler_run_due_h5():
         "writes_gcs": "oui",
         "brief_skipped_oui_non": brief_skipped_oui_non,
         "brief_skip_reason": brief_skip_reason,
+        "morning_self_heal": morning_self_heal,
         "plan": {
             "ok": plan_payload.get("ok", "ND") if isinstance(plan_payload, dict) else "ND",
             "phase": plan_payload.get("phase", "h5_auto_plan") if isinstance(plan_payload, dict) else "h5_auto_plan",
@@ -9306,6 +9640,8 @@ def scheduler_run_due_h5():
         "ticket_strict": "NO_BET",
         "strict_policy": "Scheduler H5 automation only. Ne crée jamais de ticket strict.",
         "new_artifact_oui_non": new_artifact_oui_non,
+        "prospective_capture_after_h5": p15_prospective_capture,
+        "prospective_tracker_version": V20_P1_5_VERSION,
         "latest_brief_course_uid": latest_brief_course_uid,
         "latest_strict_kpi_exclusion_reason": latest_strict_kpi_exclusion_reason,
         "latest_decision_before_race_oui_non": latest_decision_before_race_oui_non,
@@ -9497,7 +9833,41 @@ def _p7_p8_enrich_courses_list(courses):
 
 
 # >>> BET_SELECTION_OPTIMIZER_ACTION_FIELDS V0_1_1 >>>
+def _gpi_cloud_staking_policy() -> dict:
+    """Single cloud-side source of truth for bankroll and paper stakes."""
+    import os
+
+    def positive_amount(name, default):
+        try:
+            value = float(str(os.getenv(name, default)).replace(",", "."))
+            return value if value > 0 else float(default)
+        except Exception:
+            return float(default)
+
+    return {
+        "bankroll_eur": positive_amount("GPI_BANKROLL_EUR", 1000),
+        "standard_stake_eur": positive_amount("GPI_STANDARD_STAKE_EUR", 1),
+        "cp3_stake_eur": positive_amount("GPI_CP3_STAKE_EUR", 3),
+        "policy_version": "GPI_CLOUD_STAKING_V1_1000_1_3",
+        "source": "CLOUD_ENGINE",
+    }
+
+
+def _gpi_cloud_stake_for_ticket(ticket, allowed=True) -> str:
+    policy = _gpi_cloud_staking_policy()
+    normalized = str(ticket or "").strip().upper()
+    if not allowed or normalized in {"", "NO_BET", "ND", "NONE", "NULL"}:
+        return "0"
+    amount = (
+        policy["cp3_stake_eur"]
+        if "CP3" in normalized
+        else policy["standard_stake_eur"]
+    )
+    return str(int(amount)) if float(amount).is_integer() else str(amount)
+
+
 def _gpi_bet_optimizer_error_fields(reason: str) -> dict:
+    policy = _gpi_cloud_staking_policy()
     return {
         "bet_optimizer_version": "ND",
         "bet_optimizer_scope": "ND",
@@ -9521,6 +9891,11 @@ def _gpi_bet_optimizer_error_fields(reason: str) -> dict:
         "optimizer_rejected_structures": reason,
         "optimizer_reason_codes": reason,
         "optimizer_hard_blocks": reason,
+        "bankroll_eur": policy["bankroll_eur"],
+        "standard_stake_eur": policy["standard_stake_eur"],
+        "cp3_stake_eur": policy["cp3_stake_eur"],
+        "staking_policy_version": policy["policy_version"],
+        "staking_policy_source": policy["source"],
     }
 
 
@@ -9536,6 +9911,7 @@ def _gpi_bet_optimizer_context(source: dict) -> dict:
         return {}
 
     ctx = dict(source)
+    ctx.update(_gpi_cloud_staking_policy())
 
     # Aplatit les blocs du h5-report.
     for nested_key in [
@@ -9620,12 +9996,19 @@ def _gpi_bet_optimizer_fields(source: dict) -> dict:
                 return "ND"
             return str(value)
 
+        ticket_paper = str(out.get("ticket_paper", "NO_BET"))
+        cp3_audit_allowed = str(out.get("cp3_audit_allowed", "non"))
+        policy = _gpi_cloud_staking_policy()
+
         return {
             "bet_optimizer_version": str(out.get("optimizer_version", "ND")),
             "bet_optimizer_scope": str(out.get("ruleset_scope", "ND")),
             "best_structure": str(out.get("best_structure", "NO_BET")),
-            "ticket_paper_optimizer": str(out.get("ticket_paper", "NO_BET")),
-            "stake_paper_optimizer": str(out.get("stake_paper", "0")),
+            "ticket_paper_optimizer": ticket_paper,
+            "stake_paper_optimizer": _gpi_cloud_stake_for_ticket(
+                ticket_paper,
+                allowed=ticket_paper.strip().upper() != "NO_BET",
+            ),
             "ticket_real_optimizer": "NO_BET",
             "segment_roi_optimizer": str(out.get("segment_roi", "NO_BET")),
             "edge_status_optimizer": str(out.get("edge_status", "EDGE_ABSENT")),
@@ -9634,9 +10017,12 @@ def _gpi_bet_optimizer_fields(source: dict) -> dict:
             "cp_sec_optimizer_status": str(out.get("cp_sec_status", "ND")),
             "sp_optimizer_status": str(out.get("sp_status", "ND")),
             "cp3_optimizer_status": str(out.get("cp3_status", "ND")),
-            "cp3_audit_allowed": str(out.get("cp3_audit_allowed", "non")),
+            "cp3_audit_allowed": cp3_audit_allowed,
             "cp3_audit_ticket": str(out.get("cp3_audit_ticket", "NO_BET")),
-            "cp3_audit_stake": str(out.get("cp3_audit_stake", "0")),
+            "cp3_audit_stake": _gpi_cloud_stake_for_ticket(
+                out.get("cp3_audit_ticket", "NO_BET"),
+                allowed=cp3_audit_allowed.strip().lower() == "oui",
+            ),
             "cp3_audit_segment_roi": str(out.get("cp3_audit_segment_roi", "NO_BET")),
             "cp3_audit_reason": str(out.get("cp3_audit_reason", "ND")),
             "cp3_audit_scope": str(out.get("cp3_audit_scope", "PAPER_ONLY_100_DECISIONS")),
@@ -9646,6 +10032,11 @@ def _gpi_bet_optimizer_fields(source: dict) -> dict:
             "optimizer_rejected_structures": join_list(out.get("rejected_structures", [])),
             "optimizer_reason_codes": join_list(out.get("reason_codes", [])),
             "optimizer_hard_blocks": join_list(out.get("hard_blocks", [])),
+            "bankroll_eur": policy["bankroll_eur"],
+            "standard_stake_eur": policy["standard_stake_eur"],
+            "cp3_stake_eur": policy["cp3_stake_eur"],
+            "staking_policy_version": policy["policy_version"],
+            "staking_policy_source": policy["source"],
         }
     except Exception as exc:
         return _gpi_bet_optimizer_error_fields(f"BET_OPTIMIZER_ERROR:{type(exc).__name__}")
@@ -12554,6 +12945,72 @@ def _p31_official_status_download_latest():
     return result
 
 
+def _p31_read_official_status_for_course(course_uid):
+    """
+    V0_9_31B2_12_COURSE_SCOPED_OFFICIAL_READER
+
+    Lit d'abord le contrat officiel propre a la course. Le fichier ``latest``
+    n'est qu'un repli de compatibilite. Cette fonction reste en lecture seule
+    et ne peut jamais ouvrir le strict.
+
+    Important: ne pas appeler ``_p372_force_enriched_course_context`` ici afin
+    de conserver la garantie anti-recursion introduite en B2.9-fix1.
+    """
+    try:
+        slug = _p36_safe_slug(course_uid)
+    except Exception:
+        slug = "nd"
+
+    if slug and slug != "nd":
+        scoped_result = _p37_read_text_local_or_gcs(
+            local_candidates=[
+                f"data/output/official_runner_status/{slug}_official_runner_status.csv",
+                f"data/input/official_runner_status/{slug}_official_runner_status.csv",
+            ],
+            gcs_candidates=[
+                f"gpi-lite/outputs/official_runner_status/{slug}_official_runner_status.csv",
+            ],
+        )
+
+        if isinstance(scoped_result, dict) and scoped_result.get("ok"):
+            return scoped_result, {
+                "ok": True,
+                "reason": "COURSE_SCOPED_SOURCE_SELECTED_LATEST_NOT_DOWNLOADED",
+                "course_slug": slug,
+            }, "COURSE_SCOPED"
+    else:
+        scoped_result = {
+            "ok": False,
+            "reason": "COURSE_SLUG_ND",
+            "errors": ["COURSE_SLUG_ND"],
+        }
+
+    download_status = _p31_official_status_download_latest()
+    latest_result = _p37_read_text_local_or_gcs(
+        local_candidates=[
+            "data/output/official_runner_status_latest.csv",
+            "data/output/official_runner_status.csv",
+            "data/input/official_runner_status_latest.csv",
+            "data/input/official_runner_status.csv",
+        ],
+        gcs_candidates=[
+            "gpi-lite/outputs/official_runner_status_latest.csv",
+            "gpi-lite/outputs/official_runner_status.csv",
+        ],
+    )
+
+    if isinstance(latest_result, dict):
+        latest_result = dict(latest_result)
+        latest_result["course_scoped_attempt"] = {
+            "ok": scoped_result.get("ok", False) if isinstance(scoped_result, dict) else False,
+            "reason": scoped_result.get("reason", "ND") if isinstance(scoped_result, dict) else "RESULT_NOT_DICT",
+            "errors": scoped_result.get("errors", []) if isinstance(scoped_result, dict) else [],
+            "course_slug": slug,
+        }
+
+    return latest_result, download_status, "LATEST_FALLBACK"
+
+
 def _p31_find_official_np_statut_rows_for_course(course_uid):
     """
     V0_9_31B2_9_REUSE_B2_OFFICIAL_READER_IN_P31
@@ -12579,23 +13036,13 @@ def _p31_find_official_np_statut_rows_for_course(course_uid):
             "ticket_strict": "NO_BET",
         }
 
-    download_status = _p31_official_status_download_latest()
-
-    read_result = _p37_read_text_local_or_gcs(
-        local_candidates=[
-            "data/output/official_runner_status_latest.csv",
-            "data/output/official_runner_status.csv",
-            "data/input/official_runner_status_latest.csv",
-            "data/input/official_runner_status.csv",
-        ],
-        gcs_candidates=[
-            "gpi-lite/outputs/official_runner_status_latest.csv",
-            "gpi-lite/outputs/official_runner_status.csv",
-        ],
+    read_result, download_status, read_strategy = (
+        _p31_read_official_status_for_course(course_uid)
     )
 
     diagnostics = {
-        "reader_version": "p31_reuse_b2_official_reader_v0_9_31b2_9_fix1",
+        "reader_version": "p31_course_scoped_first_v0_9_31b2_12",
+        "official_status_read_strategy": read_strategy,
         "download_official_status": download_status,
         "official_status_read_result": {
             "ok": read_result.get("ok", False) if isinstance(read_result, dict) else False,

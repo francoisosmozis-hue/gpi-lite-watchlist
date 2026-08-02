@@ -60,6 +60,9 @@ EXPECTED_RESPONSE_KEYS = {
     "brief",
     "status_after",
     "next_read_routes",
+    "morning_self_heal",
+    "prospective_capture_after_h5",
+    "prospective_tracker_version",
 }
 
 
