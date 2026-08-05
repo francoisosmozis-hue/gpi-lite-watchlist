@@ -81,9 +81,11 @@ def get_gpi_brief() -> dict:
 
 mcp_app = mcp.http_app(path="/")
 
+APP_VERSION = "0.7.0-mcp-cloud"
+
 app = FastAPI(
     title="GPI-Lite Watchlist API",
-    version="0.7.0-mcp",
+    version=APP_VERSION,
     lifespan=mcp_app.lifespan
 )
 
@@ -1303,7 +1305,7 @@ def health():
     return {
         "ok": True,
         "app": "GPI-Lite Watchlist",
-        "version": "0.7.0-mcp-cloud"
+        "version": APP_VERSION
     }
 
 @app.get("/gpi/ruleset", dependencies=[Depends(require_api_key)])
@@ -1316,7 +1318,7 @@ def root():
     return {
         "ok": True,
         "app": "GPI-Lite Watchlist API",
-        "version": "0.4.0-cloud-ready",
+        "version": APP_VERSION,
         "health": "/health",
         "docs": "/docs",
         "chatgpt_brief": "/gpi/chatgpt-brief"
@@ -8565,7 +8567,7 @@ def action_health():
         "service": "GPI-Lite Watchlist",
         "mode": "action_facade",
         "facade_version": _ACTION_FACADE_VERSION,
-        "backend_version": "0.7.0-mcp-cloud",
+        "backend_version": APP_VERSION,
     }
 
 
