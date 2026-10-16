@@ -129,3 +129,24 @@ def test_wrong_pack_path_refuses(tmp_path):
     status["source_pack_dir"] = str(tmp_path / "other")
     function, _, _ = load_functions(tmp_path, status)
     assert function()["strict_ready"] is False
+
+
+def test_malformed_manifest_exception_fails_closed(tmp_path):
+    function, _, _ = load_functions(tmp_path, qualified_pack(tmp_path))
+
+    def broken_manifest():
+        raise ValueError("Invalid manifest fixture")
+
+    function.__globals__["build_source_pack_status"] = broken_manifest
+    result = function()
+    assert result["strict_ready"] is False
+    assert result["documents"]["integrity_ok"] is False
+    assert result["documents"]["pack_error"] == "SOURCE_PACK_STATUS_ERROR:ValueError"
+
+
+def test_nondict_source_pack_status_fails_closed(tmp_path):
+    function, _, _ = load_functions(tmp_path, qualified_pack(tmp_path))
+    function.__globals__["build_source_pack_status"] = lambda: None
+    result = function()
+    assert result["strict_ready"] is False
+    assert result["documents"]["pack_error"] == "SOURCE_PACK_STATUS_INVALID_TYPE"
