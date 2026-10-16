@@ -93,3 +93,15 @@ def test_unpinned_requirement_is_warning_only(tmp_path):
     assert sum(x["code"] == "DEPENDENCY_NOT_EXACTLY_PINNED" for x in report["warnings"]) == 2
     assert report["strict_allowed"] is False
     assert report["real_bet_allowed"] is False
+
+
+def test_missing_direct_requests_dependency_blocks(tmp_path):
+    root = make_repo(tmp_path, "from fastapi import FastAPI\napp = FastAPI()\ndef late():\n    import requests\n")
+    report = MODULE.scan(root, check_environment=False)
+    assert "RUNTIME_DEPENDENCY_UNDECLARED" in codes(report)
+
+
+def test_declared_requests_dependency_passes(tmp_path):
+    root = make_repo(tmp_path, "from fastapi import FastAPI\napp = FastAPI()\ndef late():\n    import requests\n", req="fastapi==0.116.0\nrequests\n")
+    report = MODULE.scan(root, check_environment=False)
+    assert report["status"] == "PASS_STATIC"
