@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastmcp import FastMCP
 from engine.paper_results import write_paper_results
 from engine.paper_kpi import write_paper_kpi
+from engine.source_pack import SOURCE_PACK_DIR, MANIFEST_NAME, build_source_pack_status
 from v20_p1_cloud_auditor import VERSION as V20_P1_AUDITOR_VERSION
 from v20_p1_cloud_auditor import run_cloud_audit
 from v20_p1_3_prospective import VERSION as V20_P1_3_VERSION
@@ -103,7 +104,7 @@ RULESET_VERSION = "GPI_ZEturf_V19_1_4"
 ENGINE_VERSION = "GPI_LITE_V0_9_1"
 
 SOURCE_DIR = ROOT / "sources"
-DOCS_DIR = SOURCE_DIR / "docs"
+DOCS_DIR = SOURCE_PACK_DIR  # Pack suivi par Git : project_sources/GPI_ZEturf_V19_1_4
 CALIBRATION_DIR = SOURCE_DIR / "calibration"
 
 EXPECTED_DOCS = [
@@ -1252,6 +1253,36 @@ def list_existing_files(base_dir: Path, expected_files: list[str]) -> dict:
 def build_ruleset_status() -> dict:
     docs_status = list_existing_files(DOCS_DIR, EXPECTED_DOCS)
 
+    # Une présence de fichiers ne prouve pas leur identité. Le pack validé
+    # par manifeste est l'unique source documentaire utilisée par le ruleset.
+    pack_status = build_source_pack_status()
+    expected_source_files = sorted(name for name in EXPECTED_DOCS if name != MANIFEST_NAME)
+    reported_source_files = sorted(
+        item.get("file", "") for item in pack_status.get("source_documents", [])
+        if isinstance(item, dict)
+    )
+    pack_name_match = (
+        pack_status.get("manifest_file") == MANIFEST_NAME
+        and pack_status.get("source_pack_dir") == str(DOCS_DIR)
+        and expected_source_files == reported_source_files
+    )
+    pack_bytes_hash_ok = all(
+        item.get("hash_ok") is True and item.get("bytes_ok") is True
+        for item in pack_status.get("source_documents", [])
+        if isinstance(item, dict)
+    )
+    docs_integrity_ok = bool(
+        pack_status.get("ok") is True
+        and pack_name_match
+        and pack_bytes_hash_ok
+        and docs_status["missing_count"] == 0
+    )
+    docs_status["integrity_ok"] = docs_integrity_ok
+    docs_status["pack_manifest_sha256"] = pack_status.get("manifest_sha256", "ND")
+    docs_status["pack_version"] = pack_status.get("source_pack_version", "ND")
+    docs_status["pack_manifest_names_match"] = pack_name_match
+    docs_status["pack_error"] = pack_status.get("error", "")
+
     calibration_status = list_existing_files(
         CALIBRATION_DIR,
         EXPECTED_CALIBRATION_AVAILABLE
@@ -1263,11 +1294,14 @@ def build_ruleset_status() -> dict:
     )
 
     strict_ready = (
-        docs_status["missing_count"] == 0
+        docs_integrity_ok
         and blocking_status["missing_count"] == 0
     )
 
     limitations = []
+
+    if not docs_integrity_ok:
+        limitations.append("pack documentaire non qualifie : NO_BET")
 
     if "sp_calibration_segments.csv" in blocking_status["missing"]:
         limitations.append("SP standard interdit")
