@@ -88,6 +88,7 @@ def scan(root: Path, *, check_environment: bool = True) -> dict:
     pending = [root / "api_main.py"]
     route_occurrences: dict[tuple[str, str], list[int]] = {}
     app_declared = False
+    runtime_imports: set[str] = set()
     while pending:
         path = pending.pop()
         if path in visited:
@@ -109,6 +110,8 @@ def scan(root: Path, *, check_environment: bool = True) -> dict:
                 route_occurrences.setdefault((method, route), []).append(line)
         for name, line in _imports(tree, path, root):
             local_root = name.split(".")[0]
+            if local_root == "requests":
+                runtime_imports.add("requests")
             is_local = local_root in ROOTS_WITH_LOCAL_IMPORTS or _local_path(root, local_root) is not None
             if not is_local:
                 continue
@@ -150,6 +153,10 @@ def scan(root: Path, *, check_environment: bool = True) -> dict:
                     item["local_version"] = None
                     warnings.append({"code": "DISTRIBUTION_NOT_INSTALLED", "package": name})
             dependencies.append(item)
+    declared = {entry["package"].lower().replace("_", "-") for entry in dependencies}
+    for pkg in sorted(runtime_imports):
+        if pkg not in declared:
+            errors.append({"code": "RUNTIME_DEPENDENCY_UNDECLARED", "package": pkg})
     return {
         "mode": "STRICT_OFFLINE_STATIC_ONLY",
         "root": str(root),
