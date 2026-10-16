@@ -119,8 +119,8 @@ def scan(root: Path, *, check_environment: bool = True) -> dict:
                 pending.append(target)
     if not app_declared:
         errors.append({"code": "FASTAPI_APP_CONSTRUCTOR_NOT_FOUND", "path": "api_main.py"})
-    for name, line, src in sorted(unresolved):
-        errors.append({"code": "LOCAL_IMPORT_MISSING", "module": name, "path": src, "line": line})
+    for name, line, source in sorted(unresolved):
+        errors.append({"code": "LOCAL_IMPORT_MISSING", "module": name, "path": source, "line": line})
     for (method, route), lines in sorted(route_occurrences.items()):
         if len(lines) > 1:
             errors.append({"code": "DUPLICATE_STATIC_ROUTE", "method": method, "route": route, "lines": lines})
