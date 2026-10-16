@@ -29,7 +29,6 @@ def main():
 
         try:
             df = build_result_input_from_pdf(pdf)
-	    df["source_pdf"] = pdf.name
         except Exception as exc:
             print(f"Erreur extraction resultats : {pdf.name}")
             print(str(exc))
@@ -39,6 +38,8 @@ def main():
             print(f"Aucune ligne resultat extraite : {pdf.name}")
             continue
 
+        df = df.copy()
+        df["source_pdf"] = pdf.name
         all_rows.append(df)
         print(df.to_string(index=False))
 
