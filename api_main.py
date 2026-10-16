@@ -1255,7 +1255,12 @@ def build_ruleset_status() -> dict:
 
     # Une présence de fichiers ne prouve pas leur identité. Le pack validé
     # par manifeste est l'unique source documentaire utilisée par le ruleset.
-    pack_status = build_source_pack_status()
+    try:
+        pack_status = build_source_pack_status()
+        if not isinstance(pack_status, dict):
+            pack_status = {"ok": False, "error": "SOURCE_PACK_STATUS_INVALID_TYPE"}
+    except Exception as exc:
+        pack_status = {"ok": False, "error": f"SOURCE_PACK_STATUS_ERROR:{type(exc).__name__}"}
     expected_source_files = sorted(name for name in EXPECTED_DOCS if name != MANIFEST_NAME)
     reported_source_files = sorted(
         item.get("file", "") for item in pack_status.get("source_documents", [])
