@@ -34,6 +34,7 @@ def load_functions(tmp_path, pack_status):
     for name in PACK_NAMES:
         (docs / name).write_text("synthetic fixture, not a source pack")
     ns = {
+        "Path": Path,
         "DOCS_DIR": docs,
         "CALIBRATION_DIR": cal,
         "EXPECTED_DOCS": PACK_NAMES,
