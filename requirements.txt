@@ -9,3 +9,4 @@ google-cloud-storage
 fastmcp
 google-api-python-client
 google-auth
+requests
