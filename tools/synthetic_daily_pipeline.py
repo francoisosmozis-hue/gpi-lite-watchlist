@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from datetime import datetime, timedelta
 from hashlib import sha256
 from html import escape
 from io import StringIO
@@ -20,6 +21,9 @@ DAY = "2030-01-02"  # Fictional scenario; NOT an observed race date.
 SOURCE_COMMIT_BASE = "13f6fd38f5fd0b71a4823a45d310bcc0ad735b3e"
 STAGES = ("09H", "H_MINUS_30", "H_MINUS_5")
 TIMES = {"09H": "09:00:00", "H_MINUS_30": "14:30:00", "H_MINUS_5": "14:55:00"}
+ARTIFACT_NAMES = frozenset({"program.json", "snapshots.json", "watchlist.json",
+                            "movements.json", "decisions.json", "fictional_results.json",
+                            "tracking.csv", "summary.json", "dashboard.html"})
 
 
 def _canonical(obj: Any) -> bytes:
@@ -61,6 +65,23 @@ def _validate_fixture(race: dict) -> None:
     snaps = race["snapshots"]
     if [s["stage"] for s in snaps] != list(STAGES):
         raise ValueError("INVALID_SNAPSHOT_SEQUENCE")
+    start = race.get("race_start")
+    if not isinstance(start, str):
+        raise ValueError("INVALID_FICTIONAL_START_TIME")
+    try:
+        departure = datetime.fromisoformat(f"{DAY}T{start}+01:00")
+    except ValueError as exc:
+        raise ValueError("INVALID_FICTIONAL_START_TIME") from exc
+    snapshot_times = [datetime.fromisoformat(f"{DAY}T{TIMES[stage]}+01:00") for stage in STAGES]
+    if (snapshot_times[1] != departure - timedelta(minutes=30)
+            or snapshot_times[2] != departure - timedelta(minutes=5)
+            or not snapshot_times[0] < snapshot_times[1]):
+        raise ValueError("SNAPSHOT_DEPARTURE_TIME_MISMATCH")
+    arrival = race.get("fictional_arrival")
+    if (not isinstance(arrival, list) or len(arrival) != 3
+            or any(type(number) is not int or number not in range(1, 11) for number in arrival)
+            or len(set(arrival)) != 3):
+        raise ValueError("INVALID_FICTIONAL_ARRIVAL")
     for s in snaps:
         if s["source_kind"] != PROOF_CLASS or s["race_uid"] != race["race_uid"]:
             raise ValueError("SOURCE_PROVENANCE_MISMATCH")
@@ -184,13 +205,29 @@ def verify_bundle(output: Path) -> bool:
     manifest_file = output / "audit_manifest.json"
     if not manifest_file.is_file() or manifest_file.is_symlink():
         return False
-    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-    expected = manifest.get("artifacts", {})
-    if manifest.get("proof_class") != PROOF_CLASS or not isinstance(expected, dict):
+    try:
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return False
+    if not isinstance(manifest, dict) or set(manifest) != {
+            "proof_class", "scenario_version", "source_commit_base", "artifacts",
+            "strict_allowed", "real_bet_allowed", "governance_transition"}:
+        return False
+    if (manifest["proof_class"] != PROOF_CLASS
+            or manifest["scenario_version"] != FIXTURE_VERSION
+            or manifest["source_commit_base"] != SOURCE_COMMIT_BASE
+            or manifest["strict_allowed"] is not False
+            or manifest["real_bet_allowed"] is not False
+            or manifest["governance_transition"] != "NONE"):
+        return False
+    expected = manifest["artifacts"]
+    if not isinstance(expected, dict) or set(expected) != ARTIFACT_NAMES:
         return False
     if set(expected) != {p.name for p in output.iterdir()} - {"audit_manifest.json"}:
         return False
     for name, sha in expected.items():
+        if not isinstance(sha, str) or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+            return False
         if not isinstance(name, str) or "/" in name or ".." in name or "\\" in name:
             return False
         p = output / name
@@ -202,6 +239,8 @@ def verify_bundle(output: Path) -> bool:
 def run(*, outdir: Path) -> dict:
     if not outdir.name.startswith("synthetic_"):
         raise ValueError("OUTPUT_DIRECTORY_MUST_START_SYNTHETIC_")
+    if ".." in outdir.parts:
+        raise ValueError("PARENT_OUTPUT_TRAVERSAL_FORBIDDEN")
     if outdir.exists() or outdir.is_symlink():
         raise FileExistsError("OUTPUT_EXISTS_REFUSE_OVERWRITE")
     if any(parent.is_symlink() for parent in outdir.parents):

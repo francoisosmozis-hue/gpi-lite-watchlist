@@ -32,3 +32,17 @@ Le manifeste `audit_manifest.json` lie les neuf artefacts par empreintes SHA256 
 Le prototype ne prouve **ni la collecte réelle, ni les 14 tests Phase C, ni le démarrage ASGI du commit courant, ni les H-30/H-5 opérationnels, ni l'exécution planifiée quotidienne, ni la livraison Android distante, ni un rendement financier**. Les données fictives et leurs règlements ne peuvent être utilisés comme preuve pré-course, paper trading ou étalonnage. Le test local de l'orchestrateur hors checkout exact, s'il emploie des *test doubles* de moteurs, ne qualifie pas le couplage avec les moteurs authentiques.
 
 `STRICT_ALLOWED=FALSE ; REAL_BET_ALLOWED=FALSE ; NO_BET=ACTIVE ; END_TO_END_PROSPECTIVE=NOT_PROVEN ; GOVERNANCE_TRANSITION=NONE`.
+
+## Corrections ciblées du 17 octobre 2026
+
+Le vérificateur exige désormais les neuf noms d'artefacts, les métadonnées de scénario attendues et les drapeaux de gouvernance fermés. Il refuse les manifestes vides ou incomplets. Ce contrôle reste une vérification de structure et d'empreintes, sans authentification externe du manifeste.
+
+Le pilote rejette tout composant de chemin `..`. Il confronte H-30 et H-5 au départ fictif et exige une arrivée de trois numéros entiers, présents et distincts. Ces validations ne constituent aucune preuve de collecte réelle.
+
+Les six régressions complémentaires se trouvent dans `tests/test_synthetic_daily_hardening.py`. Elles sont compatibles avec unittest et pytest. Les 19 tests d'origine restent inchangés. Une campagne intégrée sur un environnement préalablement préparé, puis privé de réseau, utilise :
+
+```bash
+python -m pytest -q tests/test_synthetic_daily_pipeline.py tests/test_synthetic_daily_hardening.py
+```
+
+Le lancement de l'orchestrateur reste `python -m tools.synthetic_daily_pipeline --outdir DOSSIER_SYNTHETIC_NEUF`, depuis la racine du checkout. La préparation des dépendances est distincte des essais et ne modifie pas les moteurs métier.
